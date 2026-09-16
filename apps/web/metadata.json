@@ -1,0 +1,7 @@
+{
+  "name": "聯合報雲寫作教室",
+  "description": "聯合報雲寫作教室：為國中國文寫作設計的 AI 批改輔助系統，對標教育會考寫作測驗六級分規準。",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

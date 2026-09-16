@@ -1,0 +1,26 @@
+{
+  "name": "udn-writing-classroom",
+  "version": "0.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:web": "npm run dev -w @udn/web",
+    "dev:api": "npm run dev -w @udn/api",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  }
+}

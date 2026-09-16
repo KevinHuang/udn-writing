@@ -1,0 +1,48 @@
+{
+  "name": "@udn/api",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "tsx --env-file=../../.env --import ./src/test/setup.ts --test --test-concurrency=1 src/test/*.test.ts",
+    "start": "node dist/index.js",
+    "dev": "nodemon --watch src --ext ts --exec 'tsx --env-file=../../.env src/index.ts'",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "gcloud-build-test": " gcloud config set project writing-classroom-672f8 && gcloud builds submit --tag asia-east1-docker.pkg.dev/writing-classroom-672f8/writing-classroom-repo/server",
+    "gcloud-deploy-test": " gcloud config set project writing-classroom-672f8 && gcloud run deploy writing-classroom-server  --image asia-east1-docker.pkg.dev/writing-classroom-672f8/writing-classroom-repo/server --platform managed --region asia-east1 --allow-unauthenticated",
+    "to:test": "npm run build --prefix ../client && npm run gcloud-build-test && npm run gcloud-deploy-test",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@google-cloud/run": "^3.3.0",
+    "@google-cloud/storage": "^5.18.3",
+    "@google/genai": "^1.46.0",
+    "@koa/cors": "^5.0.0",
+    "@koa/router": "^15.4.0",
+    "dayjs": "^1.11.20",
+    "dotenv": "^17.3.1",
+    "koa": "^3.1.2",
+    "koa-bodyparser": "^4.4.1",
+    "koa-session": "^7.0.2",
+    "koa-static": "^5.0.0",
+    "node-fetch": "^3.3.2",
+    "pg-promise": "^12.6.2"
+  },
+  "devDependencies": {
+    "@types/koa": "^3.0.3",
+    "@types/koa__cors": "^5.0.1",
+    "@types/koa__router": "^12.0.5",
+    "@types/koa-bodyparser": "^4.3.13",
+    "@types/koa-static": "^4.0.4",
+    "@types/node": "^25.5.0",
+    "@types/pg": "^8.20.0",
+    "nodemon": "^3.1.14",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  },
+  "type": "commonjs"
+}

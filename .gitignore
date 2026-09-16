@@ -1,0 +1,23 @@
+node_modules/
+dist/
+.DS_Store
+
+# 環境變數：只有 .env.example 進版控
+.env
+.env.*
+!.env.example
+
+# ⚠️ 憑證檔。legacy-server/writing-classroom-gcs-key.json 是一把有效的
+#    GCP service account 私鑰，絕對不能進版控。
+*-key.json
+*-credentials.json
+service-account*.json
+*.pem
+
+# legacy-server 的建置產物（tsc 輸出）。
+# 注意：public/assets/ **不要** ignore —— Dockerfile 有 `COPY public ./public`，
+# 而產生它的 client/ 不在這個 repo 裡，ignore 掉就無法從乾淨的 clone 建置映像檔。
+legacy-server/dist/
+
+# 壞掉的備份
+*.corrupted.bak

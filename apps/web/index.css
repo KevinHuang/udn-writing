@@ -1,0 +1,566 @@
+@import "tailwindcss";
+
+/* ============================================================
+   雲寫作教室 — 水墨楷書
+   ------------------------------------------------------------
+   一、字形
+     全站單一字形：霞鶩文楷。不做「標題楷書、介面黑體」的分工，
+     因為混用會讓介面看起來不統一。此字體是教科書體風格、
+     為長文閱讀設計，有 400 與 700 兩個真實字重（非合成假粗）。
+
+   二、字級
+     用 clamp() 定義，一個 token 涵蓋手機到桌機，
+     所以元件裡不需要再寫 `text-xs sm:text-sm` 這種響應式配對。
+     改版前有 302 處是「手機比桌機小」（反方向 0 處），
+     手機使用者拿到 9–12px 的繁體中文。現在小字一律不隨螢幕縮小，
+     地板是 13px；要降低手機的資訊密度請減少內容，不要縮字。
+
+   三、顏色
+     中性色取自「墨分五色」：焦、濃、重、淡、清。
+     狀態色取自淺絳山水的礦物顏料，彩度天生就低，和墨相處得好：
+       朱砂 danger   批紅、印章、逾期、刪除
+       赭石 warning  待批改、即將截止
+       石綠 success  已批改、通過
+       花青 info     主色、導覽、已發還
+       黛   mauve    已批改
+       藤黃 amber    提示、AI 產生的內容
+     token 名稱用語意英文，方便程式閱讀；顏料名寫在註解裡。
+
+   四、深色模式
+     不是把淺色翻面，而是「碑拓」：石面為底，字口透紙色。
+     色階在 html.dark 底下上下對調，所以元件寫
+     `bg-danger-50 text-danger-700` 兩種主題都成立，
+     不必在每個地方補 dark: 變體。
+   ============================================================ */
+
+@custom-variant dark (&:where(html.dark, html.dark *));
+
+@theme {
+  /* ---------- 斷點 ---------- */
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1025px;
+
+  /* ---------- 字形 ---------- */
+  --font-sans: "LXGW WenKai TC", "KaiTi", "DFKai-SB", "BiauKai", "Noto Serif TC", serif;
+  --font-serif: "LXGW WenKai TC", "KaiTi", "DFKai-SB", "BiauKai", "Noto Serif TC", serif;
+
+  /* ---------- 字級 ----------
+     小字固定不縮；只有標題級距在桌機放大。
+     行高比拉丁文字大，中文筆畫密、需要更多行距。 */
+  --text-caption: 13px;
+  --text-caption--line-height: 1.65;
+  --text-caption--letter-spacing: 0.02em;
+
+  --text-body: 15px;
+  --text-body--line-height: 1.8;
+  --text-body--letter-spacing: 0.02em;
+
+  --text-ui: 16px;
+  --text-ui--line-height: 1.6;
+  --text-ui--letter-spacing: 0.04em;
+
+  --text-title: clamp(18px, 0.6vw + 16px, 20px);
+  --text-title--line-height: 1.5;
+  --text-title--letter-spacing: 0.05em;
+
+  --text-heading: clamp(22px, 1.4vw + 17px, 26px);
+  --text-heading--line-height: 1.4;
+  --text-heading--letter-spacing: 0.06em;
+
+  --text-display: clamp(28px, 2.6vw + 19px, 36px);
+  --text-display--line-height: 1.2;
+  --text-display--letter-spacing: 0.04em;
+
+  /* 作文內容：行高放到 2.0，這是整套設計真正的主角 */
+  --text-essay: 17px;
+  --text-essay--line-height: 2.0;
+  --text-essay--letter-spacing: 0.03em;
+
+  /* ---------- 墨分五色（中性，取代 slate／gray） ---------- */
+  --color-ink-50:  #F5F0E4;   /* 宣紙 */
+  --color-ink-100: #EBE4D3;
+  --color-ink-200: #DED7C4;   /* 墨痕，界線 */
+  --color-ink-300: #C6BFAC;   /* 清墨 */
+  --color-ink-400: #A79E8B;
+  --color-ink-500: #8A8271;   /* 淡墨 */
+  --color-ink-600: #6B6454;
+  --color-ink-700: #4E4738;   /* 重墨 */
+  --color-ink-800: #2E2A21;   /* 濃墨 */
+  --color-ink-900: #17150F;   /* 焦墨 */
+
+  /* ---------- 花青 info／主色 ---------- */
+  --color-primary-50:  #EDF1F6;
+  --color-primary-100: #E5EAF0;
+  --color-primary-200: #C3D0DF;
+  --color-primary-300: #97ADC5;
+  --color-primary-400: #6A87A8;
+  --color-primary-500: #3E5A78;
+  --color-primary-600: #354D66;
+  --color-primary-700: #2B3E53;
+  --color-primary-800: #212F3F;
+  --color-primary-900: #17212C;
+
+  --color-info-50:  #EDF1F6;
+  --color-info-100: #E5EAF0;
+  --color-info-200: #C3D0DF;
+  --color-info-300: #97ADC5;
+  --color-info-400: #6A87A8;
+  --color-info-500: #3E5A78;
+  --color-info-600: #354D66;
+  --color-info-700: #2B3E53;
+  --color-info-800: #212F3F;
+  --color-info-900: #17212C;
+
+  /* ---------- 朱砂 danger ---------- */
+  --color-danger-50:  #FAF0EE;
+  --color-danger-100: #F3E6E2;
+  --color-danger-200: #E3C2BB;
+  --color-danger-300: #CE9A8F;
+  --color-danger-400: #B66B5D;
+  --color-danger-500: #9E3D32;
+  --color-danger-600: #87342A;
+  --color-danger-700: #6E2A23;
+  --color-danger-800: #54201B;
+  --color-danger-900: #3B1713;
+
+  /* ---------- 赭石 warning ---------- */
+  --color-warning-50:  #FBF5EE;
+  --color-warning-100: #F5EAE0;
+  --color-warning-200: #E7CDB4;
+  --color-warning-300: #D4AC85;
+  --color-warning-400: #BE8B5D;
+  --color-warning-500: #A66B3C;
+  --color-warning-600: #8C5A33;
+  --color-warning-700: #71482A;
+  --color-warning-800: #563720;
+  --color-warning-900: #3D2717;
+
+  /* ---------- 石綠 success ---------- */
+  --color-success-50:  #F1F5F1;
+  --color-success-100: #E7EDE7;
+  --color-success-200: #C8D5CB;
+  --color-success-300: #A3B8A8;
+  --color-success-400: #7E9985;
+  --color-success-500: #5C7A63;
+  --color-success-600: #4E6754;
+  --color-success-700: #3F5444;
+  --color-success-800: #303F34;
+  --color-success-900: #222D25;
+
+  /* ---------- 黛 mauve ---------- */
+  --color-mauve-50:  #F3F0F5;
+  --color-mauve-100: #ECE8EF;
+  --color-mauve-200: #D5CDDA;
+  --color-mauve-300: #B7AAC0;
+  --color-mauve-400: #9186A0;
+  --color-mauve-500: #6B5F76;
+  --color-mauve-600: #5B5064;
+  --color-mauve-700: #4A4152;
+  --color-mauve-800: #38313E;
+  --color-mauve-900: #27222B;
+
+  /* ---------- 藤黃 amber ---------- */
+  --color-amber-50:  #FCF7EA;
+  --color-amber-100: #F8EFD8;
+  --color-amber-200: #EDDAAB;
+  --color-amber-300: #DEC17C;
+  --color-amber-400: #CFAB5C;
+  --color-amber-500: #C09540;
+  --color-amber-600: #A17C36;
+  --color-amber-700: #81642C;
+  --color-amber-800: #614B21;
+  --color-amber-900: #443517;
+
+  /* ---------- 語意別名（元件裡最常用的就是這幾個） ---------- */
+  --color-surface:        #F5F0E4;  /* 宣紙：頁面底色 */
+  --color-surface-soft:   #EBE4D3;  /* 紙陰：分區、次要區塊 */
+  --color-card:           #FCFAF3;  /* 卡片：取代 bg-white */
+  --color-paper:          #FCFAF3;
+  --color-primary:        #3E5A78;  /* 花青 */
+  --color-secondary:      #9E3D32;  /* 朱砂 */
+  /* 石綠。原本的 #5C7A63 當文字用只有 4.18:1（宣紙）／3.75:1（紙陰），
+     不到 AA 的 4.5。加深到 #4C6651 之後是 5.55 / 6.04 / 4.98。 */
+  --color-accent:         #4C6651;  /* 石綠 */
+  --color-text-primary:   #17150F;  /* 焦墨 */
+  --color-text-secondary: #4E4738;  /* 重墨 */
+  /* 第三層文字：說明、佔位、次要標籤。
+     先前這些地方寫成 text-text-secondary/40 之類的半透明，
+     實測只有 1.99:1 —— 眼睛看得到、但讀不動。
+     給它一個真正的顏色，不要再靠不透明度猜。
+     #6B6454 在宣紙／卡片／紙陰上分別是 5.16 / 5.62 / 4.63，都過 AA。 */
+  --color-text-muted:     #6B6454;
+  --color-border:         #DED7C4;  /* 墨痕：分隔線、裝飾性邊界 */
+  /*
+    可操作元件的邊界。WCAG 1.4.11 要求 3:1，而 --color-border（#DED7C4）
+    對宣紙底只有 1.26 —— 實測搜尋框、篩選鍵、資料夾卡片幾乎看不見邊。
+    這一階量到 3.36，是「看得見的淡墨線」而不是 UI 框線，
+    放在宣紙上仍然像一筆墨痕。**只給按鈕、輸入框、可點卡片用**，
+    純裝飾的分隔線繼續用 --color-border，不然整頁會變得很方框。
+  */
+  --color-border-strong:  #8A8271;
+  /*
+    卡片這種「一整張紙」的邊。比 border 深一點看得出來，
+    但比 border-strong 柔很多 —— 大面積的卡片畫一條 3:1 的濃線會很硬，
+    像框住而不是攤開。
+
+    可以柔的理由：WCAG 1.4.11 要求的是「元件辨識得出來」，
+    卡片裡有標題、內文、徽章與按鈕，本身就辨識得出來；
+    真正需要 3:1 的是**只靠邊框才看得出來**的東西（空的輸入框、圖示鍵）。
+    卡片改用「淡邊 + 紙張陰影」來分層，那才是宣紙的語言。
+  */
+  --color-border-card:    #CFC6B0;
+
+  /* 帶色背景上的文字（主要按鈕、狀態標籤）。
+     不能寫死 text-white —— 碑拓模式的花青會變亮，
+     白字壓上去對比不足，那時要反過來用焦墨。 */
+  --color-on-accent:      #FCFAF3;
+
+  /* 壓在「兩種主題都是中深色」的實心底上（朱砂刪除鍵之類）。
+     這個值刻意不在 html.dark 底下覆蓋 —— 底色不翻轉，
+     文字也就不該翻轉，否則深色模式會變成深字壓深紅。 */
+  --color-on-solid:       #F7F3E9;
+
+  /* ---------- 其他 ---------- */
+  --radius-brand: 3px;
+  /*
+    陰影的顏色一律走 --shadow-tint-*（宣告在下面的 :root），不要直接寫死。
+
+    原因：Tailwind 會在**編譯期**就把 @theme 裡的陰影展開成一條字面規則，
+    utility 本身不再是 var(--shadow-paper)。所以在 html.dark 底下重新宣告
+    --shadow-paper 是**沒有作用的** —— 深色模式會繼續套用淺色的墨色陰影，
+    在近黑的底上等於完全看不到。（這一條踩過，見 CLAUDE.md）
+
+    把顏色抽成內層的 var，展開後那個 var 還留在規則裡，就會在**執行期**
+    才解析，html.dark 換掉 tint 就真的換得掉。
+  */
+  --shadow-card:  0 1px 2px var(--shadow-tint-near);
+  /* 一張紙浮在宣紙上的感覺：近處一道細影，遠處一片散影 */
+  --shadow-paper: 0 1px 3px var(--shadow-tint-near), 0 6px 16px -8px var(--shadow-tint-far);
+  --shadow-glass: 0 8px 32px 0 var(--shadow-tint-glass);
+  /* 卡片 hover 時抬起來的那一層 */
+  --shadow-lift:  0 10px 24px -10px var(--shadow-tint-lift);
+
+  --animate-fade-in: fadeIn 0.5s ease-out;
+  --animate-slide-in-right: slideInRight 0.5s ease-out;
+  --animate-pulse-subtle: pulseSubtle 2s ease-in-out infinite;
+
+  @keyframes fadeIn {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+  }
+  @keyframes slideInRight {
+    0% { transform: translateX(20px); opacity: 0; }
+    100% { transform: translateX(0); opacity: 1; }
+  }
+  @keyframes pulseSubtle {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.8; transform: scale(0.98); }
+  }
+}
+
+/* 陰影的墨色。宣告在 @theme 之外 —— 這幾個不是 Tailwind token，
+   不需要（也不該）生出 shadow-tint-near 之類的 utility。 */
+:root {
+  --shadow-tint-near:  rgba(23, 21, 15, .05);
+  --shadow-tint-far:   rgba(23, 21, 15, .10);
+  --shadow-tint-glass: rgba(23, 21, 15, .08);
+  --shadow-tint-lift:  rgba(23, 21, 15, .14);
+}
+
+/* ============================================================
+   碑拓（深色模式）
+   選擇器用 html.dark（0,1,1）壓過 @theme 送進 :root 的（0,1,0）。
+   ============================================================ */
+html.dark {
+  --color-ink-50:  #14120E;
+  --color-ink-100: #1E1B15;
+  --color-ink-200: #322D25;
+  --color-ink-300: #4A443A;
+  --color-ink-400: #635C4E;
+  --color-ink-500: #7E7767;
+  --color-ink-600: #9A927F;
+  --color-ink-700: #B3AB98;
+  --color-ink-800: #DCD5C4;
+  --color-ink-900: #F0EADB;
+
+  --color-primary-50:  #141B23;
+  --color-primary-100: #151E28;
+  --color-primary-200: #1F2C3A;
+  --color-primary-300: #2E4054;
+  --color-primary-400: #476A8E;
+  --color-primary-500: #6E8DAE;
+  --color-primary-600: #8FA9C4;
+  --color-primary-700: #AFC2D6;
+  --color-primary-800: #CCD8E4;
+  --color-primary-900: #E6EDF4;
+
+  --color-info-50:  #141B23;
+  --color-info-100: #151E28;
+  --color-info-200: #1F2C3A;
+  --color-info-300: #2E4054;
+  --color-info-400: #476A8E;
+  --color-info-500: #6E8DAE;
+  --color-info-600: #8FA9C4;
+  --color-info-700: #AFC2D6;
+  --color-info-800: #CCD8E4;
+  --color-info-900: #E6EDF4;
+
+  --color-danger-50:  #241512;
+  --color-danger-100: #2B1A17;
+  --color-danger-200: #3E241E;
+  --color-danger-300: #57332A;
+  --color-danger-400: #7C4A3D;
+  --color-danger-500: #A75E4F;
+  /* 深色底當文字用時 #C4685A 只有 4.34–4.48:1，差一點點就到 AA。
+     提亮到 #CB7365 之後是 5.5 / 5.05 / 4.89。 */
+  --color-danger-600: #CB7365;
+  --color-danger-700: #D99486;
+  --color-danger-800: #E9BCB1;
+  --color-danger-900: #F6E2DC;
+
+  --color-warning-50:  #221A11;
+  --color-warning-100: #291D13;
+  --color-warning-200: #3B2A1A;
+  --color-warning-300: #533B23;
+  --color-warning-400: #765430;
+  --color-warning-500: #9C7141;
+  --color-warning-600: #C9945F;
+  --color-warning-700: #DCB489;
+  --color-warning-800: #EBD3B5;
+  --color-warning-900: #F7EBDA;
+
+  --color-success-50:  #141A15;
+  --color-success-100: #182018;
+  --color-success-200: #232E24;
+  --color-success-300: #334132;
+  --color-success-400: #495C4A;
+  --color-success-500: #647C68;
+  --color-success-600: #8AA891;
+  --color-success-700: #A9C1AE;
+  --color-success-800: #C8D8CB;
+  --color-success-900: #E4EDE6;
+
+  --color-mauve-50:  #1A1620;
+  --color-mauve-100: #1F1B23;
+  --color-mauve-200: #2C2632;
+  --color-mauve-300: #3E3646;
+  --color-mauve-400: #574C61;
+  --color-mauve-500: #756981;
+  --color-mauve-600: #9E90A9;
+  --color-mauve-700: #BBAFC3;
+  --color-mauve-800: #D4CBDA;
+  --color-mauve-900: #EAE4EE;
+
+  --color-amber-50:  #221C0E;
+  --color-amber-100: #2A2212;
+  --color-amber-200: #3D311A;
+  --color-amber-300: #564424;
+  --color-amber-400: #7A6231;
+  --color-amber-500: #A18244;
+  --color-amber-600: #D9B268;
+  --color-amber-700: #E5C992;
+  --color-amber-800: #EEDCB8;
+  --color-amber-900: #F8EFDB;
+
+  --color-surface:        #14120E;
+  --color-surface-soft:   #0D0C09;
+  --color-card:           #1E1B15;
+  --color-paper:          #1E1B15;
+  --color-primary:        #7E9DBF;
+  /* 朱砂。原本的 #C4685A 當文字用在最深的底上只有 3.97:1，不到 AA。
+     提亮到 #CE7767 之後是 5.75 / 5.28 / 4.69，三種底都過。 */
+  --color-secondary:      #CE7767;
+  --color-accent:         #8AA891;
+  --color-text-primary:   #F0EADB;
+  --color-text-secondary: #B3AB98;
+  /* 碑拓模式的第三層文字：6.05 / 5.55 / 6.33，都過 AA */
+  --color-text-muted:     #9A927F;
+  --color-border:         #322D25;
+  /* 碑拓模式：對 #14120E 的底量到 3.16 */
+  --color-border-strong:  #6B6454;
+  /* 碑拓模式的卡片邊：量到對 #14120E 的底是 2.06 —— 比淺色模式那一條
+     吃重一點（深色底上同樣的差距看起來更弱），但仍然遠低於
+     border-strong 的 3.16，不會把卡片框成一個硬盒子 */
+  --color-border-card:    #453E33;
+  /* 碑拓模式的主色是亮花青，按鈕文字改用焦墨才有對比 */
+  --color-on-accent:      #14120E;
+
+  /* 只換墨色，形狀沿用淺色模式那一組（見 @theme 的說明） */
+  --shadow-tint-near:  rgba(0, 0, 0, .55);
+  --shadow-tint-far:   rgba(0, 0, 0, .65);
+  --shadow-tint-glass: rgba(0, 0, 0, .5);
+  --shadow-tint-lift:  rgba(0, 0, 0, .7);
+
+  color-scheme: dark;
+}
+
+/* RWD container */
+@utility container {
+  margin-inline: auto;
+  width: 100%;
+
+  @variant md {
+    width: 750px;
+  }
+
+  @variant lg {
+    width: 1000px;
+  }
+}
+
+@layer base {
+  html {
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+
+  body {
+    @apply bg-surface text-text-primary font-sans antialiased min-h-screen selection:bg-primary/20 selection:text-text-primary;
+    font-size: var(--text-body);
+    line-height: 1.8;
+  }
+
+  /*
+   * 宣紙的質感。
+   *
+   * 底色本來是一塊完全平的 #F5F0E4，大面積看起來像色塊而不是紙。
+   * 這裡疊三層很淡的東西讓它有紙的樣子：
+   *
+   *   1. 纖維   —— feTurbulence 產生的細微雜訊，模擬紙漿纖維
+   *   2. 簾紋   —— 手工宣紙抄紙時竹簾留下的橫向紋路，對光才看得見
+   *   3. 暈染   —— 上緣略亮、下緣略沉，像光斜照在紙上
+   *
+   * 三層都在 body 的偽元素上、position: fixed，所以捲動時「紙」不動，
+   * 字在紙上走。全部 pointer-events: none，不會擋到任何操作。
+   *
+   * 卡片（bg-card）是不透明的，紋理只出現在頁面底層，
+   * 讀文章的區域仍然是乾淨的紙面 —— 這一點是刻意的，
+   * 紋理疊在內文下方會讓楷書的細筆畫變糊。
+   */
+  body::before,
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+  }
+
+  /* 纖維 + 簾紋 */
+  body::before {
+    background-image:
+      repeating-linear-gradient(
+        0deg,
+        rgba(88, 76, 54, 0.05) 0px,
+        rgba(88, 76, 54, 0.05) 1px,
+        transparent 1px,
+        transparent 7px
+      ),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='table' tableValues='1 1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23f)' opacity='0.09'/%3E%3C/svg%3E");
+    background-size: auto, 220px 220px;
+    opacity: 1;
+  }
+
+  /* 暈染：上緣受光、下緣沉一點，避免整頁死平 */
+  body::after {
+    background-image:
+      radial-gradient(
+        120% 70% at 50% -10%,
+        rgba(255, 254, 249, 0.9) 0%,
+        transparent 60%
+      ),
+      radial-gradient(
+        110% 60% at 50% 110%,
+        rgba(118, 104, 76, 0.14) 0%,
+        transparent 65%
+      );
+  }
+
+  /*
+   * 碑拓模式：同一組紋理換一種讀法 —— 不是紙，是石碑的石粒。
+   * 深色底上淺色雜訊太亮會像雜點，所以簾紋轉為極淡的亮線，
+   * 整體不透明度也壓低。
+   */
+  html.dark body::before {
+    background-image:
+      repeating-linear-gradient(
+        0deg,
+        rgba(240, 234, 219, 0.028) 0px,
+        rgba(240, 234, 219, 0.028) 1px,
+        transparent 1px,
+        transparent 7px
+      ),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='table' tableValues='1 1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23f)' opacity='0.055'/%3E%3C/svg%3E");
+    opacity: 1;
+  }
+
+  html.dark body::after {
+    background-image:
+      radial-gradient(
+        120% 70% at 50% -10%,
+        rgba(126, 157, 191, 0.07) 0%,
+        transparent 60%
+      ),
+      radial-gradient(110% 60% at 50% 110%, rgba(0, 0, 0, 0.30) 0%, transparent 65%);
+  }
+
+  /* 有人把動態效果關掉時，紋理仍然保留 —— 它是靜態的，不會造成不適 */
+
+  /* 楷書筆畫細，關掉次像素以外的加粗渲染，讓小字不糊。
+     font-synthesis: none 是保險 —— 此字體只有 400 與 700 兩個真實字重，
+     萬一哪裡寫了 font-medium／font-black，寧可回退到最近的真實字重，
+     也不要讓瀏覽器合成假粗，那會把楷書的筆畫糊成一團。 */
+  body {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-synthesis: none;
+  }
+
+  /* 手機版隱藏捲軸 */
+  @media (max-width: 768px) {
+    html, body, * {
+      -ms-overflow-style: none !important;
+      scrollbar-width: none !important;
+    }
+    *::-webkit-scrollbar {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+    }
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/*
+ * 觸控目標放大。
+ *
+ * 手機上有一排圖示鍵只有 21–30px（更多、編輯、刪除資料夾、成績歷程…），
+ * 手指按不準 —— 實測 22×22。但把按鈕本身撐大會把好不容易調緊的
+ * 卡片與表格列again撐開，所以改用虛擬元素**只擴大可點範圍**，
+ * 外觀完全不變。
+ *
+ * 只在觸控裝置生效（pointer: coarse）；滑鼠很準，桌機維持原樣。
+ * 44px 是 Apple HIG 與 WCAG 2.5.5 的建議值。
+ */
+@media (pointer: coarse) {
+  .tap-target {
+    position: relative;
+  }
+  .tap-target::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    /* 只吃點擊，不畫任何東西 */
+    background: transparent;
+  }
+}

@@ -18,8 +18,12 @@ interface FinalReportListProps {
   canGoBack?: boolean;
 }
 
-/** 平均級分要顯示小數 —— 它是整學期的平均，不是單篇的級分 */
-const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+/**
+ * 平均級分要顯示小數 —— 它是整學期的平均，不是單篇的級分。
+ * null 代表沒有資料（四向度多半是空的），顯示破折號而不是 0。
+ */
+const fmt = (n: number | null) =>
+  n == null ? '—' : Number.isInteger(n) ? String(n) : n.toFixed(1);
 
 /**
  * 一位學生的總結。預設收合，只露出姓名、平均與四個面向的分數；

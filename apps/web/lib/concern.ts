@@ -11,12 +11,13 @@
  */
 
 import { Assignment, Course, Submission } from '../types';
-import { COURSE_ROSTERS, studentIdFor } from '../mockData';
 import { isOnLeave, type LeaveMarks } from './leave';
 import { isOverdue } from './assignments';
 
 export interface StudentStat {
-  seatNo: number;
+  studentId: string;
+  /** 座號。校務系統沒給就是 undefined —— 畫面上顯示破折號，不要假造號碼 */
+  seatNo?: number;
   name: string;
   /** 已批改／已發還作業的平均分數；沒有已批改的作業時為 0 */
   avgScore: number;
@@ -40,13 +41,28 @@ export function studentStatsForCourse(
   const courseSubmissions = submissions.filter((s) =>
     assignmentIds.includes(s.assignmentId),
   );
-  const roster = COURSE_ROSTERS[course.id] || [];
 
-  return roster.map((student) => {
-    const studentId = studentIdFor(course.id, student.seatNo);
-    const studentSubmissions = courseSubmissions.filter(
-      (s) => s.studentId === studentId,
-    );
+  /*
+    名冊**從繳交紀錄推出來**。
+
+    後端的 /service/instructor/submissions 是「名冊 × 作業」的完整結果 ——
+    每位學生對每份作業都有一列，沒交的是 Unsubmitted。所以依 studentId 分組
+    就是這個班的名冊。
+
+    ⚠️ 以前是 `COURSE_ROSTERS[course.id]`（mockData，鍵是原型的 'c1'）
+       加上 `studentIdFor(course.id, seatNo)` 組出來的假 id 去比對繳交 ——
+       **兩邊都對不上真實資料**，所以關心名單每一班都是「尚無名單資料」
+       （實測）。這是同一份 mock 名冊造成的第二處失效，第一處是批改清單。
+  */
+  const byStudent = new Map<string, Submission[]>();
+  for (const s of courseSubmissions) {
+    const list = byStudent.get(s.studentId);
+    if (list) list.push(s);
+    else byStudent.set(s.studentId, [s]);
+  }
+
+  return [...byStudent.entries()].map(([studentId, studentSubmissions]) => {
+    const first = studentSubmissions[0];
 
     const graded = studentSubmissions.filter(
       (s) => s.status === 'Graded' || s.status === 'Published',
@@ -68,8 +84,9 @@ export function studentStatsForCourse(
     }).length;
 
     return {
-      seatNo: student.seatNo,
-      name: student.name,
+      studentId,
+      seatNo: first.seatNo,
+      name: first.studentName,
       avgScore,
       missingCount,
       submissionCount: studentSubmissions.length,

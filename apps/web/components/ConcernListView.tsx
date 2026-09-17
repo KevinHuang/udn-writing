@@ -138,7 +138,7 @@ export const ConcernListView = ({
                                 {s.name}
                               </p>
                               <p className="text-caption text-text-secondary">
-                                座號: {s.seatNo}
+                                座號: {s.seatNo ?? '—'}
                               </p>
                             </div>
                           </div>
@@ -235,7 +235,7 @@ export const ConcernListView = ({
                                 {s.name}
                               </p>
                               <p className="text-caption text-text-secondary">
-                                座號: {s.seatNo}
+                                座號: {s.seatNo ?? '—'}
                               </p>
                             </div>
                           </div>

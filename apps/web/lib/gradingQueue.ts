@@ -6,8 +6,7 @@
  * 清單上看到的第三位，按「下一位」卻跳到別人身上。收在這裡只排一次。
  */
 
-import { Assignment, Submission, SubmissionStatus } from '../types';
-import { studentIdFor, seatNoFromStudentId } from '../mockData';
+import { Submission, SubmissionStatus } from '../types';
 
 export interface RosterEntry {
   seatNo: number;
@@ -42,38 +41,10 @@ export function rosterOf(assignmentId: string, submissions: Submission[]): Submi
     });
 }
 
+
 /** 座號顯示。沒有座號時用破折號，不要印出 NaN 或 00 */
 export function seatText(s: Submission): string {
   return s.seatNo == null ? '—' : String(s.seatNo).padStart(2, '0');
-}
-
-export function assignmentRoster(
-  assignment: Assignment,
-  roster: RosterEntry[],
-  submissions: Submission[],
-): Submission[] {
-  const merged = roster.map((student) => {
-    const existing = submissions.find(
-      (s) => s.assignmentId === assignment.id && s.studentName === student.name,
-    );
-    if (existing) return existing;
-
-    return {
-      id: `unsub-${assignment.id}-${student.seatNo}`,
-      assignmentId: assignment.id,
-      studentId: studentIdFor(assignment.courseId, student.seatNo),
-      studentName: student.name,
-      submittedAt: '',
-      status: 'Unsubmitted',
-      content: '',
-    } as Submission;
-  });
-
-  return merged.sort((a, b) => {
-    const seatA = seatNoFromStudentId(a.studentId);
-    const seatB = seatNoFromStudentId(b.studentId);
-    return (isNaN(seatA) ? 0 : seatA) - (isNaN(seatB) ? 0 : seatB);
-  });
 }
 
 /**

@@ -25,7 +25,6 @@ import {
 import { Course, Assignment, Submission, CATEGORY_LABELS } from '../types';
 import { MAX_LEVEL, MIN_LEVEL, levelStyle, toLevel, CRITERIA_SHORT_LABELS } from '../lib/scoring';
 import { SHOW_CATEGORY_SCORES } from '../lib/features';
-import { studentIdFor } from '../mockData';
 import { semesterLabel } from '../lib/semester';
 import { isOnLeave, type LeaveMarks } from '../lib/leave';
 import { isAdmin, type CurrentUser } from '../lib/access';
@@ -37,7 +36,6 @@ interface GradeManagementProps {
   courses: Course[];
   assignments: Assignment[];
   submissions: Submission[];
-  rosters: Record<string, { seatNo: number; name: string }[]>;
   currentSemester: string;
   onSemesterChange: (s: string) => void;
   semesterOptions: { value: string; label: string }[];
@@ -57,7 +55,7 @@ interface GradeManagementProps {
 interface StudentHistoryModalProps {
     isOpen: boolean;
     onClose: () => void;
-    student: { seatNo: number; name: string } | null;
+    student: { studentId: string; seatNo?: number; name: string } | null;
     courseName: string;
     submissions: Submission[];
     assignments: Assignment[];
@@ -254,7 +252,6 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
   courses,
   assignments,
   submissions,
-  rosters,
   currentSemester,
   onSemesterChange,
   semesterOptions,
@@ -285,7 +282,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
   const [pickedCourseId, setPickedCourseId] = useState<string | null>(initialCourseId || null);
   
   // History Modal State
-  const [historyModalStudent, setHistoryModalStudent] = useState<{ seatNo: number; name: string } | null>(null);
+  const [historyModalStudent, setHistoryModalStudent] = useState<{ studentId: string; seatNo?: number; name: string } | null>(null);
 
   /** 任務篩選。'ALL' 代表全部任務 —— 圖表與成績表都吃這個值 */
   const [pickedAssignmentId, setPickedAssignmentId] = useState<string>('ALL');
@@ -396,21 +393,48 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
     });
   }, [scopedResults]);
 
-  // Get students for the selected course, sorted by seat number
-  const students = useMemo(() => 
-    selectedCourseId ? (rosters[selectedCourseId] || []).sort((a, b) => a.seatNo - b.seatNo) : [],
-  [rosters, selectedCourseId]);
+  /*
+    這個班的學生 —— **從繳交紀錄推出來**，照座號排序。
+
+    後端的 /service/instructor/submissions 是「名冊 × 作業」的完整結果，
+    每位學生對每份作業都有一列（沒交的是 Unsubmitted），所以依 studentId
+    分組就是名冊。
+
+    ⚠️ 以前讀的是 `rosters[selectedCourseId]`，但**沒有任何地方呼叫
+       ensureRoster()**，那份快取永遠是空的 —— 畫面顯示「共 0 位學生」、
+       表格「無符合搜尋結果」，而旁邊的圖表卻有資料（實測）。
+  */
+  const students = useMemo(() => {
+    const ids = new Set(courseAssignments.map((a) => a.id));
+    const seen = new Map<string, { studentId: string; seatNo?: number; name: string }>();
+    for (const s of submissions) {
+      if (!ids.has(s.assignmentId) || seen.has(s.studentId)) continue;
+      seen.set(s.studentId, { studentId: s.studentId, seatNo: s.seatNo, name: s.studentName });
+    }
+    return [...seen.values()].sort((a, b) => {
+      // 沒有座號的排最後，不要當成 0 排到最前
+      const sa = a.seatNo ?? Number.POSITIVE_INFINITY;
+      const sb = b.seatNo ?? Number.POSITIVE_INFINITY;
+      if (sa !== sb) return sa - sb;
+      return a.name.localeCompare(b.name, 'zh-Hant');
+    });
+  }, [courseAssignments, submissions]);
 
   // Search filter
   const [searchTerm, setSearchTerm] = useState('');
   const filteredStudents = students.filter(student => 
     student.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    student.seatNo.toString().includes(searchTerm)
+    String(student.seatNo ?? '').includes(searchTerm)
   );
 
-  // Helper to get score
-  const getSubmission = (studentName: string, assignmentId: string) => {
-      return submissions.find(s => s.studentName === studentName && s.assignmentId === assignmentId);
+  /*
+    取某位學生某份作業的繳交紀錄。
+
+    ⚠️ **用 studentId，不要用姓名。** 實測資料裡同一個班有兩位學生叫
+       「udn教師用聯合報教育事業部」—— 用姓名比對會把兩個人的成績混在一起。
+  */
+  const getSubmission = (studentId: string, assignmentId: string) => {
+      return submissions.find(s => s.studentId === studentId && s.assignmentId === assignmentId);
   };
 
   // Export to CSV function
@@ -430,10 +454,10 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
           let totalScore = 0;
           let gradedCount = 0;
 
-          const studentId = studentIdFor(selectedCourseId || '', student.seatNo);
+          const studentId = student.studentId;
 
           scopedAssignments.forEach(a => {
-              const sub = getSubmission(student.name, a.id);
+              const sub = getSubmission(student.studentId, a.id);
               const missing = !sub || sub.status === 'Unsubmitted' || sub.status === 'Draft';
               let scoreText: string;
 
@@ -809,11 +833,11 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                                 </div>
                                             </td>
                                             {scopedAssignments.map(a => {
-                                                const sub = getSubmission(student.name, a.id);
+                                                const sub = getSubmission(student.studentId, a.id);
                                                 const isOverdue = isAssignmentOverdue(a);
                                                 let content;
                                                 
-                                                const studentId = studentIdFor(selectedCourseId || '', student.seatNo);
+                                                const studentId = student.studentId;
                                                 const onLeave = isOnLeave(leaveMarks, a.id, studentId);
 
                                                 if (!sub || sub.status === 'Unsubmitted') {

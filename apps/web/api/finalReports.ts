@@ -47,6 +47,19 @@ const DIMENSIONS = [
 /** numeric(4,1) 經過 pg 回來是字串，double precision 是數字。兩種都要吃 */
 const num = (v: number | string | null): number => (v == null ? 0 : Number(v));
 
+/**
+ * 同上，但**分不出「0 分」與「沒有資料」的欄位要用這一支**。
+ *
+ * 四向度的平均在多數批改上是空的（sub_scores 由另一支批次工作寫入）。
+ * 回 0 會變成「這位學生立意取材 0 分」——沒有資料就要說沒有資料。
+ * 舊資料還可能是 NaN（後端 calculateAvgScore 的 bug，已修），一併擋掉。
+ */
+const numOrNull = (v: number | string | null): number | null => {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
 function toFinalReport(r: RawFinalReport): FinalReport {
   return {
     id: String(r.id),
@@ -57,7 +70,7 @@ function toFinalReport(r: RawFinalReport): FinalReport {
     dimensions: DIMENSIONS.map(([col, key]) => ({
       key,
       label: CATEGORY_LABELS[key] ?? key,
-      score: num(r[`${col}_score`]),
+      score: numOrNull(r[`${col}_score`]),
       summary: r[`${col}_score_summary`] ?? '',
     })),
     finalSummary: r.final_summarys ?? '',

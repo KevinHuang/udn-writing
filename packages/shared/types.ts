@@ -277,7 +277,8 @@ export interface FinalReport {
     key: 'content' | 'structure' | 'vocabulary' | 'grammar';
     /** 顯示名稱，對應 CATEGORY_LABELS */
     label: string;
-    score: number;
+    /** 平均分數。**null 代表沒有資料**（那份批改沒有四向度分數），不是 0 分 */
+    score: number | null;
     summary: string;
   }[];
   /** 整體總評。AI 寫給學生看的鼓勵式評語 */

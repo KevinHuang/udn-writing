@@ -10,7 +10,7 @@ export const GradesPage: React.FC = () => {
   const { goBack, canGoBack } = useGoBack();
   const [params] = useSearchParams();
   const {
-    myCourses, assignments, submissions, rosters, currentSemester,
+    myCourses, assignments, submissions, currentSemester,
     setCurrentSemester, currentUser, leaveMarks, toggleLeave, semesterOptions,
   } = useAppState();
 
@@ -19,7 +19,6 @@ export const GradesPage: React.FC = () => {
       courses={myCourses}
       assignments={assignments}
       submissions={submissions}
-      rosters={rosters}
       currentSemester={currentSemester}
       onSemesterChange={setCurrentSemester}
       semesterOptions={semesterOptions}

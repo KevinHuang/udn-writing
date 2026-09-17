@@ -175,7 +175,13 @@ class FinalReportHelper {
     }
 
     public static async saveFinalReport(studentId: string, courseId: string,
-        avgScore: number, avgContent: number, avgDict: number, avgOrganization: number, avgMechanics: number,
+        /*
+          四向度的平均**可能是 null** —— 多數批改沒有 sub_scores（那是另一支
+          批次工作寫的）。null 會原樣寫進 numeric 欄位，前端顯示破折號。
+          以前這裡是 number，而上游回傳 NaN，於是資料庫存了 NaN。
+        */
+        avgScore: number | null, avgContent: number | null, avgDict: number | null,
+        avgOrganization: number | null, avgMechanics: number | null,
         theme_and_content_score_summary: string,
         structure_and_organization_score_summary: string,
         diction_and_sentence_structure_score_summary: string,

@@ -97,8 +97,15 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
   const isSubmitted = existingSubmission?.status === 'Pending' || isGraded;
   const isDraft = existingSubmission?.status === 'Draft';
 
-  /** 已批改就不能再改 —— 後端也擋（submit 的 UPDATE WHERE），這裡只是不要讓人白打一篇 */
-  const isLocked = isGraded;
+  /** 已結束收件。學生仍看得到自己的作文與成績，但不能再改 */
+  const isClosed = assignment.status === 'Closed';
+
+  /**
+   * 不能再編輯的兩種情形：
+   *   已批改 —— 後端也擋（submit 的 UPDATE WHERE），這裡只是不要讓人白打一篇
+   *   已結束收件 —— 老師按過「結束收件」
+   */
+  const isLocked = isGraded || isClosed;
 
   /**
    * 存草稿。
@@ -305,6 +312,10 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
             {isGraded ? (
               <span className="flex items-center gap-1">
                 <CheckCircle2 size={12} className="text-success-500" /> 已批改，不能再修改
+              </span>
+            ) : isClosed ? (
+              <span className="flex items-center gap-1">
+                <Clock size={12} /> 已結束收件
               </span>
             ) : isSubmitted ? (
               <span className="flex items-center gap-1">

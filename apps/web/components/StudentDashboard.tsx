@@ -80,8 +80,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       // Align with StudentAssignments "IN_PROGRESS" logic
       const isInProgress = subStatus === 'Unsubmitted' || subStatus === 'Draft';
       
-      // Students should see Published or Closed assignments that are in progress
-      return (a.status === 'Published' || a.status === 'Closed') && isInProgress;
+      /*
+        ⚠️ **已關閉的不算進行中。** 這裡以前收 Closed，所以老師按下「結束收件」
+           之後，那份作業還會掛在學生的「進行中作業」裡、按鈕寫著「開始寫作」
+           —— 但他其實已經不能繳交了。
+      */
+      return a.status === 'Published' && isInProgress;
     })
     .sort((a, b) => {
       // 沒有截止日的排最後 —— 它不在時間軸上，不是「很晚才到期」

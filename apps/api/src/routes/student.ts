@@ -4,6 +4,7 @@ import config from '../config';
 import { randomBytes } from 'crypto';
 import { OAuthMiddleware } from '../middleware/oauth';
 import UserHelper from '../dal/user_helper';
+import { db } from '../dal/database';
 import Util from '../util/util';
 import AssignmentHelper from '../dal/assignment_helper';
 import SubmissionHelper from '../dal/submission_helper';
@@ -55,6 +56,20 @@ router.post('/submit', async (ctx: Context) => {
             Util.returnError(ctx, 400, 'Missing required fields.');
             return;
         }
+        /*
+          **已結束收件的作業不接受繳交。**
+
+          學生端現在看得到已關閉的作業（要能查自己的成績），畫面上也擋了，
+          但畫面擋不住直接打 API。`opened = false` 就是已關閉或未開放，
+          兩種都不該收件。
+        */
+        const open = await db.default.oneOrNone(
+            `SELECT 1 FROM assignment WHERE id = $1 AND opened = true`, [assignment_id]);
+        if (!open) {
+            Util.returnError(ctx, 409, '這份作業已經結束收件了。');
+            return;
+        }
+
         // 沒給就當成送出 —— 舊前端不會帶這個欄位，語意要維持原樣
         const submitted = is_submitted !== false;
         const result = await SubmissionHelper.submit(ctx.session.userInfo.id, assignment_id, content, JSON.stringify(pic_files), word_count, submitted);

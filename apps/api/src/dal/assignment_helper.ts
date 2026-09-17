@@ -53,6 +53,10 @@ class AssignmentHelper {
                     c.id as course_id,
                     c.school_year,
                     c.semester,
+                    -- 狀態由這兩欄推導（@udn/shared 的 assignmentStatusOf）：
+                    -- opened → 進行中；!opened 但有 opened_at → 已關閉
+                    a.opened,
+                    a.opened_at,
                     a.deadline,
                     a.allow_late_submission,
                     sub.id as submission_id,
@@ -95,7 +99,20 @@ class AssignmentHelper {
                         WHERE is_valid = true
                     ) fb ON (sub.id = fb.ref_submission_id)   
                 WHERE
-                    a.opened = true
+                    /*
+                      **已關閉的作業也要回傳。**
+
+                      以前只收 opened = true，所以老師一按「結束收件」，
+                      那份作業就從學生端整個消失 —— 連他已經繳交的作文與
+                      拿到的成績一起不見（實測確認過）。而刪除作業的對話框
+                      明明寫著「如果只是要停止收件，請改用結束收件 ——
+                      學生仍然看得到自己的成績，只是不能再繳交」。
+
+                      opened_at IS NOT NULL 代表「曾經開放過」，也就是
+                      已關閉；從未開放的草稿仍然看不到。
+                      不能再繳交由前端擋（見 StudentEssayEditor 的 isLocked）。
+                    */
+                    a.opened = true OR a.opened_at IS NOT NULL
                 ORDER BY 
                     a.assigned_at DESC
             )

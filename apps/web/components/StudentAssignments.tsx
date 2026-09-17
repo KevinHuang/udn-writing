@@ -149,6 +149,8 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                  用 isUnderReview 一起涵蓋兩種狀態。
             */
             const isPending = submission && submission.status === 'Pending';
+            /** 已結束收件。學生仍看得到（要能查自己的成績），但不能再寫 */
+            const isClosed = assignment.status === 'Closed';
             const isGraded = submission && submission.status === 'Graded';
             const isUnderReview = isPending || isGraded;
             const isSubmitted = isUnderReview;
@@ -234,7 +236,9 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                       isOverdue ? 'text-danger-600' : 
                       'text-primary'
                     }`}>
-                      {isReturned ? '已完成' : isUnderReview ? '批閱中' : isOverdue && !isDraft ? '已逾期' : '進行中'}
+                      {isReturned ? '已完成' : isUnderReview ? '批閱中'
+                        : isClosed ? '已結束'
+                        : isOverdue && !isDraft ? '已逾期' : '進行中'}
                     </p>
                     {isReturned && submission.result && (
                       <p className="text-ui text-text-primary font-bold mt-0.5">{submission.result.totalScore} 分</p>
@@ -252,7 +256,7 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                       }
                     }}
                     className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl text-ui font-bold flex items-center justify-center gap-2 transition-all active:scale-95 ${
-                      isReturned || isUnderReview
+                      isReturned || isUnderReview || isClosed
                         ? 'bg-card text-text-primary hover:bg-surface border border-border/50 shadow-sm' 
                         : isDraft
                         ? 'bg-amber-500 text-on-accent hover:bg-amber-600 shadow-sm shadow-amber-500/20'
@@ -263,6 +267,9 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                       <>查看回饋 <ChevronRight size={16} className="sm:size-[18px]" /></>
                     ) : isUnderReview ? (
                       <>已繳交 <CheckCircle2 size={16} className="sm:size-[18px]" /></>
+                    ) : isClosed ? (
+                      // 已結束收件就不要再叫他去寫
+                      <>已結束收件</>
                     ) : isDraft ? (
                       <><Save size={16} className="sm:size-[18px]" /> 繼續寫作</>
                     ) : (

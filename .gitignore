@@ -21,3 +21,8 @@ legacy-server/dist/
 
 # 壞掉的備份
 *.corrupted.bak
+
+# Playwright MCP 的測試歷程（console log、頁面快照、截圖、下載的檔案）。
+# 每次在瀏覽器裡測試都會重新產生，一天就累積了 216 個檔案／1.1 MB。
+# 它們是特定那一次執行的產物，對別人沒有意義，也不該進版控。
+.playwright-mcp/

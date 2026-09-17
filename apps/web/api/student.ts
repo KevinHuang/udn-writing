@@ -2,7 +2,7 @@ import { api } from './client';
 import { feedbackTextOf } from '../lib/feedbackText';
 import { semesterValue } from '../lib/semester';
 import {
-  QuestionType, submissionStatusOf,
+  QuestionType, submissionStatusOf, assignmentStatusOf,
   type Assignment, type Course, type Question, type Submission,
 } from '@udn/shared';
 
@@ -35,6 +35,8 @@ interface RawStudentAssignment {
   pic_position: string | null;
   note: string | null;
   assigned_at: string | null;
+  opened: boolean | null;
+  opened_at: string | null;
   deadline: string | null;
   allow_late_submission: boolean | null;
   submission_id: string | null;
@@ -121,8 +123,14 @@ export async function fetchStudentData(
         deadline: r.deadline ?? undefined,
         allowLateSubmission: r.allow_late_submission ?? false,
       },
-      // 學生只看得到已開放的作業（後端 WHERE a.opened = true），所以一律 Published
-      status: 'Published',
+      /*
+        狀態由 opened / opened_at 推導，與教師端共用同一支。
+
+        ⚠️ 以前這裡寫死 'Published'，理由是「學生只看得到已開放的作業」——
+           那個前提已經不成立：已關閉的作業現在也會回傳（學生要看得到自己
+           的成績），寫死的話會讓已結束的作業顯示成進行中、還能按「開始寫作」。
+      */
+      status: assignmentStatusOf({ opened: r.opened, opened_at: r.opened_at }),
       totalStudents: 0,
       createdAt: r.assigned_at ?? undefined,
     });

@@ -425,6 +425,44 @@ describe('學生繳交與草稿', () => {
     assert.equal(row.is_submitted, true);
   });
 
+  test('已結束收件的作業不收繳交 → 409', async () => {
+    const s = await asStudent();
+    await rawDb.none(
+      `UPDATE assignment SET opened = false, opened_at = now() WHERE id = $1`, [s.assignment]);
+
+    const res = await submit(s.cookie, s.assignment, '結束收件之後才送的', true);
+    assert.equal(res.status, 409);
+    assert.equal(await rowOf(s.assignment, s.me.id), null, '不該留下任何繳交紀錄');
+  });
+
+  /**
+   * 「結束收件」之後學生仍要看得到那份作業 —— 他已經繳交的作文與成績
+   * 不該跟著消失。這是刪除作業對話框對老師的承諾。
+   */
+  test('已結束收件的作業，學生仍然看得到', async () => {
+    const s = await asStudent();
+    await submit(s.cookie, s.assignment, '關閉前就交了', true);
+    await rawDb.none(
+      `UPDATE assignment SET opened = false, opened_at = now() WHERE id = $1`, [s.assignment]);
+
+    const rows = await (await req(srv, '/service/student/my_assignments', s.cookie)).json();
+    const found = rows.find((x: { assignment_id: string }) => String(x.assignment_id) === String(s.assignment));
+    assert.ok(found, '已關閉的作業必須還在清單裡');
+    assert.equal(found.opened, false, '狀態要能分辨出已關閉');
+    assert.ok(found.opened_at, 'opened_at 是判斷已關閉的依據');
+    assert.equal(found.submission_content, '關閉前就交了', '學生的作文要還看得到');
+  });
+
+  test('從未開放的作業，學生看不到', async () => {
+    const s = await asStudent();
+    await rawDb.none(
+      `UPDATE assignment SET opened = false, opened_at = NULL WHERE id = $1`, [s.assignment]);
+
+    const rows = await (await req(srv, '/service/student/my_assignments', s.cookie)).json();
+    const found = rows.find((x: { assignment_id: string }) => String(x.assignment_id) === String(s.assignment));
+    assert.equal(found, undefined, '草稿狀態的作業學生不該看到');
+  });
+
   test('批改之後不能再改 → 409，內容原封不動', async () => {
     const s = await asStudent();
     await submit(s.cookie, s.assignment, '原本的作文', true);

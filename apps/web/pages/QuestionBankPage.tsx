@@ -5,14 +5,14 @@ import { useGoBack } from "../lib/useGoBack";
 
 export const QuestionBankPage: React.FC = () => {
   const { goBack } = useGoBack();
-  const { questions, setQuestions, folders, setFolders, currentUser } = useAppState();
+  const { questions, questionOps, folders, folderOps, currentUser } = useAppState();
   return (
     <QuestionBank
       onBack={goBack}
       questions={questions}
-      setQuestions={setQuestions}
+      questionOps={questionOps}
       folders={folders}
-      setFolders={setFolders}
+      folderOps={folderOps}
       user={currentUser}
     />
   );

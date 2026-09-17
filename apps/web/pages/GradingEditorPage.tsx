@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { GradingEditor } from "../components/GradingEditor";
 import { useAppState } from "../state/appStateContext";
@@ -15,8 +15,17 @@ export const GradingEditorPage: React.FC = () => {
   const {
     assignments, courses, questions, submissions, gradingResetSeq,
     selectedAiModel, setSelectedAiModel, handleSaveGrading, handleResetGrading,
-    submissionMarks, toggleMark,
+    handleAutoGrade,
+    submissionMarks, toggleMark, ensureSubmissions,
   } = useAppState();
+
+  /**
+   * 直接把批改頁的網址貼進來時，全域清單只有摘要（沒有作文）。
+   * 補這一份作業的完整內容，否則開出來是一張空白稿。
+   */
+  useEffect(() => {
+    if (assignmentId) void ensureSubmissions(assignmentId);
+  }, [assignmentId, ensureSubmissions]);
 
   /**
    * 要批改的那一份，**從網址現查**。
@@ -75,6 +84,7 @@ export const GradingEditorPage: React.FC = () => {
       onSave={handleSaveGrading}
       onSelectAiModel={(model) => setSelectedAiModel(model)}
       onResetGrading={handleResetGrading}
+      onAutoGrade={handleAutoGrade}
       marks={submissionMarks}
       onToggleMark={toggleMark}
     />

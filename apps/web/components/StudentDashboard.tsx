@@ -1,3 +1,4 @@
+import { Markdown } from './Markdown';
 import { useNavigate } from 'react-router-dom';
 import { routes } from '../lib/routes';
 import React from 'react';
@@ -328,7 +329,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       </div>
                     </div>
                     <p className="text-ui text-text-primary opacity-80 line-clamp-2 sm:line-clamp-3 mb-3 sm:mb-4 leading-relaxed font-normal">
-                      {submission.result?.aiFeedback || '尚無評語'}
+                      {submission.result?.feedback
+                        ? <Markdown>{submission.result.feedback}</Markdown>
+                        : '尚無評語'}
                     </p>
                     <button 
                       id={`studentdashboard-btn-viewdetail-feedback-${submission.id}`}

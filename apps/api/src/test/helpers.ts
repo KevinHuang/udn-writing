@@ -72,11 +72,24 @@ export async function seedSchool(name = '測試中學', dsns = 'test.edu.tw'): P
   return row.id;
 }
 
+/**
+ * 組織。正式資料只有一個（`聯合報`），但 course 一定要掛在某個組織底下 ——
+ * `CourseHelper.getByInstructorUserId()` 是 `INNER JOIN org`，
+ * **`ref_org_id` 為空的課程會從清單裡安靜消失**。
+ */
+export async function seedOrg(name = '聯合報'): Promise<string> {
+  const existing = await db.default.oneOrNone(`SELECT id::text FROM org WHERE name = $1`, [name]);
+  if (existing) return existing.id;
+  const row = await db.default.one(`INSERT INTO org (name) VALUES ($1) RETURNING id::text`, [name]);
+  return row.id;
+}
+
 export async function seedCourse(schoolId: string, name = '測試班'): Promise<string> {
+  const orgId = await seedOrg();
   const row = await db.default.one(
-    `INSERT INTO course (ref_school_id, school_year, semester, course_name, course_type)
-     VALUES ($1, 115, 1, $2, 'class') RETURNING id::text`,
-    [schoolId, name]
+    `INSERT INTO course (ref_school_id, ref_org_id, school_year, semester, course_name, course_type)
+     VALUES ($1, $2, 115, 1, $3, 'class') RETURNING id::text`,
+    [schoolId, orgId, name]
   );
   return row.id;
 }
@@ -101,6 +114,17 @@ export async function seedLearner(courseId: string, userId: string, seatNo = 1):
   );
 }
 
+/** 造一個學年期。日期用相對今天的天數，測試才不會某天突然變紅。 */
+export async function seedSemester(
+  schoolYear: number, term: number, startOffsetDays: number, endOffsetDays: number,
+): Promise<void> {
+  await db.default.none(
+    `INSERT INTO semesters (school_year, semester, start_date, end_date)
+     VALUES ($1, $2, now()::date + $3, now()::date + $4)`,
+    [schoolYear, term, startOffsetDays, endOffsetDays],
+  );
+}
+
 export async function seedTask(userId: string, title = '測試題目'): Promise<string> {
   const row = await db.default.one(
     `INSERT INTO task (title, description, ref_user_id, shared) VALUES ($1, '題說', $2, false) RETURNING id::text`,
@@ -111,8 +135,10 @@ export async function seedTask(userId: string, title = '測試題目'): Promise<
 
 export async function seedAssignment(courseId: string, taskId: string, assignerId: string): Promise<string> {
   const row = await db.default.one(
-    `INSERT INTO assignment (ref_course_id, ref_task_id, ref_user_id, opened)
-     VALUES ($1, $2, $3, true) RETURNING id::text`,
+    // opened=true 的作業在真實資料裡一定有 opened_at（第一次開放的時間）——
+    // 少了它，Draft 與 Closed 的區分測起來會失真
+    `INSERT INTO assignment (ref_course_id, ref_task_id, ref_user_id, opened, opened_at)
+     VALUES ($1, $2, $3, true, now()) RETURNING id::text`,
     [courseId, taskId, assignerId]
   );
   return row.id;

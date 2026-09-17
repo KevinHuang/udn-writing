@@ -14,6 +14,7 @@ import { NewAssignmentPage } from "./pages/NewAssignmentPage";
 import { QuestionBankPage } from "./pages/QuestionBankPage";
 import { GradingListPage } from "./pages/GradingListPage";
 import { GradingEditorPage } from "./pages/GradingEditorPage";
+import { FinalReportPage } from "./pages/FinalReportPage";
 import { GradesPage } from "./pages/GradesPage";
 import { ConcernPage } from "./pages/ConcernPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -54,6 +55,7 @@ export const AppRoutes: React.FC = () => (
       <Route path={routePatterns.questionBank} element={<QuestionBankPage />} />
       <Route path={routePatterns.gradingList} element={<GradingListPage />} />
       <Route path={routePatterns.gradingEditor} element={<GradingEditorPage />} />
+      <Route path={routePatterns.finalReport} element={<FinalReportPage />} />
       <Route path={routePatterns.grades} element={<GradesPage />} />
       <Route path={routePatterns.concern} element={<ConcernPage />} />
       {/* 打不到的網址仍然留在版面裡，才不會突然沒有導覽列 */}

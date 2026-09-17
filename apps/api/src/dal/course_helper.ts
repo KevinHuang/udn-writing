@@ -55,6 +55,44 @@ class CourseHelper {
         return result || [];
     }
 
+    /**
+     * 系統管理者（聯合報管理人員）看得到的課程：**全部**。
+     *
+     * 與 getByInstructorUserId() 回傳完全相同的欄位 —— 呼叫端只是換一支查詢，
+     * 不需要為兩種身分寫兩套對應。差別只在 WHERE 少了那個教師條件。
+     */
+    public static async getAllForAdmin() {
+        const sql = `
+            WITH target_courses AS (
+                SELECT DISTINCT
+                    org.id as org_id,
+                    org.name as org_name,
+                    sch.id as school_id,
+                    sch.school_name,
+                    sch.school_type,
+                    crs.*
+                FROM course as crs
+                    INNER JOIN org ON crs.ref_org_id = org.id
+                    INNER JOIN school AS sch ON crs.ref_school_id = sch.id
+            )
+            , stud_count AS (
+                SELECT count(id) AS stud_count, ref_course_id
+                FROM uc_learner
+                WHERE ref_course_id IN (SELECT id FROM target_courses)
+                GROUP BY ref_course_id
+            )
+            SELECT
+                tc.*,
+                COALESCE(sc.stud_count, 0) AS stud_count
+            FROM
+                target_courses AS tc
+                LEFT OUTER JOIN stud_count AS sc ON sc.ref_course_id = tc.id
+            ORDER BY
+                tc.school_year DESC, tc.semester DESC, tc.org_id ASC
+        `;
+        return (await db.default.manyOrNone(sql)) || [];
+    }
+
     /** 建立新課程，並自動建立 uc_instructor 關聯 */
     public static async create(data: {
         ref_school_id: number;
@@ -93,27 +131,45 @@ class CourseHelper {
     }
 
     /** 更新課程（僅限建立者的課程） */
+    /**
+     * 更新課程。**只寫有給的欄位**（COALESCE），沒給的維持原值。
+     *
+     * 原本是無條件 `SET` 四個欄位，呼叫端只要漏給一個，那一欄就被寫成 NULL ——
+     * 前端的 updateCourse() 只送 course_name，一旦接上就會把學年度、學期、
+     * 課程類型整組清掉。所以改成部分更新，而不是要求呼叫端每次都送全部。
+     *
+     * `is_active` 是「封存」的儲存位置：false 代表封存。因為 COALESCE 只把
+     * `null` 當成「沒給」，傳 false 一樣寫得進去。
+     *
+     * 權限：只能改自己任教的課程（uc_instructor）。
+     */
     public static async update(courseId: string, data: {
-        school_year: number;
-        semester: number;
-        course_name: string;
-        course_type: string;
+        school_year?: number | null;
+        semester?: number | null;
+        course_name?: string | null;
+        course_type?: string | null;
+        is_active?: boolean | null;
     }, userId: number) {
         const sql = `
             UPDATE course
-            SET school_year=$2, semester=$3, course_name=$4, course_type=$5
+            SET school_year = COALESCE($2::integer, school_year),
+                semester    = COALESCE($3::integer, semester),
+                course_name = COALESCE($4::varchar, course_name),
+                course_type = COALESCE($5::varchar, course_type),
+                is_active   = COALESCE($6::boolean, is_active)
             WHERE id=$1
               AND id IN (
-                SELECT ref_course_id FROM uc_instructor WHERE ref_user_id=$6
+                SELECT ref_course_id FROM uc_instructor WHERE ref_user_id=$7
               )
             RETURNING *;
         `;
         const result = await db.default.oneOrNone(sql, [
             courseId,
-            data.school_year,
-            data.semester,
-            data.course_name,
-            data.course_type,
+            data.school_year ?? null,
+            data.semester ?? null,
+            data.course_name ?? null,
+            data.course_type ?? null,
+            data.is_active ?? null,
             userId,
         ]);
         return result;

@@ -25,7 +25,7 @@ import {
   Course,
   SchoolCourse,
 } from "../types";
-import { SEMESTER_OPTIONS, semesterLabel } from "../mockData";
+import { semesterLabel } from "../lib/semester";
 import { isAdmin, coursesNeedingReview, type CurrentUser } from "../lib/access";
 import { CourseMappingModal } from "./CourseMappingModal";
 import { DeleteCourseModal } from "./DeleteCourseModal";
@@ -47,6 +47,7 @@ export const CourseList = ({
   submissions,
   onSelectCourse,
   currentSemester,
+  semesterOptions,
   onSemesterChange,
   onBack,
   canGoBack,
@@ -61,6 +62,7 @@ export const CourseList = ({
   submissions: Submission[];
   onSelectCourse: (c: Course) => void;
   currentSemester: string;
+  semesterOptions: { value: string; label: string }[];
   onSemesterChange: (s: string) => void;
   onBack: () => void;
   canGoBack: boolean;
@@ -423,7 +425,7 @@ export const CourseList = ({
               onChange={(e) => onSemesterChange(e.target.value)}
               className="text-body text-text-primary bg-transparent outline-none appearance-none cursor-pointer pr-6 md:pr-8 relative z-10"
             >
-              {SEMESTER_OPTIONS.map((opt) => (
+              {semesterOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>
                   {opt.label}
                 </option>

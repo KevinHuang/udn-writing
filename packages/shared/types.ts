@@ -192,9 +192,20 @@ export interface GradingResult {
     grammar: number;
     vocabulary: number;
   };
-  aiFeedback: string;
-  teacherFeedback: string;
-  suggestions: string[];
+  /**
+   * 目前有效的那一版評語。**內容是 markdown**（AI 產的是一整份報告：
+   * 標題、條列、粗體），所以畫面上要用 components/Markdown.tsx 渲染，
+   * 不能直接印字串。
+   *
+   * 先前這裡是 `aiFeedback` 與 `teacherFeedback` 兩個欄位，畫面上並排顯示。
+   * 但資料庫的模型是**版本**不是欄位：一份繳交任何時刻只有一筆
+   * `is_valid = true`，教師修改等於寫一筆新版本讓舊的失效
+   * （見 `InstructorHelper.saveFeedback`）。兩個欄位對不上一個資料來源，
+   * 所以合併成一個，用下面的 isAi 標示作者。
+   */
+  feedback: string;
+  /** 這一版是 AI 產的（true）還是教師改過的（false） */
+  isAi: boolean;
   isPublished: boolean;
 }
 
@@ -232,4 +243,42 @@ export interface AiGradingResponse {
   };
   feedback: string;
   suggestions: string[];
+}
+
+/**
+ * 期末總結：一位學生在一門課的整學期表現。
+ *
+ * 資料來源是 `final_report` 資料表，由後端的 `FinalReportHelper.calculate()`
+ * 彙整這位學生在這門課所有**已批改**的作品產生 ——
+ * 四個面向各自平均、AI 寫的鼓勵式摘要，以及分數最高的那一篇。
+ *
+ * 分數一律是 0-6 的級分制（與單篇批改同一套），但**這裡是平均值所以會有小數**。
+ */
+export interface FinalReport {
+  /** final_report.id */
+  id: string;
+  studentId: string;
+  studentName: string;
+  /** 座號。校務系統沒給時是 undefined —— 排序時排到最後，不要當成 0 */
+  seatNo?: number;
+  /** 整學期的總平均級分 */
+  avgScore: number;
+  /** 四個評分面向各自的平均與 AI 摘要 */
+  dimensions: {
+    key: 'content' | 'structure' | 'vocabulary' | 'grammar';
+    /** 顯示名稱，對應 CATEGORY_LABELS */
+    label: string;
+    score: number;
+    summary: string;
+  }[];
+  /** 整體總評。AI 寫給學生看的鼓勵式評語 */
+  finalSummary: string;
+  /** 納入統計的作品數 */
+  articleCount: number;
+  /** 分數最高的那一篇：題目與當時的評語 */
+  best?: { title: string; remark: string };
+  /** 產生時使用的模型。沒有 AI 憑證時是「示範模式（未設定 AI）」 */
+  modelName: string;
+  /** 產生時間 */
+  createdAt: string;
 }

@@ -69,6 +69,53 @@ const SYSTEMPROMPT2 = `
 請直接輸出擷取後的全文，不要包含任何開頭語（例如「好的」、「以下是」）、結語、評論、或說明。
 `
 
+
+/**
+ * 會考寫作測驗的評分規準，直接寫進提示詞。
+ * 與前端 lib/scoring.ts 的 LEVEL_SPECS 同源，改動時兩邊要一起改。
+ */
+const ADHOC_RUBRIC = `
+六級分：立意取材能依題目及主旨選取適當材料，並能進一步闡述說明以凸顯主旨；結構完整、脈絡分明、前後連貫；遣詞用字精確、語句流暢；沒有錯別字，格式與標點符號正確。
+五級分：能選取適當材料但闡述不夠深入；結構完整但偶有轉折不順；用字大致精確、語句通順；少有錯別字，格式與標點大致正確。
+四級分：尚能選取材料但不能進一步說明；結構大致完整但偶有不連貫、轉折不清；用字大致正確但語句偶有不通順；有一些錯別字，格式與標點運用尚可。
+三級分：材料與主旨關聯不夠緊密；結構鬆散、前後不連貫；用字語句常有錯誤；錯別字較多，格式與標點運用不佳。
+二級分：材料與主旨關聯性低；結構不完整、組織鬆散；用字語句錯誤多且影響文意；錯別字極多。
+一級分：僅重複題目文字或全文語焉不詳；沒有明顯結構；用字語句嚴重錯誤。
+零級分：使用詩歌體、完全離題、只抄寫題目，或為空白卷。
+`.trim();
+
+/** 試批改的回傳結構。對應前端 `@udn/shared` 的 AiGradingResponse */
+const ADHOC_GRADING_SCHEMA = {
+    type: Type.OBJECT,
+    properties: {
+        totalScore: {
+            type: Type.NUMBER,
+            description: '整體級分，整數 0-6。這是綜觀全文後的整體評定，不是四項要素的平均。0 保留給詩歌體、完全離題、只抄題目或空白卷。',
+        },
+        categoryScores: {
+            type: Type.OBJECT,
+            description: '會考寫作測驗四項評分要素各自的表現，同樣以 0-6 整數表示',
+            properties: {
+                content: { type: Type.NUMBER, description: '立意取材：能否依題目與主旨選取適當材料並深入闡述（0-6）' },
+                structure: { type: Type.NUMBER, description: '結構組織：段落安排、脈絡是否分明連貫（0-6）' },
+                vocabulary: { type: Type.NUMBER, description: '遣詞造句：用字是否精確、語句是否流暢（0-6）' },
+                grammar: { type: Type.NUMBER, description: '錯別字、格式與標點符號：書寫正確性（0-6）' },
+            },
+            required: ['content', 'structure', 'vocabulary', 'grammar'],
+        },
+        feedback: {
+            type: Type.STRING,
+            description: '給國中學生看的整體評語，繁體中文，150-250 字。先肯定具體做得好的地方，再指出最關鍵的一個問題。語氣要像導師，不要像評分機器。',
+        },
+        suggestions: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: '三則具體可執行的修改建議，繁體中文。每則都要指出文章中的實際位置或句子，不要寫「多讀多寫」這種空話。',
+        },
+    },
+    required: ['totalScore', 'categoryScores', 'feedback', 'suggestions'],
+};
+
 /**
  * 讀試卷相關資料存取物件
  */
@@ -720,6 +767,111 @@ ${results.map((text, i) => `--- 第 ${i} 頁 ---\n${text}\n-------------------`)
             outputTokens: usageMetadata?.candidatesTokenCount || 0
         };
 
+    }
+
+    // ─────────────────────────────────────────────
+    // 以下三支是 Phase 5 從前端搬過來的。
+    //
+    // 原本 apps/web/services/geminiService.ts 直接在瀏覽器裡呼叫 Gemini，
+    // 金鑰被打進 bundle。提示詞原樣搬過來，行為不變，差別只在金鑰留在伺服器。
+    // ─────────────────────────────────────────────
+
+    /**
+     * 看圖寫作的出題參考：描述圖片內容、氛圍與可能的象徵意義。
+     */
+    async describeImage(base64Image: string, mimeType: string): Promise<string> {
+        const response = await this._client.models.generateContent({
+            model: this.modelName,
+            contents: {
+                role: 'user',
+                parts: [
+                    { inlineData: { data: base64Image, mimeType } },
+                    { text: '請以作文老師的角度，詳細描述這張圖片的內容、氛圍以及可能的象徵意義，作為「看圖寫作」的出題參考。請使用繁體中文回答，約 100 字左右。' },
+                ],
+            },
+        });
+        return response.text || '無法分析圖片內容';
+    }
+
+    /**
+     * 依題目與說明產生一份評分規準，給教師直接複製或修改。
+     */
+    async createRubric(topic: string, description: string): Promise<string> {
+        const prompt = `
+      請為以下作文題目與說明，設計一份詳細的「評分規準 (Grading Rubric)」。
+
+      題目：${topic}
+      說明：${description}
+
+      請包含以下內容：
+      1. 評分面向（例如：立意取材、結構組織、遣詞造句、錯別字與標點符號等）。
+      2. 每個面向的具體評分標準（例如：A級、B級、C級的表現）。
+      3. 配分建議（若有）。
+
+      請使用繁體中文，並以條列式或清晰的文字格式呈現，方便老師直接複製使用或修改。
+      語氣請專業且具建設性。
+    `;
+        const response = await this._client.models.generateContent({
+            model: this.modelName,
+            contents: prompt,
+            config: { temperature: 0.7 },
+        });
+        return response.text || '無法產生評分規準';
+    }
+
+    /**
+     * 不綁繳交紀錄的試批改。題庫頁讓教師貼一段文字試跑某一題的評分效果，
+     * 那段文字不屬於任何學生、也不會存進資料庫 —— 所以不能走
+     * `POST /service/instructor/grading/:submissionId`，需要這支無狀態的。
+     *
+     * 回傳形狀是前端的 `AiGradingResponse`（見 dal/simulated_grading.ts 的說明）。
+     */
+    async gradeAdhoc(essayContent: string, topic: string, criteria: string, aiModel: string) {
+        const prompt = `
+你是一位資深的國中國文教師，長期擔任國中教育會考寫作測驗的閱卷委員。
+請依照會考寫作測驗的評分規準，批改以下這篇國中學生的作文。
+
+【批改模型設定】${aiModel}
+
+【作文題目】
+${topic}
+
+【評分規準（六級分制）】
+${ADHOC_RUBRIC}
+${criteria ? `
+【本題的額外評分重點】
+${criteria}` : ''}
+
+【學生作品】
+${essayContent}
+
+【批改要求】
+1. totalScore 是**整體級分**，綜觀全文後給一個 0-6 的整數。
+   這不是四項要素的平均 —— 會考的級分是整體評定，
+   一篇結構稍弱但立意深刻的文章，仍然可能拿到五級分。
+2. categoryScores 是四項評分要素各自的表現，同樣用 0-6 整數，
+   供教師與學生了解強弱項，不要拿來回推 totalScore。
+3. 評語與建議請針對**國中階段**的程度書寫：
+   - 用學生看得懂的話，不要用文學評論術語
+   - 指出具體的句子或段落，不要泛泛而談
+   - 先肯定做得好的地方，再談要改的地方
+4. 遇到下列情形一律給零級分：使用詩歌體、完全離題、只抄寫題目、空白卷。
+5. 全部以繁體中文作答。
+`.trim();
+
+        const response = await this._client.models.generateContent({
+            model: this.modelName,
+            contents: prompt,
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: ADHOC_GRADING_SCHEMA,
+                temperature: 0.3, // 低溫度換取批改一致性
+            },
+        });
+
+        const text = response.text;
+        if (!text) throw new Error('No response from AI');
+        return JSON.parse(text);
     }
 
 }

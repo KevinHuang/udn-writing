@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /* ============================================================
    雲寫作教室 — 水墨楷書
@@ -563,4 +564,41 @@ html.dark {
     /* 只吃點擊，不畫任何東西 */
     background: transparent;
   }
+}
+
+
+/* ============================================================
+   markdown 內文（.prose-ink）
+   ------------------------------------------------------------
+   AI 批改產出的是一整份 markdown 報告（標題、清單、粗體、分隔線），
+   用 react-markdown 渲染之後需要排版樣式，那就是 @tailwindcss/typography
+   的 .prose。
+
+   ⚠️ **但不能直接用 .prose。** 它預設帶自己的 slate 灰階 ——
+      在碑拓（深色）模式會變成深底深字，完全讀不到。
+      這正是 CLAUDE.md「深色模式的色階是反轉的，不要寫死顏色」那一條。
+
+   也**不用** dark:prose-invert。這個專案的色彩 token 本來就會在
+   html.dark 底下換值，所以只要把 typography 的變數接到那些 token 上，
+   翻轉就自動跟著走 —— 一份宣告涵蓋兩種模式，不會有人改了淺色忘了改深色。
+
+   用法：<div className="prose prose-ink max-w-none">
+   ============================================================ */
+.prose-ink {
+  --tw-prose-body:          var(--color-text-secondary);
+  --tw-prose-headings:      var(--color-text-primary);
+  --tw-prose-lead:          var(--color-text-secondary);
+  --tw-prose-links:         var(--color-primary);
+  --tw-prose-bold:          var(--color-text-primary);
+  --tw-prose-counters:      var(--color-text-muted);
+  --tw-prose-bullets:       var(--color-border-strong);
+  --tw-prose-hr:            var(--color-border);
+  --tw-prose-quotes:        var(--color-text-primary);
+  --tw-prose-quote-borders: var(--color-border-strong);
+  --tw-prose-captions:      var(--color-text-muted);
+  --tw-prose-code:          var(--color-text-primary);
+  --tw-prose-pre-code:      var(--color-text-primary);
+  --tw-prose-pre-bg:        var(--color-surface-soft);
+  --tw-prose-th-borders:    var(--color-border-strong);
+  --tw-prose-td-borders:    var(--color-border);
 }

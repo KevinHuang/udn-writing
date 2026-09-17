@@ -1,16 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  MOCK_QUESTIONS,
-  MOCK_FOLDERS,
-  MOCK_COURSES,
-  MOCK_ASSIGNMENTS,
-  MOCK_SUBMISSIONS,
-  COURSE_ROSTERS,
   CURRENT_SEMESTER,
   } from "../mockData";
 
 import {
+  QuestionType,
   Submission,
   GradingResult,
   Assignment,
@@ -20,10 +15,9 @@ import {
   UserRole,
   SchoolCourse,
 } from "../types";
-import { gradeEssayWithAI } from "../services/geminiService";
-import { DEMO_STUDENT, STUDENT_ID, DEMO_TEACHER, newId } from "../lib/constants";
-import { visibleCourses, type CurrentUser } from "../lib/access";
-import { type LeaveMarks } from "../lib/leave";
+import { DEMO_STUDENT, DEMO_TEACHER } from "../lib/constants";
+import { type CurrentUser } from "../lib/access";
+import { type LeaveMarks, setLeave as setLeaveLocal } from "../lib/leave";
 import {
   setMark,
   dropMarks,
@@ -32,11 +26,29 @@ import {
   type SubmissionMarks,
 } from "../lib/submissionMarks";
 import { parseCourseName } from "../lib/schoolName";
-import { usePersistentState, useResetDemo } from "../lib/usePersistentState";
-import { swapQuestion } from "../lib/assignments";
-import { nextOrderFor } from "../lib/assignmentOrder";
+import { useResetDemo } from "../lib/usePersistentState";
+import { orderedAssignments } from "../lib/assignmentOrder";
 import { routes, type SemesterFilter } from "../lib/routes";
+import {
+  fetchSubmissionSummary, fetchSubmissionsByAssignment, fetchMarks, fetchLeaves,
+  saveGrading, resetGrading, returnFeedback, gradeWithAi,
+  clearSubmission, proxySubmit, submitEssay, setMark as setMarkApi, setLeave as setLeaveApi,
+} from "../api/submissions";
 import { ApiError } from "../api/client";
+import { fetchSemesters } from "../api/semesters";
+import { fetchCourses, fetchRoster, deleteCourse, setCourseArchived } from "../api/courses";
+import {
+  fetchAssignments, createAssignment, setAssignmentOpened, updateAssignmentConfig,
+  swapAssignmentQuestion, reorderAssignments, deleteAssignment,
+} from "../api/assignments";
+import {
+  fetchQuestions, createQuestion, updateQuestion, deleteQuestion, setQuestionArchived,
+} from "../api/questions";
+import {
+  fetchFolders, createFolder, renameFolder, deleteFolder,
+} from "../api/folders";
+import { useApiList } from "./useApiList";
+import type { Semester } from "../lib/semester";
 import {
   fetchSession, switchIdentity, toUserRole,
   type IdentityType, type Session,
@@ -149,16 +161,115 @@ function useAppStateValue() {
   }, [theme]);
   const studentName = DEMO_STUDENT.name;
   const studentCourseId = DEMO_STUDENT.courseId;
+  /**
+   * 學年期。來自後端的 `semesters` 表，不再是 mockData 的寫死清單。
+   *
+   * 初值先用 CURRENT_SEMESTER 頂著（避免第一次 render 時各處
+   * `course.semester === currentSemester` 全部落空），拿到真的就換掉。
+   */
   const [currentSemester, setCurrentSemester] = useState(CURRENT_SEMESTER);
-  const [courses, setCourses] = usePersistentState<Course[]>("courses", MOCK_COURSES);
-  const [questions, setQuestions] = usePersistentState<Question[]>("questions", MOCK_QUESTIONS);
+  const [semesterOptions, setSemesterOptions] = useState<Semester[]>([]);
+
+  useEffect(() => {
+    if (sessionStatus !== 'ready') return;   // 未登入時打了也是 401
+    let cancelled = false;
+    fetchSemesters()
+      .then(({ options, current }) => {
+        if (cancelled) return;
+        setSemesterOptions(options);
+        if (current) setCurrentSemester(current.value);
+      })
+      .catch((e) => console.error('取得學年期失敗:', e));
+    return () => { cancelled = true; };
+  }, [sessionStatus]);
+  /**
+   * 課程。**目前身分看得到的那些** —— 範圍由 GET /service/courses 決定，
+   * 管理者拿到全部、教師只拿到自己的。前端不再自己過濾。
+   */
+  const loadCourses = useCallback(() => fetchCourses(), []);
+  const {
+    items: courses, setItems: setCourses, reload: reloadCourses,
+  } = useApiList<Course>(loadCourses, sessionStatus === 'ready');
+
+  /**
+   * 班級名冊，依課程 id 快取。
+   *
+   * **不預先全部載入** —— 一位教師可能有四十幾個班，開一個畫面打四十幾個
+   * 請求只為了其中一個班的名冊，不划算。需要的頁面呼叫 ensureRoster()。
+   */
+  const [rosters, setRosters] = useState<Record<string, { seatNo: number; name: string }[]>>({});
+  const ensureRoster = useCallback(async (courseId: string) => {
+    if (!courseId) return;
+    setRosters((prev) => (courseId in prev ? prev : prev));   // 已有就不重打
+    try {
+      const entries = await fetchRoster(courseId);
+      setRosters((prev) => ({ ...prev, [courseId]: entries.map(({ seatNo, name }) => ({ seatNo, name })) }));
+    } catch (e) {
+      console.error(`載入名冊失敗 (course ${courseId}):`, e);
+    }
+  }, []);
+  /**
+   * 題目與題庫資料夾。
+   *
+   * 兩者的可視範圍在後端是**同一套規則**（自己建的 + 所屬組織的共享），
+   * 所以一起載入 —— 分開載的話會短暫出現「題目在、它的資料夾還沒到」，
+   * 畫面上那一題會跳到未分類。
+   */
+  const loadQuestions = useCallback(() => fetchQuestions(), []);
+  const {
+    items: questions, reload: reloadQuestions,
+  } = useApiList<Question>(loadQuestions, sessionStatus === 'ready');
+
+  const loadFolders = useCallback(() => fetchFolders(), []);
+  const {
+    items: folders, reload: reloadFolders,
+  } = useApiList<Folder>(loadFolders, sessionStatus === 'ready');
+
+  /**
+   * 題目與資料夾的異動。
+   *
+   * 一律「呼叫 API → 重新載入」，不做樂觀更新 —— 樂觀更新要自己維護
+   * 一份與伺服器平行的真相，而這個專案已經在「同一份資訊存兩處」上
+   * 吃過四次虧（見 CLAUDE.md）。題庫的操作不頻繁，多一次往返換掉一整類
+   * 不同步的 bug，划算。
+   */
+  const questionOps = {
+    create: async (q: Partial<Question>) => { await createQuestion(q); await reloadQuestions(); },
+    update: async (id: string, q: Partial<Question>) => { await updateQuestion(id, q); await reloadQuestions(); },
+    remove: async (id: string) => { await deleteQuestion(id); await reloadQuestions(); },
+    setArchived: async (id: string, archived: boolean) => {
+      await setQuestionArchived(id, archived); await reloadQuestions();
+    },
+  };
+
+  const folderOps = {
+    create: async (name: string, parentId: string | null, type: QuestionType) => {
+      await createFolder(name, parentId, type); await reloadFolders();
+    },
+    rename: async (id: string, name: string, parentId: string | null) => {
+      await renameFolder(id, name, parentId); await reloadFolders();
+    },
+    // 刪資料夾會把底下的題目退回上一層，所以題目也要重載
+    remove: async (id: string) => {
+      await deleteFolder(id);
+      await Promise.all([reloadFolders(), reloadQuestions()]);
+    },
+  };
   /**
    * 題庫資料夾。原本收在 QuestionBank 的 useState 裡，離開題庫中心
-   * 元件就被卸載，新增或刪除的資料夾會整個復原 —— 看起來像沒存到。
+   * 元件就被卸載，新增或刪除的資料夾會整個復原 —— 看起來像沒：教師打開同步視窗 → 從校務系統挑班級 → 匯入成自己的課程
+   *   後端：管理者跑 POST /service/admin/sync/school → 課程、授課關聯、
+   *         學生名冊一次全部從 DevAPI 建好 → 教師只是「看到」自己的課
+   *
+   * 後端沒有「把這個班加進我的名下」這種動作。要做的話等於是讓教師
+   * 自己建立 uc_instructor 關聯 —— 那是權限問題（同校的老師可以認領
+   * 任何一個班嗎？），不是我可以逕自決定的。
+   *
+   * 在決定之前刻意維持原狀，不要做成半接的樣子：接一半的話，
+   * 老師按下匯入會看到課程出現在畫面上，重新整理就不見了。
+   *
+   * 見 artifacts/api-gap.md 的開放問題。
    */
-  const [folders, setFolders] = usePersistentState<Folder[]>("folders", MOCK_FOLDERS);
-  const [rosters, setRosters] = usePersistentState<Record<string, { seatNo: number; name: string }[]>>("rosters", COURSE_ROSTERS);
-
   const handleSyncCourses = (selected: SchoolCourse[]) => {
     const newCourses: Course[] = selected.map((sc) => {
       // 校務系統只給一整串課程名稱。在這裡解析一次、把結果存起來，
@@ -198,36 +309,135 @@ function useAppStateValue() {
    * 作業與作文會變成指向不存在課程的孤兒資料，之後統計與關心名單
    * 都會把它們算進去。
    */
-  const handleDeleteCourse = (courseId: string) => {
-    const doomed = new Set(
-      assignments.filter((a) => a.courseId === courseId).map((a) => a.id),
-    );
-    setSubmissions((prev) => prev.filter((s) => !doomed.has(s.assignmentId)));
-    setAssignments((prev) => prev.filter((a) => a.courseId !== courseId));
-    setRosters((prev) => {
-      const next = { ...prev };
-      delete next[courseId];
-      return next;
-    });
-    setCourses((prev) => prev.filter((c) => c.id !== courseId));
+  /**
+   * 刪除課程。
+   *
+   * 資料庫**沒有任何外鍵**，所以底下的作業、繳交、批改結果要靠後端
+   * 自己清乾淨（見 artifacts/spec.md）。前端這裡只負責呼叫與重新載入 ——
+   * 不要在前端「順便」清本地狀態裡的關聯資料，那會變成兩套清理邏輯，
+   * 而只有其中一套跑得到真正的資料庫。
+   */
+  /**
+   * 課程卡片上的異動。目前唯一**存得進資料庫**的是封存（`course.is_active`）。
+   *
+   * 其餘欄位刻意只留在本地：`aiModels` 沒有欄位可存，
+   * `city` / `schoolName` / `schoolLevel` 來自 school 資料表、由校務同步維護，
+   * 從這裡寫回去也不會是真相。跟題庫一樣「呼叫 API → 重新載入」，
+   * 不做樂觀更新。
+   */
+  const handleUpdateCourse = async (updated: Course) => {
+    const before = courses.find((c) => c.id === updated.id);
+    // 先把本地換掉，沒有後端對應的欄位（aiModels…）就只能靠這一步
+    setCourses((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+    if (!before || before.isArchived === updated.isArchived) return;
+    try {
+      await setCourseArchived(updated.id, updated.isArchived === true);
+      await reloadCourses();
+    } catch (e) {
+      console.error('封存課程失敗:', e);
+      // 寫不進資料庫就把畫面退回去，不要讓使用者以為已經封存了
+      setCourses((prev) => prev.map((c) => (c.id === before.id ? before : c)));
+    }
   };
 
-  /** 這個身分看得到的課程。所有教師端畫面都要用這一份，不要直接吃 courses */
-  const myCourses = visibleCourses(courses, currentUser);
+  const handleDeleteCourse = async (courseId: string) => {
+    try {
+      await deleteCourse(courseId);
+      await reloadCourses();
+      setRosters((prev) => {
+        const next = { ...prev };
+        delete next[courseId];
+        return next;
+      });
+    } catch (e) {
+      console.error('刪除課程失敗:', e);
+    }
+  };
 
-  const [assignments, setAssignments] = usePersistentState<Assignment[]>("assignments", MOCK_ASSIGNMENTS);
+  /**
+   * 這個身分看得到的課程。
+   *
+   * **現在就是 courses 本身** —— 範圍已經由伺服器端決定（GET /service/courses），
+   * 前端再過濾一次不但多餘，而且危險：`visibleCourses()` 是用**姓名**比對的，
+   * 姓名對不上就會把整份清單濾成空的，而畫面上看起來只是「你沒有課」。
+   *
+   * 保留這個名字是因為十幾個畫面都在用它，而且語意沒變。
+   */
+  const myCourses = courses;
+
+  /** 這位教師所有班級的作業。狀態與排序都由後端給（見 api/assignments.ts） */
+  const loadAssignments = useCallback(() => fetchAssignments(), []);
+  const {
+    items: assignments, reload: reloadAssignments,
+  } = useApiList<Assignment>(loadAssignments, sessionStatus === 'ready');
   /**
    * 請假註記（作業 × 學生）。逾期未繳分成真的沒寫和請假兩種，
    * 只有老師知道差別 —— 見 lib/leave.ts。
    */
-  const [leaveMarks, setLeaveMarks] = usePersistentState<LeaveMarks>("leave", {});
   /**
-   * 作品標記：佳作與預選（鍵是 submission.id）。取用的地方還沒決定，
-   * 這裡只負責記住哪些作品被蓋了什麼章。見 lib/submissionMarks.ts
+   * 繳交、作品標記、請假註記。
+   *
+   * 繳交分兩層：這裡載的是**摘要**（不含作文全文）—— 實測最忙的教師有
+   * 2,091 筆、內容合計 2.8 MB，全部拉下來不可行。批改頁需要全文時再
+   * 用 ensureSubmissions() 補那一份作業（見 api/submissions.ts）。
    */
-  const [submissionMarks, setSubmissionMarks] = usePersistentState<SubmissionMarks>("marks", {});
-  const [submissions, setSubmissions] =
-    usePersistentState<Submission[]>("submissions", MOCK_SUBMISSIONS);
+  const loadSubmissions = useCallback(() => fetchSubmissionSummary(), []);
+  const {
+    items: submissions, setItems: setSubmissions, reload: reloadSubmissions,
+  } = useApiList<Submission>(loadSubmissions, sessionStatus === 'ready');
+
+  const loadMarks = useCallback(() => fetchMarks(), []);
+  const [submissionMarks, setSubmissionMarks] = useState<SubmissionMarks>({});
+  const loadLeaves = useCallback(() => fetchLeaves(), []);
+  const [leaveMarks, setLeaveMarks] = useState<LeaveMarks>({});
+
+  useEffect(() => {
+    if (sessionStatus !== 'ready') return;
+    let cancelled = false;
+    void Promise.all([loadMarks(), loadLeaves()])
+      .then(([marks, leaves]) => {
+        if (cancelled) return;
+        setSubmissionMarks(marks);
+        setLeaveMarks(leaves);
+      })
+      .catch((e) => console.error('載入標記／請假失敗:', e));
+    return () => { cancelled = true; };
+  }, [sessionStatus, loadMarks, loadLeaves]);
+
+  /**
+   * 設定／取消請假註記。
+   *
+   * 先前是把 setLeaveMarks 直接交給畫面，讓它自己改本地的 Record ——
+   * 接上後端之後那行不通：改本地不會寫進資料庫，重新整理就回去了。
+   * 樂觀更新一次（畫面立刻反應），失敗再退回去。
+   */
+  const toggleLeave = async (assignmentId: string, studentId: string, onLeave: boolean) => {
+    setLeaveMarks((prev) => setLeaveLocal(prev, assignmentId, studentId, onLeave));
+    try {
+      await setLeaveApi(assignmentId, studentId, onLeave);
+    } catch (e) {
+      console.error('請假註記失敗:', e);
+      setLeaveMarks((prev) => setLeaveLocal(prev, assignmentId, studentId, !onLeave));
+    }
+  };
+
+  /**
+   * 補上某一份作業的**完整**繳交（含作文與評語），就地併進 submissions。
+   * 批改清單與批改頁進來時呼叫 —— 摘要沒有作文，直接開會是一張空白稿。
+   */
+  const ensureSubmissions = useCallback(async (assignmentId: string) => {
+    if (!assignmentId) return;
+    try {
+      const full = await fetchSubmissionsByAssignment(assignmentId);
+      setSubmissions((prev) => {
+        const others = prev.filter((s) => s.assignmentId !== assignmentId);
+        return [...others, ...full];
+      });
+    } catch (e) {
+      console.error(`載入繳交失敗 (assignment ${assignmentId}):`, e);
+    }
+  }, [setSubmissions]);
+
 
   /**
    * 作業的新增／修改／刪除。
@@ -240,52 +450,68 @@ function useAppStateValue() {
    * 新增班級（create）、改截止日（update）、取消某些班（delete），
    * 分開呼叫會產生中間狀態。
    */
-  const handleAssignmentOperation = (
+  /**
+   * 作業的批次異動（派發精靈與課程作業清單都走這一支）。
+   *
+   * 介面維持「建立／更新／刪除」三份清單不變，但內部改成**比對差異**再
+   * 發對應的 API —— 後端沒有「整包覆蓋」的 endpoint，而且也不該有：
+   * 開關、改截止日、換順序是三件不同的事，各自有各自的授權與副作用。
+   *
+   * 更新的部分只發真的變了的那幾項。全部送一遍看起來比較簡單，
+   * 但那會把「老師只是拖了一下順序」變成「順便重設了截止日」。
+   */
+  const handleAssignmentOperation = async (
     creates: Assignment[],
     updates: Assignment[],
     deleteIds: string[],
   ) => {
-    setAssignments((prev) => {
-      const updateMap = new Map(updates.map((a) => [a.id, a]));
-      const kept = prev
-        .filter((a) => !deleteIds.includes(a.id))
-        .map((a) => updateMap.get(a.id) ?? a);
+    try {
+      for (const a of creates) {
+        await createAssignment(a.courseId, {
+          questionId: a.questionId,
+          deadline: a.config?.deadline,
+          allowLateSubmission: a.config?.allowLateSubmission,
+        });
+      }
 
-      /*
-        新作業一律接在該班級的最後面。
+      const reorderedCourses = new Set<string>();
+      for (const next of updates) {
+        const prev = assignments.find((x) => x.id === next.id);
+        if (!prev) continue;
 
-        order 是選填的，不給也還是排在最後（見 lib/assignmentOrder.ts），
-        但那是「碰巧」排在最後 —— 老師拖過一次之後所有作業都會有 order，
-        沒有 order 的新作業就會和已排好的混在一起。在唯一的建立入口
-        直接補上，不管是誰呼叫的都不會漏。
-        一次派多份時要逐一遞增，否則同一批全部拿到同一個號碼。
-      */
-      const nextOrder: Record<string, number> = {};
-      const seeded = creates.map((a) => {
-        if (a.order != null) return a;
-        if (nextOrder[a.courseId] == null) {
-          nextOrder[a.courseId] = nextOrderFor(kept, a.courseId);
+        if (prev.status !== next.status) {
+          // 三態只有 Draft ⇄ Published 是老師按得到的；Closed 是
+          // 「開過又收回」的結果，所以這裡只需要送 opened 布林
+          await setAssignmentOpened(next.id, next.status === 'Published');
         }
-        return { ...a, order: nextOrder[a.courseId]++ };
-      });
+        if (prev.config?.deadline !== next.config?.deadline
+            || prev.config?.allowLateSubmission !== next.config?.allowLateSubmission) {
+          await updateAssignmentConfig(next.id, {
+            deadline: next.config?.deadline,
+            allowLateSubmission: next.config?.allowLateSubmission,
+          });
+        }
+        if (prev.order !== next.order) reorderedCourses.add(next.courseId);
+      }
 
-      return [...kept, ...seeded];
-    });
+      // 順序整班一起送 —— 後端收的是「這個班的作業依序排好的 id 陣列」。
+      // 先把更新後的版本疊回這個班的清單，再用 orderedAssignments() 排序，
+      // 與畫面上看到的順序走同一支函式（見 lib/assignmentOrder.ts）。
+      for (const courseId of reorderedCourses) {
+        const merged = assignments.map((a) => updates.find((u) => u.id === a.id) ?? a);
+        const ordered = orderedAssignments(merged, courseId);
+        await reorderAssignments(courseId, ordered.map((a) => a.id));
+      }
 
-    // 作業被刪除時，它底下的繳交紀錄也要一併清掉，否則會變成孤兒資料
-    if (deleteIds.length) {
-      // 標記指向 submission.id，作品沒了標記也要走，不然會變成孤兒。
-      // 先從目前的 submissions 算出要清哪些，不要在 setSubmissions 的
-      // updater 裡再呼叫 setState —— updater 必須是純函式
-      const doomedIds = submissions
-        .filter((sub) => deleteIds.includes(sub.assignmentId))
-        .map((sub) => sub.id);
-      setSubmissionMarks((marks) => dropMarks(marks, doomedIds));
-      setSubmissions((prev) =>
-        prev.filter((sub) => !deleteIds.includes(sub.assignmentId)),
-      );
+      // 刪除的連鎖清理（繳交、批改、標記、請假）在後端一個交易裡做完
+      for (const id of deleteIds) await deleteAssignment(id);
+
+      await reloadAssignments();
+    } catch (e) {
+      console.error('作業異動失敗:', e);
     }
   };
+
   /**
    * 蓋章／取消。清單與個人批改頁共用同一支 ——
    * 兩邊各寫一次 setSubmissionMarks 就是下一個不同步的來源。
@@ -294,14 +520,18 @@ function useAppStateValue() {
    * 章不是 GradingResult 的一部分，混進去只會讓老師分不清
    * 那顆存檔鍵在管什麼。
    */
-  const toggleMark = (submissionId: string, kind: MarkKind) =>
-    setSubmissionMarks((prev) =>
-      setMark(prev, submissionId, kind, !hasMark(prev, submissionId, kind)),
-    );
+  const toggleMark = async (submissionId: string, kind: MarkKind) => {
+    const next = !hasMark(submissionMarks, submissionId, kind);
+    try {
+      await setMarkApi(submissionId, kind, next);
+      setSubmissionMarks((prev) => setMark(prev, submissionId, kind, next));
+    } catch (e) {
+      console.error('蓋章失敗:', e);
+    }
+  };
 
-  const [selectedSubmissionIds, setSelectedSubmissionIds] = useState<string[]>(
-    [],
-  );
+  /** 批改清單上被勾選的那些（批次批改／發還／重置用） */
+  const [selectedSubmissionIds, setSelectedSubmissionIds] = useState<string[]>([]);
   const [isBatchGrading, setIsBatchGrading] = useState(false);
   const [batchGradingProgress, setBatchGradingProgress] = useState({
     current: 0,
@@ -324,103 +554,28 @@ function useAppStateValue() {
   const [gradingResetSeq, setGradingResetSeq] = useState(0);
  
   const handleSubmitEssay = async (assignmentId: string, content: string) => {
-    // Simulate uploading delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
-
-    const submittedAt = new Date().toISOString();
-    // 同一位學生對同一份作業只該有一筆繳交紀錄，再次繳交時就地更新，
-    // 不要再 prepend 一筆 —— 否則老師的批改清單會出現同一位學生的重複列。
-    const existing = submissions.find(
-      (s) => s.assignmentId === assignmentId && s.studentId === STUDENT_ID,
-    );
-    const submissionId = existing?.id ?? newId('sub-new');
-
-    setSubmissions((prev) => {
-      const exists = prev.some((s) => s.id === submissionId);
-      if (!exists) {
-        const created: Submission = {
-          id: submissionId,
-          assignmentId,
-          studentId: STUDENT_ID,
-          studentName,
-          submittedAt,
-          status: "Pending",
-          content,
-        };
-        return [created, ...prev];
-      }
-
-      return prev.map((s) =>
-        s.id === submissionId
-          ? {
-              ...s,
-              content,
-              submittedAt,
-              status: "Pending" as const,
-              result: undefined,
-            }
-          : s,
-      );
-    });
-
-    // Simulate AI grading in background
-    setTimeout(async () => {
-      try {
-        const assignment = assignments.find((a) => a.id === assignmentId);
-        const question = questions.find(
-          (q) => q.id === assignment?.questionId,
-        );
-        const result = await gradeEssayWithAI(
-          content,
-          question?.content || "",
-          question?.gradingCriteria || "",
-        );
-
-        setSubmissions((prev) =>
-          prev.map((s) =>
-            s.id === submissionId
-              ? {
-                  ...s,
-                  /*
-                    批改完停在「已批改」，**不自動發還**。
-                    這裡原本寫死 status: "Published"（註解是 Auto publish for
-                    student view demo），等於學生交出去兩秒後就被自動批改並發還，
-                    和批次批改、單篇批改的規則相反 —— 發還一律由老師決定。
-                  */
-                  status: "Graded" as const,
-                  result: {
-                    totalScore: result.totalScore,
-                    categoryScores: result.categoryScores,
-                    /*
-                      AI 回傳的欄位叫 feedback，GradingResult 要的是 aiFeedback。
-                      原本直接 ...result 展開，於是這條路徑存出來的批改結果
-                      **沒有 AI 評語**（其他地方都有正確對應）。
-                    */
-                    aiFeedback: result.feedback,
-                    suggestions: result.suggestions,
-                    teacherFeedback: "",
-                    isPublished: false,
-                  },
-                }
-              : s,
-          ),
-        );
-      } catch (e) {
-        console.error("Background AI grading failed", e);
-      }
-    }, 2000);
+    try {
+      await submitEssay(assignmentId, content);
+      await reloadSubmissions();
+    } catch (e) {
+      console.error('繳交失敗:', e);
+      throw e;   // 讓畫面知道沒成功，不要顯示「已繳交」
+    }
   };
-  const handleSaveGrading = (id: string, result: GradingResult, shouldNavigateBack: boolean = true) => {
-    const status = result.isPublished ? "Published" : "Graded";
-
-    setSubmissions((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, result, status } : s)),
-    );
-
-    // 先前這裡要手動把 selectedSubmission 這份快照一起更新，否則畫面上的
-    // 狀態還停在「待批改」。現在批改頁是**從網址的 submissionId 去
-    // submissions 裡現查**的，submissions 一變畫面就跟著變 ——
-    // 那個同步問題連同那份快照一起消失了。
+  const handleSaveGrading = async (
+    id: string, result: GradingResult, shouldNavigateBack: boolean = true,
+  ) => {
+    try {
+      await saveGrading(id, result);
+      // 存檔會產生一筆新版本讓舊的失效，所以整批重載才看得到正確的狀態
+      await reloadSubmissions();
+      await ensureSubmissions(
+        submissions.find((s) => s.id === id)?.assignmentId ?? '',
+      );
+    } catch (e) {
+      console.error('存檔失敗:', e);
+      return;
+    }
 
     if (shouldNavigateBack) {
       // 先前是「手刻的 viewHistory 有東西就 pop，否則回批改清單」。
@@ -431,111 +586,60 @@ function useAppStateValue() {
     }
   };
 
+  /**
+   * 批次 AI 批改。
+   *
+   * 逐筆呼叫後端而不是做一支批次 endpoint —— 一個班二三十人，
+   * 而批次的錯誤處理（一半成功一半失敗）比省下的往返麻煩得多。
+   * 逐筆也才做得出進度條。
+   */
   const handleBatchGrade = async (selectedAssignmentId: string) => {
-
-    const assignment = assignments.find((a) => a.id === selectedAssignmentId);
-    const topic = assignment
-      ? assignment.title
-      : "Write about a memorable experience";
-
-    const filteredSubmissions = submissions.filter(
-      (s) => s.assignmentId === selectedAssignmentId,
+    const pool = submissions.filter(
+      (s) => s.assignmentId === selectedAssignmentId && s.status === 'Pending',
     );
-
-    let targets = filteredSubmissions.filter(
-      (s) => s.status === "Pending",
-    );
-    if (selectedSubmissionIds.length > 0) {
-      targets = filteredSubmissions.filter(
-        (s) =>
-          selectedSubmissionIds.includes(s.id) &&
-          s.status === "Pending",
-      );
-    }
-
-    if (targets.length === 0) {
-      alert("沒有需要批改的作業");
-      return;
-    }
+    const targets = selectedSubmissionIds.length > 0
+      ? pool.filter((s) => selectedSubmissionIds.includes(s.id))
+      : pool;
+    if (targets.length === 0) return;
 
     setIsBatchGrading(true);
     setBatchGradingProgress({ current: 0, total: targets.length });
-
-    const newSubmissions = [...submissions];
-
-    for (let i = 0; i < targets.length; i++) {
-      const target = targets[i];
-      setCurrentlyGradingId(target.id);
-      try {
-        const aiResponse = await gradeEssayWithAI(
-          target.content,
-          topic,
-          "Standard high school essay criteria",
-          selectedAiModel || "預設批改模型",
-        );
-        const newResult: GradingResult = {
-          totalScore: aiResponse.totalScore,
-          categoryScores: aiResponse.categoryScores,
-          aiFeedback: aiResponse.feedback,
-          teacherFeedback: "",
-          suggestions: aiResponse.suggestions,
-          isPublished: false,
-        };
-
-        const index = newSubmissions.findIndex((s) => s.id === target.id);
-        if (index !== -1) {
-          newSubmissions[index] = {
-            ...newSubmissions[index],
-            result: newResult,
-            status: "Graded",
-          };
-        }
-      } catch (err) {
-        console.error(`Failed to grade submission ${target.id}`, err);
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        setCurrentlyGradingId(targets[i].id);
+        setBatchGradingProgress({ current: i + 1, total: targets.length });
+        await gradeWithAi(targets[i].id);
       }
-      setBatchGradingProgress({ current: i + 1, total: targets.length });
-      setSubmissions([...newSubmissions]); // Update state to show progress
+      await reloadSubmissions();
+      await ensureSubmissions(selectedAssignmentId);
+    } catch (e) {
+      console.error('批次批改失敗:', e);
+    } finally {
+      setCurrentlyGradingId(null);
+      setIsBatchGrading(false);
+      setSelectedSubmissionIds([]);
     }
-
-    setCurrentlyGradingId(null);
-    setSelectedSubmissionIds([]);
-    setIsBatchGrading(false);
   };
 
-  const handleBatchPublish = (selectedAssignmentId: string) => {
-
-    const filteredSubmissions = submissions.filter(
-      (s) => s.assignmentId === selectedAssignmentId,
+  /** 批次發還。後端只會動到呼叫者教的班，別班的 id 會被安靜略過。 */
+  const handleBatchPublish = async (selectedAssignmentId: string) => {
+    const pool = submissions.filter(
+      (s) => s.assignmentId === selectedAssignmentId && s.status === 'Graded',
     );
+    const targets = selectedSubmissionIds.length > 0
+      ? pool.filter((s) => selectedSubmissionIds.includes(s.id))
+      : pool;
+    if (targets.length === 0) return;
 
-    let targets = [];
-    if (selectedSubmissionIds.length > 0) {
-      targets = filteredSubmissions.filter(
-        (s) => selectedSubmissionIds.includes(s.id) && s.status === "Graded",
-      );
-    } else {
-      targets = filteredSubmissions.filter((s) => s.status === "Graded");
+    try {
+      await returnFeedback(targets.map((s) => s.id));
+      await reloadSubmissions();
+      await ensureSubmissions(selectedAssignmentId);
+    } catch (e) {
+      console.error('發還失敗:', e);
+    } finally {
+      setSelectedSubmissionIds([]);
     }
-
-    if (targets.length === 0) {
-      alert("沒有需要發還的作業");
-      return;
-    }
-
-    const newSubmissions = submissions.map((s) => {
-      if (targets.find((t) => t.id === s.id)) {
-        return {
-          ...s,
-          // as const：不加的話 status 會被推論成 string，對不上 SubmissionStatus
-          status: "Published" as const,
-          result: s.result ? { ...s.result, isPublished: true } : undefined,
-        };
-      }
-      return s;
-    });
-
-    setSubmissions(newSubmissions);
-    setSelectedSubmissionIds([]);
   };
 
   /**
@@ -545,95 +649,85 @@ function useAppStateValue() {
    * 而且 1.5 秒後會自動送 AI 批改。代繳交要記在**指定的**學生名下，
    * 而且停在「待批改」，讓老師自己決定何時按「批次批改」。
    */
-  const handleProxySubmit = (selectedAssignmentId: string, studentId: string,
-    studentName: string,
-    content: string,) => {
-    const submittedAt = new Date().toISOString();
-
-    setSubmissions((prev) => {
-      const existing = prev.find(
-        (x) =>
-          x.assignmentId === selectedAssignmentId && x.studentId === studentId,
-      );
-      // 學生留了草稿的話就地覆蓋，不要多長一筆出來
-      if (existing) {
-        return prev.map((x) =>
-          x.id === existing.id
-            ? {
-                ...x,
-                content,
-                submittedAt,
-                status: "Pending" as const,
-                result: undefined,
-              }
-            : x,
-        );
-      }
-      const created: Submission = {
-        id: newId("sub-proxy"),
-        assignmentId: selectedAssignmentId,
-        studentId,
-        studentName,
-        content,
-        submittedAt,
-        status: "Pending",
-      };
-      return [created, ...prev];
-    });
+  /** 教師代學生繳交（拍照 + OCR 之後把文字送上來）。也算已送出。 */
+  const handleProxySubmit = async (
+    selectedAssignmentId: string,
+    studentId: string,
+    _studentName: string,
+    content: string,
+  ) => {
+    try {
+      await proxySubmit(selectedAssignmentId, studentId, content);
+      await reloadSubmissions();
+      await ensureSubmissions(selectedAssignmentId);
+      setIsProxySubmitOpen(false);
+    } catch (e) {
+      console.error('代繳交失敗:', e);
+    }
   };
 
-  const handleBatchReset = (selectedAssignmentId: string) => {
-
-    const filteredSubmissions = submissions.filter(
-      (s) => s.assignmentId === selectedAssignmentId,
+  /**
+   * 批次重置批改。
+   *
+   * **一定要先勾選** —— 與按鈕的啟動條件一致。這一步會清掉分數與評語，
+   * 不該有「沒選就整批重置」的預設行為。
+   */
+  const handleBatchReset = async (selectedAssignmentId: string) => {
+    if (selectedSubmissionIds.length === 0) return;
+    const targets = submissions.filter(
+      (s) => s.assignmentId === selectedAssignmentId
+        && selectedSubmissionIds.includes(s.id)
+        && (s.status === 'Graded' || s.status === 'Published'),
     );
+    if (targets.length === 0) return;
 
-    // 一定要先勾選 —— 與按鈕的啟動條件一致。
-    // 這一步會清掉分數與評語，不該有「沒選就整批重置」的預設行為。
-    if (selectedSubmissionIds.length === 0) {
-      alert("請先勾選要重置的作業（僅限「已批改」、尚未發還的）。");
-      return;
+    try {
+      for (const s of targets) await resetGrading(s.id);
+      await reloadSubmissions();
+      await ensureSubmissions(selectedAssignmentId);
+      setGradingResetSeq((n) => n + 1);
+    } catch (e) {
+      console.error('批次重置失敗:', e);
+    } finally {
+      setSelectedSubmissionIds([]);
     }
-
-    const targets = filteredSubmissions.filter(
-      (s) => selectedSubmissionIds.includes(s.id) && s.status === "Graded",
-    );
-
-    if (targets.length === 0) {
-      alert("勾選的項目裡沒有「已批改」的作業。已發還或待批改的無法重置。");
-      return;
-    }
-
-    if (!window.confirm(`確定要重置這 ${targets.length} 份作業的批改嗎？批改結果會被清除，作業回到「待批改」。`)) return;
-
-    const newSubmissions = submissions.map((s) => {
-      if (targets.find((t) => t.id === s.id)) {
-        return {
-          ...s,
-          status: "Pending" as const,
-          result: undefined,
-        };
-      }
-      return s;
-    });
-
-    setSubmissions(newSubmissions);
-    setSelectedSubmissionIds([]);
   };
 
-  const handleResetGrading = (id: string) => {
-    const sub = submissions.find((s) => s.id === id);
-    if (!sub) return;
-
-    const targetStatus = "Pending" as const;
-
-    setSubmissions((prev) =>
-      prev.map((s) =>
-        s.id === id ? { ...s, status: targetStatus, result: undefined } : s,
-      ),
-    );
-
+  /**
+   * 單篇 AI 批改。
+   *
+   * 走的是批次批改同一支後端端點 —— 它會把結果**直接寫成一筆
+   * `is_ai = true` 的有效版本**，並記下 token 用量。所以按完就已經存好了，
+   * 不需要老師再按一次儲存；老師之後修改評語會另外產生 `is_ai = false` 的新版本。
+   *
+   * 完成後把 GradingEditor 重掛（理由同重置：它把結果收在自己的 state 裡）。
+   *
+   * **這一支刻意讓錯誤往外丟**，不像其他 handler 自己吞掉 ——
+   * 呼叫端 GradingEditor 要靠它決定是否跳出「AI 批改失敗」。
+   */
+  const handleAutoGrade = async (id: string) => {
+    const assignmentId = submissions.find((s) => s.id === id)?.assignmentId;
+    await gradeWithAi(id);
+    await reloadSubmissions();
+    if (assignmentId) await ensureSubmissions(assignmentId);
     setGradingResetSeq((n) => n + 1);
+  };
+
+  /**
+   * 重置批改：把有效的那一筆設為失效，狀態退回待批改。**作文還在。**
+   * 歷史紀錄留著（is_valid = false），老師會重批。
+   */
+  const handleResetGrading = async (id: string) => {
+    try {
+      await resetGrading(id);
+      await reloadSubmissions();
+      const assignmentId = submissions.find((s) => s.id === id)?.assignmentId;
+      if (assignmentId) await ensureSubmissions(assignmentId);
+      // 只有重置需要把 GradingEditor 重掛 —— 它把結果收在自己的 state 裡
+      setGradingResetSeq((n) => n + 1);
+    } catch (e) {
+      console.error('重置批改失敗:', e);
+    }
   };
 
   /**
@@ -655,14 +749,19 @@ function useAppStateValue() {
         "作文內容、分數與評語都會被刪除，學生端也會一併清空，" +
         "這份作業會回到「未繳交」，學生可以重新繳交。\n\n" +
         "此操作無法復原。",
-      onConfirm: () => {
-        // 這篇被清掉了，它的佳作／預選標記也不該留著
-        setSubmissionMarks((marks) => dropMarks(marks, [submission.id]));
-        setSubmissions((prev) => prev.filter((x) => x.id !== submission.id));
-        setSelectedSubmissionIds((prev) =>
-          prev.filter((id) => id !== submission.id),
-        );
+      onConfirm: async () => {
         setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        try {
+          // 後端會一併刪掉批改結果與作品標記（作品標記靠外鍵 CASCADE）
+          await clearSubmission(submission.id);
+          await reloadSubmissions();
+          await ensureSubmissions(submission.assignmentId);
+          // 本地那份標記快取也要跟著清，不然畫面上那顆章會留到下次重載
+          setSubmissionMarks((marks) => dropMarks(marks, [submission.id]));
+          setSelectedSubmissionIds((prev) => prev.filter((id) => id !== submission.id));
+        } catch (e) {
+          console.error('清除繳交失敗:', e);
+        }
       },
     });
   };
@@ -687,37 +786,18 @@ function useAppStateValue() {
    * 那些作文是照舊題目寫的，留著會被掛到新題目底下，包括已批改的。
    * 這是不可逆的，所以走二次確認並明確說出會刪幾筆。
    */
-  const handleSwapQuestion = (assignment: Assignment, question: Question) => {
-    const affected = submissions.filter(
-      (sub) => sub.assignmentId === assignment.id,
-    ).length;
-
-    setConfirmDialog({
-      isOpen: true,
-      title: "更換題目",
-      message:
-        `將「${assignment.title}」換成「${question.title}」。` +
-        (affected > 0
-          ? `\n\n這個班已經有 ${affected} 筆繳交紀錄（含已批改的），換題後會全部刪除，無法復原。`
-          : "\n\n目前沒有繳交紀錄。"),
-      onConfirm: () => {
-        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
-        handleAssignmentOperation(
-          [],
-          [swapQuestion(assignment, question.id, question.title)],
-          [],
-        );
-        // 換題等於整份作業重來，該作業的標記一併清掉
-        const doomedIds = submissions
-          .filter((sub) => sub.assignmentId === assignment.id)
-          .map((sub) => sub.id);
-        setSubmissionMarks((marks) => dropMarks(marks, doomedIds));
-        setSubmissions((prev) =>
-          prev.filter((sub) => sub.assignmentId !== assignment.id),
-        );
-        setSwappingAssignment(null);
-      },
-    });
+  /**
+   * 換題。只有作業已關閉時前端才讓按（見 lib/assignments.ts 的 swapQuestion）——
+   * 換題會把既有的繳交作廢，開放中換掉等於把學生寫到一半的東西抽走。
+   */
+  const handleSwapQuestion = async (assignment: Assignment, question: Question) => {
+    try {
+      await swapAssignmentQuestion(assignment.id, question.id);
+      await reloadAssignments();
+      setSwappingAssignment(null);
+    } catch (e) {
+      console.error('換題失敗:', e);
+    }
   };
 
 
@@ -737,25 +817,29 @@ function useAppStateValue() {
     studentCourseId,
     currentSemester,
     setCurrentSemester,
+    semesterOptions,
     courses,
     setCourses,
+    handleUpdateCourse,
     questions,
-    setQuestions,
+    questionOps,
     folders,
-    setFolders,
+    folderOps,
     rosters,
-    setRosters,
+    ensureRoster,
+    reloadCourses,
     handleSyncCourses,
     handleDeleteCourse,
     myCourses,
     assignments,
-    setAssignments,
+    reloadAssignments,
     leaveMarks,
-    setLeaveMarks,
+    toggleLeave,
     submissionMarks,
     setSubmissionMarks,
     submissions,
-    setSubmissions,
+    ensureSubmissions,
+    reloadSubmissions,
     handleAssignmentOperation,
     toggleMark,
     selectedSubmissionIds,
@@ -785,6 +869,7 @@ function useAppStateValue() {
     handleProxySubmit,
     handleBatchReset,
     handleResetGrading,
+    handleAutoGrade,
     handleClearSubmission,
     confirmDialog,
     setConfirmDialog,

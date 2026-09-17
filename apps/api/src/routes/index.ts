@@ -5,6 +5,8 @@ import geminiRouter from './geminiService';
 import instructorRouter from './instructor';
 import adminRouter from './admin';
 import taskRouter from './task';
+import semesterRouter from './semester';
+import courseRouter from './course';
 
 
 const router = new Router();
@@ -17,6 +19,8 @@ router.use(geminiRouter.routes());
 router.use('/instructor', instructorRouter.routes());
 router.use(adminRouter.routes());
 router.use('/task', taskRouter.routes());
+router.use(semesterRouter.routes());
+router.use(courseRouter.routes());
 
 const serviceRouter = new Router();
 serviceRouter.use('/service', router.routes());

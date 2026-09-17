@@ -1,9 +1,9 @@
+import { Markdown } from './Markdown';
 import { useNavigate } from 'react-router-dom';
 import { routes } from '../lib/routes';
 import React, { useState, useRef } from 'react';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun } from 'docx';
 import { 
-  TrendingUp, 
   Award, 
   ChevronRight, 
   FileText,
@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { Submission, Assignment, Course, Question, CATEGORY_LABELS } from '../types';
 import { levelStyle, MAX_LEVEL } from '../lib/scoring';
-import { semesterLabel } from '../mockData';
+import { semesterLabel } from '../lib/semester';
 import { SHOW_CATEGORY_SCORES } from '../lib/features';
 import { 
   Radar, 
@@ -253,45 +253,19 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
       })
     );
 
-    if (displayData.result?.aiFeedback) {
+    if (displayData.result?.feedback) {
       children.push(
         new Paragraph({
-          text: "AI 批改建議",
+          // 評語只有一版，標題跟著作者走
+          text: displayData.result.isAi ? "AI 批改建議" : "教師評語",
           heading: HeadingLevel.HEADING_2,
           spacing: { before: 240, after: 120 }
         }),
-        ...createParagraphs(displayData.result.aiFeedback)
+        // ⚠️ 內容是 markdown。Word 匯出目前**照原樣輸出**，
+        //    所以文件裡會看得到 ### 與 -。要漂亮的話得把 markdown 轉成
+        //    docx 的段落與清單，那是另一件事（見 artifacts/findings.md）。
+        ...createParagraphs(displayData.result.feedback)
       );
-    }
-
-    if (displayData.result?.teacherFeedback) {
-      children.push(
-        new Paragraph({
-          text: "教師回饋",
-          heading: HeadingLevel.HEADING_2,
-          spacing: { before: 240, after: 120 }
-        }),
-        ...createParagraphs(displayData.result.teacherFeedback)
-      );
-    }
-
-    if (displayData.result?.suggestions && displayData.result.suggestions.length > 0) {
-      children.push(
-        new Paragraph({
-          text: "具體優化建議",
-          heading: HeadingLevel.HEADING_2,
-          spacing: { before: 240, after: 120 }
-        })
-      );
-      displayData.result.suggestions.forEach(suggestion => {
-        children.push(
-          new Paragraph({
-            bullet: { level: 0 },
-            children: [new TextRun({ text: suggestion })],
-            spacing: { after: 120 }
-          })
-        );
-      });
     }
 
     const doc = new Document({
@@ -413,43 +387,26 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
 
             {/* AI Feedback */}
             <div className="bg-surface/60 backdrop-blur-xl p-5 sm:p-8 rounded-2xl sm:rounded-3xl shadow-sm border border-card/20">
-              <div className="flex items-center gap-2 text-primary font-bold mb-4 sm:mb-6">
-                <MessageSquare size={20} className="sm:size-6" />
-                <h2 className="text-title tracking-tight">AI 批改建議</h2>
-              </div>
-              <div className="prose prose-slate max-w-none">
-                <p className="text-ui text-text-primary leading-relaxed whitespace-pre-wrap font-normal">
-                  {displayData.result?.aiFeedback || '尚無 AI 評語'}
-                </p>
-              </div>
-              
-              {displayData.result?.teacherFeedback && (
-                <div className="mt-6 sm:mt-8 pt-6 sm:pt-8 border-t border-border/30">
-                  <h3 className="font-bold text-text-primary mb-3 sm:mb-4 flex items-center gap-2 text-ui">
-                    <MessageSquare size={18} className="text-info-500" />
-                    教師回饋
-                  </h3>
-                  <div className="bg-info-50/80 backdrop-blur-sm p-4 rounded-xl border border-info-100/50 text-info-800 text-body leading-relaxed whitespace-pre-wrap shadow-sm">
-                    {displayData.result.teacherFeedback}
-                  </div>
+              {/*
+                評語只有**一個**區塊。先前這裡分成「AI 批改建議」「教師回饋」
+                「具體優化建議」三段，但資料庫裡一份繳交任何時刻只有一筆有效的
+                批改 —— 老師修改是寫新版本讓舊的失效，不是另外加一段。
+                建議本來就寫在那份 markdown 報告裡。
+              */}
+              <div className="flex items-center justify-between gap-2 mb-4 sm:mb-6">
+                <div className="flex items-center gap-2 text-primary font-bold">
+                  <MessageSquare size={20} className="sm:size-6" />
+                  <h2 className="text-title tracking-tight">批改評語</h2>
                 </div>
-              )}
-
-              {displayData.result?.suggestions && displayData.result.suggestions.length > 0 && (
-                <div className="mt-6 sm:mt-8 pt-6 sm:pt-8 border-t border-border/30">
-                  <h3 className="font-bold text-text-primary mb-3 sm:mb-4 flex items-center gap-2 text-ui">
-                    <TrendingUp size={18} className="text-success-500" />
-                    具體優化建議
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {displayData.result.suggestions.map((suggestion, idx) => (
-                      <div key={idx} className="bg-success-50/80 backdrop-blur-sm p-4 rounded-xl border border-success-100/50 text-success-800 text-body leading-relaxed shadow-sm">
-                        {suggestion}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                {displayData.result?.feedback && (
+                  <span className="text-caption text-text-muted">
+                    {displayData.result.isAi ? 'AI 批改' : '教師評語'}
+                  </span>
+                )}
+              </div>
+              {displayData.result?.feedback
+                ? <Markdown>{displayData.result.feedback}</Markdown>
+                : <p className="text-ui text-text-muted font-normal">尚無評語</p>}
             </div>
 
           </div>

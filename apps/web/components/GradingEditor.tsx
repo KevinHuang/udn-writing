@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Save, CheckCircle2, PenTool, Highlighter, FileText, Layout, PanelLeftClose, PanelLeftOpen, BookOpen, Image as ImageIcon, X, Sparkles, Bot, ChevronDown, RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Submission, GradingResult } from '../types';
-import { gradeEssayWithAI } from '../services/geminiService';
+import { Markdown } from './Markdown';
 import { MAX_LEVEL, MIN_LEVEL, toLevel } from '../lib/scoring';
 import { StatusBadge } from './StatusBadge';
 import {
@@ -26,9 +26,8 @@ const snapshot = (r?: GradingResult): string =>
         r.categoryScores.structure,
         r.categoryScores.grammar,
         r.categoryScores.vocabulary,
-        r.aiFeedback,
-        r.teacherFeedback,
-        r.suggestions,
+        r.feedback,
+        r.isAi,
         r.isPublished,
       ])
     : '';
@@ -45,6 +44,11 @@ interface GradingEditorProps {
   onSave: (submissionId: string, result: GradingResult, shouldBack?: boolean) => void;
   onSelectAiModel?: (model: string) => void;
   onResetGrading?: (submissionId: string) => void;
+  /**
+   * 用 AI 批改這一篇。**會直接存進資料庫**（後端寫一筆 is_ai = true 的版本），
+   * 所以按完不需要再按儲存。失敗時要 reject，這裡才跳得出錯誤訊息。
+   */
+  onAutoGrade?: (submissionId: string) => Promise<void>;
   /** 全部的作品標記。這裡只讀自己這一篇的那幾筆 */
   marks?: SubmissionMarks;
   onToggleMark?: (submissionId: string, kind: MarkKind) => void;
@@ -67,6 +71,7 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
   onSave,
   onSelectAiModel,
   onResetGrading,
+  onAutoGrade,
   marks,
   onToggleMark,
   queuePosition,
@@ -74,6 +79,13 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
   onNextStudent,
 }) => {
   const [result, setResult] = useState<GradingResult | undefined>(submission.result);
+  /**
+   * 評語是「預覽 markdown」還是「編輯原始碼」。
+   *
+   * 預設預覽 —— 老師多數時候只是看 AI 寫了什麼，直接給一個裝著 ### 與 **
+   * 的 textarea 反而難讀。點一下才切成編輯，失焦回到預覽。
+   */
+  const [isEditingFeedback, setIsEditingFeedback] = useState(false);
   /**
    * 上次存檔時的內容。用來判斷「還沒存」——
    * 老師改了分數卻忘了存，按下一位就沒了，按鈕要看得出差別。
@@ -120,30 +132,27 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
     setSavedSnapshot(snapshot(result));
   };
 
+  /**
+   * AI 批改。
+   *
+   * 以前這裡直接在瀏覽器呼叫 Gemini，拿回結果塞進本地 state，等老師按儲存 ——
+   * 金鑰因此必須送進前端。現在交給 onAutoGrade：後端批改完就存成一筆
+   * `is_ai = true` 的版本（與批次批改同一支端點，token 用量也記得到），
+   * 完成後這個元件會被重掛，新的結果從 props 進來。
+   *
+   * 所以**按完就已經存好了**，不必也不該再 setResult。
+   */
   const handleAutoGrade = async () => {
+    if (!onAutoGrade) return;
     setIsGrading(true);
     try {
-      const aiResponse = await gradeEssayWithAI(
-        submission.content, 
-        assignmentTitle || "",
-        "Standard high school essay criteria",
-        selectedAiModel || "預設批改模型"
-      );
-      const newResult: GradingResult = {
-        totalScore: aiResponse.totalScore,
-        categoryScores: aiResponse.categoryScores,
-        aiFeedback: aiResponse.feedback,
-        teacherFeedback: "",
-        suggestions: aiResponse.suggestions,
-        isPublished: false,
-      };
-      setResult(newResult);
+      await onAutoGrade(submission.id);
     } catch (err) {
       console.error("AI Grading Error:", err);
       alert("AI 批改失敗，請稍後再試。");
-    } finally {
       setIsGrading(false);
     }
+    // 成功時不解除 isGrading —— 元件緊接著就被重掛，解除只會閃一下
   };
 
   return (
@@ -554,41 +563,49 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                                 </div>
                             </div>
 
-                            {/* Feedback Section */}
+                            {/*
+                              評語只有**一個**欄位。
+                              先前這裡是「AI 評語建議」與「教師補充評語」兩個 textarea，
+                              但資料庫的模型是版本不是欄位：一份繳交任何時刻只有一筆
+                              is_valid = true，老師修改等於寫一筆 is_ai = false 的新版本
+                              讓舊的失效。兩個輸入框對不上一個資料來源。
+
+                              老師直接在這裡改，存檔就是新版本；上方的標籤顯示目前
+                              這一版是誰寫的。
+                            */}
                             <div className="space-y-4">
-                                <div className="flex items-center gap-2 text-body text-text-primary pl-1">
-                                    <Highlighter size={16} className="text-secondary" />
-                                    <span>AI 評語建議</span>
+                                <div className="flex items-center justify-between gap-2 pl-1">
+                                    <div className="flex items-center gap-2 text-body text-text-primary">
+                                        <Highlighter size={16} className="text-secondary" />
+                                        <span>評語</span>
+                                    </div>
+                                    <span className="text-caption text-text-muted">
+                                        {result.isAi ? 'AI 批改' : '教師修改'}
+                                    </span>
                                 </div>
-                                <textarea 
-                                    id="gradingeditor-textarea-aifeedback"
-                                    value={result.aiFeedback}
-                                    onChange={(e) => setResult({...result, aiFeedback: e.target.value})}
-                                    className="w-full text-body leading-relaxed p-5 border border-card/60 rounded-2xl text-text-primary bg-card/60 focus:bg-card focus:ring-2 focus:ring-primary/10 focus:border-primary focus:outline-none min-h-[160px] shadow-sm resize-none backdrop-blur-sm"
-                                />
-                                
-                                <div className={`grid gap-3 pt-2 ${!isEssayVisible ? 'grid-cols-3' : 'grid-cols-1'}`}>
-                                    {result.suggestions.map((sug, idx) => (
-                                        <div key={idx} className="flex gap-3 md:gap-4 items-start p-3 md:p-4 bg-card/50 border border-card/60 rounded-brand shadow-sm hover:bg-card/80 transition-colors">
-                                            <div className="w-5 h-5 md:w-6 md:h-6 rounded-full bg-accent/10 flex items-center justify-center shrink-0 mt-0.5 text-accent text-caption shadow-sm">
-                                                {idx + 1}
-                                            </div>
-                                            <p className="text-body text-text-primary/80 font-normal leading-relaxed">{sug}</p>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                            
-                            {/* Teacher Comments */}
-                            <div className="pt-6 border-t border-card/40">
-                                <h4 className="text-body text-text-primary mb-4 pl-1">教師補充評語</h4>
-                                <textarea 
-                                    id="gradingeditor-textarea-teacherfeedback"
-                                    value={result.teacherFeedback}
-                                    onChange={(e) => setResult({...result, teacherFeedback: e.target.value})}
-                                    placeholder="輸入給學生的鼓勵或具體建議..."
-                                    className="w-full text-body p-5 border border-card/60 rounded-2xl text-text-primary bg-card/60 focus:bg-card focus:ring-2 focus:ring-primary/10 focus:border-primary focus:outline-none min-h-[120px] shadow-sm resize-none"
-                                />
+
+                                {isEditingFeedback ? (
+                                    <textarea
+                                        id="gradingeditor-textarea-feedback"
+                                        value={result.feedback}
+                                        onChange={(e) => setResult({ ...result, feedback: e.target.value, isAi: false })}
+                                        onBlur={() => setIsEditingFeedback(false)}
+                                        autoFocus
+                                        className="w-full text-body leading-relaxed p-5 border border-card/60 rounded-2xl text-text-primary bg-card focus:ring-2 focus:ring-primary/10 focus:border-primary focus:outline-none min-h-[240px] shadow-sm resize-y font-mono"
+                                    />
+                                ) : (
+                                    <div
+                                        id="gradingeditor-feedback-preview"
+                                        onClick={() => setIsEditingFeedback(true)}
+                                        title="點一下編輯"
+                                        className="w-full p-5 border border-card/60 rounded-2xl bg-card/60 hover:bg-card cursor-text min-h-[240px] shadow-sm backdrop-blur-sm"
+                                    >
+                                        {/* 內容是 markdown —— 直接印字串會看到滿螢幕的 ### 與 ** */}
+                                        {result.feedback
+                                            ? <Markdown>{result.feedback}</Markdown>
+                                            : <span className="text-text-muted text-body">尚無評語</span>}
+                                    </div>
+                                )}
                             </div>
                         </>
                     )}

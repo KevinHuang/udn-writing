@@ -493,7 +493,7 @@ typecheck 與 lint 抓不到「這一頁一打開就丟例外」——拆 `App.t
 
 ---
 
-### Phase 4 — 前端接上 API
+### Phase 4 — 前端接上 API ✅ 已完成
 
 **前置**：`artifacts/api-gap.md` 的四個決定。
 
@@ -526,6 +526,192 @@ typecheck 與 lint 抓不到「這一頁一打開就丟例外」——拆 `App.t
 - 前端改打 API，該資源的 `usePersistentState` 呼叫移除。
 
 全部完成後，`usePersistentState.ts`、`SCHEMA_VERSION`、`mockData.ts` 一併退場。
+
+#### 資源 3：課程與名冊（大致完成）
+
+新增 **`GET /service/courses`** —— 可視範圍收在伺服器端一處：
+管理者拿到全部、教師只拿到掛在自己名下的，而且**依「目前選的身分」**
+而不是「擁有的身分」（否則身分切換等於沒有意義）。
+
+前端的 `myCourses` 因此變成 `courses` 本身。先前那一層 `visibleCourses()`
+不但多餘，而且危險 —— 它是用**姓名**比對的，姓名對不上就會把整份清單
+濾成空的，而畫面上看起來只是「你沒有課」。
+
+名冊改成依課程**延遲載入**（`ensureRoster()`）。一位教師可能有四十幾個班，
+開一個畫面打四十幾個請求只為了其中一個班的名冊，不划算。
+
+**接真實資料查出來的三件事：**
+
+1. **原型對課程名稱的假設是錯的。** 原型以為是「新北市淡江中學國三孝班」
+   這種黏成一串的字串，所以有 `parseCourseName()` 與「待確認」流程。
+   真實資料裡校名（`school.school_name`）、班級（`course.course_name`）、
+   學段（`school.school_type`）**本來就是三個欄位**，只有縣市要從校名前綴取。
+   `lib/schoolName.ts` 因此只需要新增的那支 `cityOf()`，其餘那一整套
+   等校務同步也接上真實資料就能整個刪掉。
+
+2. **`ref_org_id` 為空的課程會從清單裡安靜消失** —— `getByInstructorUserId()`
+   是 `INNER JOIN org`。正式資料目前 45 門課全部有組織，但這是個沒有任何
+   徵兆的失效模式，測試的 fixture 因此一定要建組織。
+
+3. ⛔ **校務同步兩邊的產品模型不一樣**，刻意維持原狀沒有半接。見開放問題。
+
+#### 資源 6 + 7 + 10 + 11：繳交與批改（已完成）
+
+**`usePersistentState` 的業務資料全部退場** —— 前端不再有任何領域資料
+留在 localStorage。
+
+**批改結果的模型改成「版本」**（產品確認）：一份繳交任何時刻只有一筆
+`is_valid = true`，`is_ai` 標示那一版是 AI 產的還是教師改的。
+教師修改 = 舊的全部失效 + 寫一筆 `is_ai = false` 的新版本。
+
+型別跟著改：`GradingResult` 的 `aiFeedback` / `teacherFeedback` /
+`suggestions` 三個欄位換成 `feedback` + `isAi`。漣漪到 7 個檔案、30 個
+編譯錯誤。畫面上兩個評語輸入框合併成一個，學生端三個區塊合併成一個。
+
+**繳交分兩層載入**（實測出來的決定）：
+
+| | 內容 | 大小 |
+|---|---|---|
+| 全域摘要 `GET /service/instructor/submissions` | 所有班級，**不含作文全文** | 最忙的教師 2,091 筆，約 300 KB |
+| 單份作業 `GET /assignments/:id/submissions` | 含作文與評語 | 批改頁進來時才補 |
+
+不分層的話開一次畫面要拉 **2.8 MB** 的作文內容。`ensureSubmissions()`
+在批改清單選定作業、以及批改頁直接開網址時補齊。
+
+**又修掉一組授權漏洞**，這次是批改相關的三支：
+
+| | 先前 |
+|---|---|
+| `saveFeedback` | 任何教師能批改任何一份作品 |
+| `resetBySubmissionId` | 任何教師能重置任何一份批改 |
+| **`returnFeedback`** | **任何教師能把別班的成績發還給學生**（收一個 id 陣列直接 UPDATE，副作用不可逆） |
+
+其中一條測試特別重要：**批改失敗時不會把別人既有的批改設成失效**。
+`saveFeedback` 的第一個動作是「把舊的全部設為失效」，授權檢查若放在
+那之後，即使最後回 403，別人的批改也已經被作廢了。
+
+**markdown 渲染**：後端存的是 markdown，前端原本用純文字印，會看到滿螢幕
+的 `###`。加了 `react-markdown`（不走 `dangerouslySetInnerHTML` ——
+那段內容是 AI 產的、又夾帶學生作文，等於使用者輸入）與
+`@tailwindcss/typography`。樣式用 `.prose-ink` 把 typography 的變數接到
+專案的色彩 token 上，碑拓模式自動跟著翻轉，不需要 `dark:prose-invert`。
+
+⚠️ **Word 匯出目前照原樣輸出 markdown**，文件裡看得到 `###` 與 `-`。
+要漂亮得把 markdown 轉成 docx 的段落與清單，另案處理。
+
+#### 資源 5 + 9：作業、截止日與拖拉排序（已完成）
+
+**先修了一個和 admin 同一類的授權漏洞。** `AssignmentHelper` 有四支查詢
+**收了 `user_id` 卻沒有放進 WHERE**：
+
+| 方法 | 先前的行為 |
+|---|---|
+| `getAssignmentsByCourseId` | 任何教師讀得到任何班的作業 |
+| `updateStatus` | 任何教師能開關別人班的作業 |
+| `updateTask` | 任何教師能換掉別人班作業的題目 |
+| `create` | 可以把作業**派進別人的班** |
+
+`updateStatus` 的錯誤訊息甚至寫著 `not found or unauthorized`，
+但 SQL 裡沒有任何 authorization。四支都補上授權條件，並且有測試蓋著。
+
+**第二個 bug：`opened_at` 在關閉時也被覆蓋成 `NOW()`。**
+前端的三態靠 `opened` + `opened_at` 分辨：
+
+| `opened` | `opened_at` | 狀態 |
+|---|---|---|
+| `true` | 任何 | `Published` |
+| `false` | `null` | `Draft`（從未開放，學生看不到） |
+| `false` | 有值 | `Closed`（開過又收回，學生看得到成績） |
+
+關閉時把 `opened_at` 蓋成現在，等於宣告「它剛剛才第一次開放」——
+**Draft 與 Closed 從此分不出來**。改用 `COALESCE(opened_at, NOW())`
+只在開啟時寫、而且只寫第一次。
+
+**推導規則放進 `packages/shared/derive.ts`**（`assignmentStatusOf()`）——
+前端要它畫面、後端要它判斷可否繳交，兩邊各寫一次遲早漂移。
+這也是規格要求 `SubmissionStatus` 推導要做的事，先從作業開始。
+
+**新增的 endpoint**：截止日設定、重新排序、刪除。
+
+刪除作業會**連鎖清掉底下的繳交、批改結果、作品標記、請假註記**。
+資料庫幾乎沒有外鍵，只有 migration 001 為 `submission_mark → submission`
+與 `assignment_leave → assignment` 加了兩條 —— 所以
+`submission_feedback` 與 `submission` 必須手動刪，順序由下往上，
+全部在一個交易裡。逐張表都有測試確認清乾淨。
+
+前端的 `handleAssignmentOperation` 介面維持不變（建立／更新／刪除三份清單），
+但內部改成**比對差異再發對應的 API**。後端沒有「整包覆蓋」的 endpoint，
+而且也不該有 —— 開關、改截止日、換順序是三件不同的事，
+各自有各自的授權與副作用。全部送一遍會把「老師只是拖了一下順序」
+變成「順便重設了截止日」。
+
+#### 資源 4 + 8：題目與題庫資料夾（已完成）
+
+migration 002 套用後補完。後端新增 `PUT /tasks/:id/archived` 與資料夾的四條路由；
+前端 `QuestionBank` 的 **9 個改動點**從「直接改陣列」換成明確的操作
+（`questionOps` / `folderOps`），每一個都是「呼叫 API → 重新載入」。
+
+**不做樂觀更新**是刻意的：樂觀更新要維護一份與伺服器平行的真相，
+而這個專案已經在「同一份資訊存兩處」上吃過四次虧（見 `CLAUDE.md`）。
+題庫的操作不頻繁，多一次往返換掉一整類不同步的 bug。
+
+**兩件接的時候才發現的事：**
+
+1. **題目與資料夾必須一起接。** 資料夾留在 mockData 而題目來自 API 的話，
+   題目的 `folderId` 會指向不存在的資料夾 id，整個題庫畫面散掉。
+
+2. ⚠️ **我自己造成過一次行為不一致。** migration 001 給
+   `fk_task_folder_parent` 加了 `ON DELETE CASCADE`，但原型刪資料夾時
+   **子資料夾是移到上一層、不跟著刪**（確認視窗明寫「不會被刪除」）。
+   照 CASCADE 做會把整棵子樹帶走。
+   後端因此在同一個交易裡**先改掛再刪** —— 順序錯了就會誤傷。
+   這條規則外鍵表達不了（CASCADE 刪掉、SET NULL 退到根而不是上一層），
+   所以寫在 `FolderHelper.deleteById`，並且有測試蓋著。
+
+#### 資源 4：題目（原本卡住的記錄）
+
+`api/questions.ts` 的**讀取路徑**寫好了（含 `level`／`source` 兩個 jsonb
+陣列與前端代碼的對照），但**寫入路徑刻意沒有接到畫面上**。
+
+`task` 表少了五個原型在用的欄位：`isArchived`（24 處）、`gradeLevel`
+（寫作類型，11 處）、`maxScore`（6 處）、`preferredAiModel`（20 處，
+但被 `SHOW_AI_MODEL_PICKER` 關著）、`aiImageDescription`（3 處）。
+
+現在接上去的後果是：老師編輯題目按下儲存，這五樣**安靜地消失**，
+畫面上沒有任何異狀，要等重新載入才發現封存跑掉、寫作類型變空白。
+**那比還沒接更糟**，所以停在這裡等決定（migration 002 或砍功能）。
+
+另外 `task.ref_instruction_id` 指向的是一張**共用的** `system_instruction` 表
+（48 個題目共用 2 筆），與原型「每題自己一段評分規準」不是同一個東西，
+所以沒有對應過去。
+
+#### 資源 2：學期清單（已完成）
+
+`GET /service/semesters` 回傳學年期清單與「今天落在哪一個」。
+前端的 `currentSemester` 與三個學期下拉不再吃 `mockData` 的寫死清單。
+
+`semesterLabel()` 從「查表」改成「用算的」—— 先前是去 `SEMESTER_OPTIONS`
+找，查不到就原樣回傳，所以資料庫裡有、但選項清單裡沒有的學年期
+（既有課程用到的 `110-2`、`113-1`）會直接印出代碼給使用者看。
+
+**兩個從真實資料查出來的問題：**
+
+1. ⚠️ **原型的四學期制在資料庫裡不存在。** 原型的學期有
+   第1學期／寒假(`W`)／第2學期／暑假(`S`) 四種，但 `semesters` 表只有 1 與 2，
+   而 `course.semester` 是 **integer**，根本裝不下 `W` 與 `S`。
+   原型那兩個選項**永遠對不到任何課程**。若產品真的要開寒暑假班，
+   那是 schema 的異動。→ 開放問題。
+
+2. ⚠️ **`semesters` 表有一筆資料錯誤**：118 學年度有**兩列 `118-2`**、
+   沒有 `118-1` —— 其中一列的日期區間（2029-09 ~ 2030-02）其實是第一學期。
+   今天（115-1）解析正確，不影響現況，但 2029 年 9 月之後
+   「目前學期」會算成 `118-2`。→ 資料要修，見 `artifacts/action-items.md`。
+
+   `SemesterHelper.current()` 因此加了 `ORDER BY start_date DESC LIMIT 1` ——
+   區間不重疊時本來就只會對到一列，但沒有 LIMIT 的查詢在資料再出錯時
+   會安靜地回傳多列，呼叫端拿 `[0]` 就變成看執行計畫決定結果。
+
+---
 
 #### 資源 1 的實際結果：身分與可視範圍
 
@@ -578,62 +764,162 @@ typecheck 與 lint 抓不到「這一頁一打開就丟例外」——拆 `App.t
 
 ---
 
-### Phase 5 — 移除前端的 Gemini 呼叫
+### Phase 5 — 移除前端的 Gemini 呼叫 ✅ 已完成
 
-**後端已經有完整的 GenAI 實作**（`genai_helper.ts`，727 行，走 Vertex AI，
-金鑰不在前端）。所以這階段不是「把呼叫搬到後端」，是**把前端那份刪掉**。
+**後端已經有完整的 GenAI 實作**（`genai_helper.ts`，走 Vertex AI，金鑰不在前端）。
+所以這階段不是「把呼叫搬到後端」，是**把前端那份刪掉**。
 
-**做什麼**
+**實際做了什麼**
 
-- `apps/web/services/geminiService.ts` 的四個功能改打既有後端 endpoint
-  （`/service/gemini/ocr` 等，缺的在 Phase 4 的落差清單裡補）。
-- 刪除 `apps/web` 的 `@google/genai` 相依、`vite.config.ts` 的 `define`、
-  `.env.example` 的 `GEMINI_API_KEY`。
-- **`services/simulatedGrading.ts` 的 fallback 搬到後端**：沒有 AI 設定時仍走
-  決定性模擬批改（同一篇永遠得到同一個結果，評語標明「示範模式」）。
-  **這個行為不能弄丟**，它讓開發環境不需憑證就能跑完流程。
-- 確認 token 用量有寫進 `submission_feedback` 的四個 token 欄位。
+| 項目 | 結果 |
+|---|---|
+| `apps/web/services/geminiService.ts`（265 行） | **刪除**。四支函式改成 `apps/web/api/ai.ts`，打後端端點，簽名不變 |
+| `apps/web/services/simulatedGrading.ts`（136 行） | **搬到** `apps/api/src/dal/simulated_grading.ts` |
+| `apps/web/lib/feedbackMarkdown.ts` | **刪除**。合併建議這件事改在後端做（見下） |
+| `vite.config.ts` 的 `define` | **拿掉**，連同不再需要的 `loadEnv` |
+| `apps/web` 的 `@google/genai` 相依 | **移除** |
+| `apps/web/.env.example` | **刪除** —— 前端不再需要任何環境變數 |
+
+**後端新增的四支端點**（全部 `requireLogin`，都在 `/service/gemini`）
+
+| 端點 | 取代前端的 | 用在 |
+|---|---|---|
+| `POST /ocr_text` | `extractTextFromImage` | 學生作答頁、代繳交視窗 |
+| `POST /analyze_image` | `analyzeImageContent` | 題庫的看圖出題 |
+| `POST /rubric` | `generateGradingRubric` | 題庫產生評分規準 |
+| `POST /grade` | `gradeEssayWithAI` | 題庫的**試批改**（不寫資料庫） |
+
+提示詞原樣搬進 `GenAIHelper` 的 `describeImage` / `createRubric` / `gradeAdhoc`，
+行為不變。三個參數檢查：mimeType 必須是圖片、base64 上限 11 MB、缺參數回 400。
+
+**批改頁的「AI 批改」改走既有端點**
+
+GradingEditor 原本呼叫前端的 `gradeEssayWithAI`，拿回結果放進本地 state 等老師按儲存。
+現在改成 `onAutoGrade` → `POST /service/instructor/grading/:submissionId`
+—— 與批次批改同一支，**批完直接存成一筆 `is_ai = true` 的版本**，
+token 用量也記得到（批次批改本來就是這樣，單篇以前是例外）。
+
+**順手修掉一個授權漏洞**
+
+`POST /service/instructor/grading/:submissionId` 原本用不限定班級的
+`getSubmissionById` 取作文 → 送去 AI → 才在 `saveFeedback` 裡擋權限，
+**而且擋下來的回傳值（null）被忽略，照樣回 200**。結果是任何教師都能拿任意
+submission id 換到別班學生的作文批改結果，順便燒掉 Vertex AI 的 token。
+寫入是安全的，讀取不是。改成新增的 `getSubmissionByIdForInstructor`，
+**先把關，再花錢**。
+
+**測試環境不打真的 AI**
+
+根目錄 `.env` 為了開發方便設了 `GOOGLE_GENAI_USE_VERTEXAI=true`，
+`test/setup.ts` 現在會把它刪掉 —— 測試改走決定性的模擬批改。
+這同時也就驗到了「沒有憑證時仍要能跑完流程」這條規格。
+
+**一個容易漏掉的細節**
+
+真實 AI 回傳的 `response` 本來就是一整份 markdown 報告，建議寫在裡面；
+模擬批改的建議卻是獨立陣列。前端的 `toFeedbackMarkdown()` 以前負責合併，
+它一刪，那三則建議就會安靜地不見。合併改在後端做，並有測試釘住
+（`### 修改建議` 標題與三行項目）。
 
 **怎麼證明做完了**
 
 ```bash
 npm run build -w apps/web
-grep -ri "GEMINI_API_KEY\|AIza\|@google/genai" apps/web/dist/ apps/web/package.json
-# 必須沒有任何結果
+grep -ril "GEMINI_API_KEY|AIza|@google/genai" apps/web/dist/ apps/web/package.json
+# 沒有任何結果 ✅
 ```
 
-- 未設 Vertex AI 憑證時，批改仍可完成且評語標明「示範模式」。
-- 未登入打 AI endpoint → 401。
+- 未設 Vertex AI 憑證時，批改仍可完成且評語標明「示範模式」✅（測試涵蓋）
+- 未登入打 AI endpoint → 401 ✅（測試涵蓋）
+- 同一篇重批兩次拿到同一個分數 ✅（決定性，測試涵蓋）
 
 ---
 
-### Phase 6 — 期末總結的前端畫面
+### Phase 6 — 期末總結的前端畫面 ✅ 已完成
 
-`final_report` 的後端已經完整實作（`FinalReportHelper`，281 行，含 AI 產生的
-四項分數與總評），但前端**完全沒有這個畫面** —— 目前是一組沒有入口的功能。
+`final_report` 的後端本來就完整（`FinalReportHelper`，含 AI 產生的四項分數與總評，
+測試庫裡有 888 筆真實資料），但前端**完全沒有這個畫面** —— 是一組沒有入口的功能。
 
-刻意不併進 Phase 4：那一階段的工作是「把現有畫面接上 API」，
-做新畫面是另一件事，混在一起會讓 Phase 4 的驗收失焦。
+**兩個產品決定**（2026-09-17 確認）
 
-等主流程在真資料上跑得起來再做。
+1. **教師可以為自己的班級產生總結。** 原本只有 `POST /admin/gen_final_report`
+   （`isSystemAdmin`），教師只能讀 —— 打開一個還沒產生的班就沒轍。
+   新增一支只跑自己任教班級的端點。
+2. **這次只做教師端。** 總結的文字雖然是寫給學生看的，但後端沒有任何學生端
+   的 final_report 端點，要不要開放、開放到什麼程度留給之後決定。
+
+**新增與修改**
+
+| 檔案 | 內容 |
+|---|---|
+| `GET /service/instructor/courses/:id/finalReports` | **補上把關**（見下），並 join 出姓名與座號、照座號排序 |
+| `POST /service/instructor/courses/:id/finalReports` | 新增。為自己的班產生總結，回 `{generated, skipped}` |
+| `FinalReportHelper.calculate()` | 改成回傳筆數；沒有 AI 憑證時走模擬摘要 |
+| `simulated_grading.ts` | 新增 `simulateFinalSummary()` |
+| `packages/shared/types.ts` | 新增 `FinalReport` |
+| `apps/web/api/finalReports.ts` | 新增。八個平鋪的資料庫欄位 → `dimensions` 陣列 |
+| `components/FinalReportList.tsx`、`pages/FinalReportPage.tsx` | 新增畫面 |
+| `lib/routes.ts` | 新增 `/courses/:courseId/final-report` |
+| `components/GradeManagement.tsx` | 加入口（描邊按鈕，不跟「匯出 EXCEL」搶主色） |
+
+**又一個同型的授權漏洞**
+
+`GET /courses/:course_id/finalReports` 取了 `userId` **卻沒有往下傳** ——
+`getFinalReport` 只用 course_id 查。任何教師拿任意 course_id 就讀得到別班
+整份總結：姓名、各科分數、AI 評語。這與資源 7 那三支、以及 Phase 5 的
+AI 批改是同一個模式（**取了 userId 但 WHERE 沒有用到它**）。
+把關改在 SQL 裡，不是自己的班回空陣列。
+
+修 helper 的簽名之後，`tsc` 直接把呼叫端的漏洞指出來了 —— 這正是把授權
+做進 DAL 參數而不是路由裡 if 的好處。
+
+**刻意沒做的事**
+
+`updateHightestScoreTilte()` 是**全域**回填（掃所有課程的 final_report），
+不該由單一教師的動作觸發，所以新端點不呼叫它。
+`calculate()` 本來就會一併寫入最高分作品的標題。
+
+**怎麼證明做完了**
+
+- 沒有 Vertex AI 憑證也能產生，總評標明「示範模式」、token 記 0 ✅
+- 沒有已批改作品的學生被略過而不是報錯 ✅
+- 重複按不會重算、不會產生第二筆 ✅
+- 別人的班：產生 → 404 且沒寫入；讀取 → 空陣列 ✅
+- 未登入 → 401 ✅
+- 姓名與座號帶得出來且照座號排序 ✅
+
+（`apps/api/src/test/final_report.test.ts`，8 個測試）
 
 ---
 
 ## 5. 開放問題
 
-1. **新表要不要加外鍵？** 既有庫一個都沒有，migration 草案也沒加。
-   我建議對三張新表加 `ON DELETE CASCADE`（理由與風險寫在 migration 檔末尾），
-   **請 DBA 確認**。不加的話 Phase 4 的刪除連鎖測試是必要而非可選。
+1. ⛔ **校務同步的產品模型。** 原型是「教師挑班級匯入」，後端是「管理者跑
+   `sync/school`，課程／授課關聯／學生名冊一次全建好」。後端沒有「把這個班
+   加進我的名下」這種動作 —— 要做的話等於讓教師自己建立 `uc_instructor`
+   關聯，那是權限問題。**這是資源 3 唯一沒接的一塊**，見 `artifacts/api-gap.md`。
 
-2. **學生草稿要做嗎？** migration 草案提了 `submission.is_submitted`；
-   若「按下去就是繳交」，刪掉那段，前端的 `Draft` 狀態一併移除。
+2. **原型的四學期制在資料庫裡不存在。** 原型有寒假(`W`)與暑假(`S`)，
+   但 `semesters` 只有 1 與 2，而 `course.semester` 是 integer 裝不下。
+   原型那兩個選項永遠對不到課程。要開寒暑假班是 schema 異動。
 
 3. **`user_role` 表由誰維護？** 登入流程不寫它，但 schema 有，
    且 `updateSchoolSystemID()` 會更新它。是別的流程在寫嗎？
 
 4. **`apps/api/public/` 的舊前端何時退場？** 換成 `apps/web` 的建置產物之後，
-   舊的那份就該刪掉，否則兩份前端會漂移。屆時
-   `GET /auth/logout` 的相容路徑也一起拿掉。
+   舊的那份就該刪掉，否則兩份前端會漂移。屆時這三樣一起拿掉：
+   - `GET /auth/logout` 的相容路徑（正式的是 POST）
+   - 守衛在 `explicit === false` 時放寬身分檢查的那一段
+   - CORS 設定（改成後端 serve 前端的同源部署）
 
-5. **`App.tsx` 目前 2268 行扛全站狀態。** Phase 3 要不要順便按路由拆成各頁面元件？
-   **預設：拆。**
+5. **Word 匯出目前照原樣輸出 markdown**，文件裡看得到 `###` 與 `-`。
+   要漂亮得把 markdown 轉成 docx 的段落與清單。
+
+<details><summary>已解決（保留紀錄）</summary>
+
+- ~~新表要不要加外鍵~~ → 加了 `ON DELETE CASCADE`，migration 001 已套用
+- ~~學生草稿要做嗎~~ → 做了，`submission.is_submitted`
+- ~~`App.tsx` 要不要按路由拆~~ → 拆了，2268 行降到 87 行（Phase 3）
+- ~~`teacherFeedback` 要不要獨立欄位~~ → 不要，用 `is_ai` 標示版本作者
+- ~~`suggestions` 怎麼辦~~ → 留在 markdown 裡，前端改用 markdown 渲染
+</details>

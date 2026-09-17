@@ -184,3 +184,21 @@ export function parseCourseName(raw: string): ParsedCourseName {
 /** 顯示用：把解析結果組回一段可讀文字。缺的段落略過 */
 export const describeParsed = (p: ParsedCourseName): string =>
   [p.city, p.schoolName, p.className].filter(Boolean).join(' ');
+
+
+/**
+ * 從校名取出縣市。
+ *
+ * ⚠️ **這支才是接上真實資料後真正需要的。**
+ *    上面那一整套 parseCourseName() 是為了拆解「新北市淡江中學國三孝班」
+ *    這種把縣市、學校、班級黏成一串的課程名稱 —— 但真實資料**不長那樣**：
+ *    校名在 school.school_name（「新北市二重國中」）、班級在
+ *    course.course_name（「國三8班」）、學段在 school.school_type，
+ *    三者本來就是分開的欄位。
+ *
+ *    所以接上 API 之後只剩「校名的縣市前綴」要取，那就是這一支。
+ *    parseCourseName() 目前還留著給 mockData 與校務同步視窗用，
+ *    等那兩處也接上真實資料就可以整個刪掉（見 artifacts/spec.md）。
+ */
+export const cityOf = (schoolName: string): string | null =>
+  CITIES.find((c) => normalize(schoolName ?? '').startsWith(c)) ?? null;

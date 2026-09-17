@@ -12,7 +12,7 @@
  *
  * 目前為 false —— 依需求先隱藏，但：
  *   - types.ts 的 GradingResult.categoryScores 欄位保留
- *   - services/geminiService.ts 仍要求 AI 回傳這四項
+ *   - 後端 dal/genai_helper.ts 的批改 schema 仍要求 AI 回傳這四項
  *   - mockData 仍會產生
  * 也就是資料一直都在，只是不畫在畫面上。要恢復顯示改成 true 即可。
  *

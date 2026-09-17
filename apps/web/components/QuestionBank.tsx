@@ -14,7 +14,7 @@ import {
 } from '../lib/questionMeta';
 import { StudentQuestionPreview } from './StudentQuestionPreview';
 import { QuestionPreviewModal } from './QuestionPreviewModal';
-import { analyzeImageContent, generateGradingRubric, gradeEssayWithAI } from '../services/geminiService';
+import { analyzeImageContent, generateGradingRubric, gradeEssayWithAI } from '../api/ai';
 import { isAdmin, type CurrentUser } from '../lib/access';
 import { ConfirmDialog } from './ConfirmDialog';
 import { AVAILABLE_AI_MODELS } from '../mockData';
@@ -434,10 +434,24 @@ const SimulateGradingModal: React.FC<SimulateGradingModalProps> = ({ isOpen, onC
 interface QuestionBankProps {
   onBack?: () => void;
   questions: Question[];
-  setQuestions: React.Dispatch<React.SetStateAction<Question[]>>;
+  /**
+   * 題目的異動。先前是直接給 setQuestions 讓這個元件自己改陣列 ——
+   * 接上後端之後那行不通：改陣列不會寫進資料庫，重新整理就回去了。
+   * 改成明確的四個動作，每一個都是「呼叫 API → 重新載入」。
+   */
+  questionOps: {
+    create: (q: Partial<Question>) => Promise<void>;
+    update: (id: string, q: Partial<Question>) => Promise<void>;
+    remove: (id: string) => Promise<void>;
+    setArchived: (id: string, archived: boolean) => Promise<void>;
+  };
   /** 題庫資料夾。收在 App 並持久化，離開這一頁不會復原 */
   folders: Folder[];
-  setFolders: React.Dispatch<React.SetStateAction<Folder[]>>;
+  folderOps: {
+    create: (name: string, parentId: string | null, type: QuestionType) => Promise<void>;
+    rename: (id: string, name: string, parentId: string | null) => Promise<void>;
+    remove: (id: string) => Promise<void>;
+  };
   /**
    * 目前身分。共同題庫是全站老師共用的，只有聯合報管理人員能改；
    * 個人題庫則是誰的就誰改。判斷收在 canEditCurrentBank 一處。
@@ -549,7 +563,7 @@ const inputBase =
   'placeholder:text-text-muted focus:bg-surface focus:ring-4 focus:ring-primary/10 ' +
   'focus:border-primary outline-none transition-all shadow-sm';
 
-export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, setQuestions, folders, setFolders, user }) => {
+export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, questionOps, folders, folderOps, user }) => {
   const [view, setView] = useState<'LIST' | 'CREATE'>('LIST');
   // 老師的起點是自己的題目，共用題庫是拿來取材的，所以預設落在個人題庫
   const [activeTab, setActiveTab] = useState<QuestionType>(QuestionType.PERSONAL);
@@ -617,7 +631,7 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, s
       type: activeTab,
     };
     
-    setFolders(prev => [...prev, newFolder]);
+    void folderOps.create(newFolder.name, newFolder.parentId, newFolder.type);
   };
 
   // Initialize form when entering create view
@@ -745,20 +759,18 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, s
       if (editingId) {
           const newFolderId = formData.folderId || null;
 
-          setQuestions(prev => prev.map(q => q.id === editingId ? {
-              ...q,
+          void questionOps.update(editingId, {
               title: formData.title,
               content: formData.content,
               folderId: newFolderId,
-              folderName: targetFolder ? targetFolder.name : '未分類',
-              gradeLevel: formData.gradeLevel, 
+              gradeLevel: formData.gradeLevel,
               gradingCriteria: formData.gradingCriteria,
               maxScore: formData.maxScore,
               imageUrl: imagePreview || undefined,
               aiImageDescription: aiImageAnalysis || undefined,
               preferredAiModel: formData.preferredAiModel,
               ...portedFields,
-          } : q));
+          });
 
       } else {
           const newQuestion: Question = {
@@ -778,7 +790,7 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, s
               ...portedFields,
           };
 
-          setQuestions([newQuestion, ...questions]);
+          void questionOps.create(newQuestion);
       }
       handleLeaveForm();
   };
@@ -797,9 +809,11 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, s
       title: `${q.title} (來自個人)`
     }));
 
-    setQuestions([...newQuestions, ...questions]);
-
-    alert(`成功匯入 ${newQuestions.length} 題至共同題庫！`);
+    // 逐筆建立。後端沒有批次 endpoint，而一次匯入通常只有幾題 ——
+    // 批次的錯誤處理（一半成功一半失敗）比省下的往返麻煩得多。
+    void Promise.all(newQuestions.map((q) => questionOps.create(q))).then(() => {
+      alert(`成功匯入 ${newQuestions.length} 題至共同題庫！`);
+    });
   };
 
   useEffect(() => {
@@ -856,16 +870,17 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, s
       title: `${q.title} (複製)`,
       isArchived: false
     };
-    setQuestions([...questions, newQuestion]);
-    alert("已複製到個人題庫（根目錄）！");
+    void questionOps.create(newQuestion).then(() => {
+      alert("已複製到個人題庫（根目錄）！");
+    });
     setActiveTab(QuestionType.PERSONAL);
     setCurrentPath([]);
   };
 
   const handleArchive = (id: string) => {
-    setQuestions(questions.map(q => 
-      q.id === id ? { ...q, isArchived: !q.isArchived } : q
-    ));
+    const q = questions.find((x) => x.id === id);
+    if (!q) return;
+    void questionOps.setArchived(id, !q.isArchived);
   };
 
   /**
@@ -886,7 +901,7 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, s
           : '') +
         '\n\n此操作無法復原。已經派發出去的作業不受影響。',
       confirmLabel: '刪除題目',
-      run: () => setQuestions(questions.filter((x) => x.id !== id)),
+      run: () => void questionOps.remove(id),
     });
   };
 
@@ -914,24 +929,9 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, s
         '\n\n此操作無法復原。',
       confirmLabel: '刪除資料夾',
       run: () => {
-        // 直屬的子資料夾接到母層，孫層自然跟著走，不必遞迴
-        setFolders((prev) =>
-          prev
-            .filter((f) => f.id !== folder.id)
-            .map((f) =>
-              f.parentId === folder.id ? { ...f, parentId: folder.parentId } : f,
-            ),
-        );
-        const parentName = folder.parentId
-          ? folders.find((f) => f.id === folder.parentId)?.name ?? '未分類'
-          : '未分類';
-        setQuestions((prev) =>
-          prev.map((q) =>
-            q.folderId === folder.id
-              ? { ...q, folderId: folder.parentId, folderName: parentName }
-              : q,
-          ),
-        );
+        // 子資料夾接到母層、題目退到上一層 —— 兩件事都在後端的同一個交易裡做
+        // （見 FolderHelper.deleteById）。前端只要重新載入。
+        void folderOps.remove(folder.id);
       },
     });
   };
@@ -943,13 +943,7 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, s
 
   const handleMoveConfirm = (targetFolderId: string | null) => {
     if (questionToMove) {
-      const targetFolder = folders.find(f => f.id === targetFolderId);
-      
-      setQuestions(questions.map(q => 
-        q.id === questionToMove.id 
-          ? { ...q, folderId: targetFolderId, folderName: targetFolder ? targetFolder.name : '未分類' } 
-          : q
-      ));
+      void questionOps.update(questionToMove.id, { ...questionToMove, folderId: targetFolderId });
 
 
       setIsMoveModalOpen(false);

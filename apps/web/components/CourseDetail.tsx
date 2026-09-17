@@ -2,7 +2,7 @@ import React from 'react';
 import { ArrowLeft, Bot, Users, Hash } from 'lucide-react';
 import { Assignment, Course, Question, Submission } from '../types';
 import { CourseAssignmentList } from './CourseAssignmentList';
-import { semesterLabel } from '../mockData';
+import { semesterLabel } from '../lib/semester';
 
 interface CourseDetailProps {
   course: Course;

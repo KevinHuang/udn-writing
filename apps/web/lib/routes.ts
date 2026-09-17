@@ -60,6 +60,8 @@ export const routes = {
   /** courseId：成績管理頁預設選中的班級 */
   grades: (opts?: { courseId?: string }) =>
     withQuery('/grades', { [queryKeys.course]: opts?.courseId }),
+  /** 一個班整學期的期末總結。從成績管理進來 */
+  finalReport: (courseId: string) => `/courses/${courseId}/final-report`,
   concern: () => '/concern',
 
   // ── 學生端 ──
@@ -92,6 +94,7 @@ export const routePatterns: Record<keyof typeof routes, string> = {
   gradingList: '/grading',
   gradingEditor: '/grading/:assignmentId/:submissionId',
   grades: '/grades',
+  finalReport: '/courses/:courseId/final-report',
   concern: '/concern',
   studentDashboard: '/student',
   studentAssignments: '/student/assignments',

@@ -13,7 +13,7 @@ import { Assignment, Submission } from '../types';
 import { seatLabel } from '../mockData';
 import { checkImageFile } from '../lib/questionMeta';
 import { fileToBase64 } from '../lib/fileToBase64';
-import { extractTextFromImage } from '../services/geminiService';
+import { extractTextFromImage } from '../api/ai';
 
 interface ProxySubmitModalProps {
   assignment: Assignment;

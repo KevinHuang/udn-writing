@@ -1,9 +1,15 @@
 --
 -- Migration 001：補齊原型有、既有 schema 沒有的五項功能
 --
--- ⚠️ 這份是**草案，等待審核**。還沒有套用到任何資料庫。
+-- ✅ **已審核通過**（2026-09-16）。外鍵依建議加上，學生草稿保留。
 --
--- ⛔ 審核通過後**先套用到 writing_classroom_test 驗證**。
+-- ⛔ 先套用到 writing_classroom_test 與 writing_classroom_autotest 驗證。
+--
+-- ⚠️ **必須以 postgres（或表的擁有者）身分執行。**
+--    應用程式用的 writing_mng 雖然有 GRANT ALL，但 assignment / task /
+--    submission 三張表的擁有者是 postgres，而 ALTER TABLE 需要的是
+--    **擁有權**不是權限 —— 用 writing_mng 跑會停在
+--    「must be owner of table assignment」，整個交易回滾（已實測）。
 --    writing_classroom 是 production，有線上使用者正在使用 ——
 --    對它套用 migration 是另一件事，要人決定與執行，不要自動化。
 --
@@ -14,6 +20,10 @@
 --      以及每個表與欄位都有 COMMENT。
 --   4. 新表補上與既有表相同的角色授權（writing_mng / writing_showcase），
 --      否則應用程式的角色讀不到。
+--   5. **沒有 `ALTER TABLE ... OWNER TO postgres`。** 既有的表都是 postgres 擁有，
+--      但應用程式用的是 writing_mng 連線，它改不了擁有者（會直接報錯）。
+--      誰執行這份 migration 誰就是新表的擁有者。若要讓 postgres 擁有，
+--      請以 postgres 身分執行，下面的 GRANT 仍然需要。
 --
 -- 對應 artifacts/spec.md 第 2 節「原型有／schema 沒有」那張表。
 --
@@ -72,7 +82,6 @@ CREATE TABLE public.task_folder (
     updated_time timestamp with time zone DEFAULT now() NOT NULL
 );
 
-ALTER TABLE public.task_folder OWNER TO postgres;
 ALTER TABLE ONLY public.task_folder ADD CONSTRAINT task_folder_pkey PRIMARY KEY (id);
 
 COMMENT ON TABLE  public.task_folder IS '題庫資料夾。個人資料夾屬於教師，共享資料夾屬於組織。';
@@ -116,7 +125,6 @@ CREATE TABLE public.submission_mark (
     marked_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
-ALTER TABLE public.submission_mark OWNER TO postgres;
 ALTER TABLE ONLY public.submission_mark ADD CONSTRAINT submission_mark_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.submission_mark ADD CONSTRAINT "UQIX_SUBMISSION_MARK" UNIQUE (ref_submission_id, kind);
 
@@ -149,7 +157,6 @@ CREATE TABLE public.assignment_leave (
     created_time timestamp with time zone DEFAULT now() NOT NULL
 );
 
-ALTER TABLE public.assignment_leave OWNER TO postgres;
 ALTER TABLE ONLY public.assignment_leave ADD CONSTRAINT assignment_leave_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.assignment_leave ADD CONSTRAINT "UQIX_ASSIGNMENT_LEAVE" UNIQUE (ref_assignment_id, ref_user_id);
 
@@ -182,7 +189,40 @@ COMMENT ON COLUMN public.submission.is_submitted IS
 
 
 -- ════════════════════════════════════════════════════════════
--- 6. 角色授權
+-- 6. 外鍵
+-- ════════════════════════════════════════════════════════════
+--
+-- 既有資料庫**一個外鍵都沒有**（全庫 FOREIGN KEY 數量是 0），
+-- 但這三張新表只由這個系統寫入，不會影響其他系統既有的寫入行為。
+--
+-- 為什麼值得破例：CLAUDE.md 有整整一節在講「孤兒標記」踩過的坑 ——
+-- 刪掉一份 submission，它的 submission_mark 就會留下來指向不存在的作品。
+-- 沒有外鍵時那個坑在資料庫層級是敞開的，只能靠應用層每一條刪除路徑
+-- 都記得清乾淨，漏一條就中。ON DELETE CASCADE 讓它不可能漏。
+--
+-- ⚠️ 副作用：若有其他系統在刪 submission / assignment，它們的刪除會**連帶**
+--    清掉這裡的標記與請假註記。這正是我們要的行為，但那些系統的開發者
+--    不會預期到 —— 已與 DBA 確認。
+
+ALTER TABLE ONLY public.submission_mark
+  ADD CONSTRAINT fk_submission_mark_submission
+  FOREIGN KEY (ref_submission_id) REFERENCES public.submission(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.assignment_leave
+  ADD CONSTRAINT fk_assignment_leave_assignment
+  FOREIGN KEY (ref_assignment_id) REFERENCES public.assignment(id) ON DELETE CASCADE;
+
+-- 資料夾樹自己的父子關係。刪掉一個資料夾，底下的子資料夾跟著走。
+-- 注意 task.ref_folder_id **刻意不加外鍵**：資料夾被刪掉時題目應該
+-- 退回根層級（ref_folder_id = NULL），不是跟著被刪 —— 那是應用層的決定，
+-- 不是 CASCADE 或 SET NULL 二選一講得清楚的。
+ALTER TABLE ONLY public.task_folder
+  ADD CONSTRAINT fk_task_folder_parent
+  FOREIGN KEY (ref_parent_id) REFERENCES public.task_folder(id) ON DELETE CASCADE;
+
+
+-- ════════════════════════════════════════════════════════════
+-- 7. 角色授權
 -- ════════════════════════════════════════════════════════════
 -- 沿用既有表的授權方式。沒有這段的話，應用程式的角色讀不到新表。
 
@@ -201,34 +241,9 @@ COMMIT;
 
 
 -- ════════════════════════════════════════════════════════════
--- 審核時請特別看這一項：要不要加外鍵？
+-- 套用紀錄
 -- ════════════════════════════════════════════════════════════
 --
--- 既有資料庫**一個外鍵都沒有**（全庫 FOREIGN KEY 數量是 0），
--- 所以上面的新表也沿用同樣的慣例，沒有加。
---
--- 但這代表刪除連鎖完全靠應用層。而 CLAUDE.md 有整整一節在講
--- 「孤兒標記」踩過的坑 —— 那個坑現在在資料庫層級是敞開的：
--- 刪掉一份 submission，它的 submission_mark 會留下來指向不存在的作品。
---
--- **我的建議是對這三張新表加上外鍵**，理由是它們只由這個系統寫入，
--- 不會影響其他系統既有的寫入行為，而 ON DELETE CASCADE 正好
--- 自動處理掉那個孤兒問題：
---
---   ALTER TABLE public.submission_mark
---     ADD CONSTRAINT fk_submission_mark_submission
---     FOREIGN KEY (ref_submission_id) REFERENCES public.submission(id) ON DELETE CASCADE;
---
---   ALTER TABLE public.assignment_leave
---     ADD CONSTRAINT fk_assignment_leave_assignment
---     FOREIGN KEY (ref_assignment_id) REFERENCES public.assignment(id) ON DELETE CASCADE;
---
---   ALTER TABLE public.task_folder
---     ADD CONSTRAINT fk_task_folder_parent
---     FOREIGN KEY (ref_parent_id) REFERENCES public.task_folder(id) ON DELETE CASCADE;
---
--- 風險：若有其他系統在刪 submission / assignment，它們的刪除會連帶
--- 清掉這裡的標記與請假註記 —— 這正是我們要的行為，但那些系統的
--- 開發者不會預期到。**請 DBA 確認後再決定是否啟用。**
---
--- 決定之後請把結論寫回 artifacts/spec.md 第 3 節。
+--   writing_classroom_test      開發用      ✅ 已套用（2026-09-16，含三個外鍵）
+--   writing_classroom_autotest  自動化測試  ✅ 已套用（2026-09-16，含三個外鍵）
+--   writing_classroom           production  ⬜ ← 人工決定與執行，見 artifacts/action-items.md

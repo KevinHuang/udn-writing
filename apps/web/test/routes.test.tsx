@@ -54,6 +54,7 @@ describe("找不到的東西一律導到 404 畫面", () => {
     ["/courses/does-not-exist", "不存在的班級 id"],
     ["/courses/does-not-exist/assignments/new", "對不存在的班級派作業"],
     ["/grading/a1/does-not-exist", "不存在的繳交紀錄"],
+    ["/courses/does-not-exist/final-report", "不存在的班級的期末總結"],
   ];
   for (const [url, why] of cases) {
     test(`${url}（${why}）`, () => {

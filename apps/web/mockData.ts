@@ -720,15 +720,20 @@ export const generateMockAssignmentsAndSubmissions = () => {
               grammar: score,
               vocabulary: Math.max(1, score - 1),
             },
-            aiFeedback:
+            /*
+              評語是 **markdown** —— 真實後端存的就是一整份 markdown 報告，
+              示範資料照著長，畫面才測得到真正會遇到的排版。
+            */
+            feedback: [
+              "### 綜合評語",
               "取材貼近題目，開頭用具體的生活場景切入，讀起來有畫面。第二段轉到自己的感受時稍嫌快了些，如果能多寫一個動作或對話，情緒的轉折會更有說服力。",
-            teacherFeedback:
-              "同意 AI 的判斷。結尾收得不錯，但第三段有兩個錯別字要訂正。",
-            suggestions: [
-              "第二段「我忽然明白了」前面，補一個具體的動作或畫面，讓情緒有落點。",
-              "第三段「渡過」應為「度過」，「藉口」的「藉」不要寫成「借」。",
-              "全文多用短句，可以試著把其中兩句合併成長句，讓節奏有變化。",
-            ],
+              "### 修改建議",
+              "- 第二段「我忽然明白了」前面，補一個具體的動作或畫面，讓情緒有落點。",
+              "- 第三段「渡過」應為「度過」，「藉口」的「藉」不要寫成「借」。",
+              "- 全文多用短句，可以試著把其中兩句合併成長句，讓節奏有變化。",
+            ].join("\n\n"),
+            // 示範資料當作 AI 批改的版本。老師改過之後才會是 false
+            isAi: true,
             isPublished: subStatus === 'Published',
           };
           submission.publishedAt = getRelativeDateTime(-1, 0);

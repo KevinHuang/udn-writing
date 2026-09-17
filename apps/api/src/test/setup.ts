@@ -57,4 +57,22 @@ process.env.CLIENT_HOME_PAGE = 'http://127.0.0.1/';
 /** app.ts 沒有這個會拒絕啟動。測試用固定值即可。 */
 process.env.SESSION_KEY = process.env.SESSION_KEY || 'test-session-key-not-a-real-secret';
 
+/**
+ * **關掉 Vertex AI。**
+ *
+ * repo 根目錄的 .env 為了開發方便有設 GOOGLE_GENAI_USE_VERTEXAI=true，
+ * 但測試不該打真的 AI：慢、要錢、而且每次回傳都不一樣，斷言無從寫起。
+ * 關掉之後批改會走 dal/simulated_grading.ts 的決定性模擬批改 ——
+ * 那正好也是「沒有憑證時仍要能跑完流程」這條規格要驗的行為。
+ */
+/*
+  ⚠️ 這裡**不能用 delete**。config.ts 在自己被載入時才呼叫 dotenv.config()，
+  那已經是這個檔跑完之後了 —— 而 dotenv 只會跳過「已存在」的 key。
+  delete 掉等於把 key 讓出來，dotenv 立刻從 .env 把 true 灌回去，
+  測試就會去打真的 Vertex AI（實際發生過，燒掉了一些 token）。
+  設成空字串／false 則 key 仍然存在，dotenv 不會覆寫。
+*/
+process.env.GOOGLE_GENAI_USE_VERTEXAI = 'false';
+process.env.GOOGLE_CLOUD_PROJECT = '';
+
 process.env.NODE_ENV = 'test';

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Clock, CheckCircle, ChevronRight, ArrowRight, ArrowLeft, Bot, ChevronDown, CheckSquare, Wand2, Loader2, Send, RotateCcw, SendHorizontal,
@@ -48,6 +48,7 @@ export const GradingListPage: React.FC = () => {
     submissionMarks,
     submissions,
     toggleMark,
+    ensureSubmissions,
   } = useAppState();
 
   /**
@@ -57,6 +58,18 @@ export const GradingListPage: React.FC = () => {
    * 兩者是同一條路徑的兩種狀態，所以重新整理與返回鍵都是自然的。
    */
   const selectedAssignmentId = params.get(queryKeys.assignment);
+
+  /**
+   * 補上這份作業的**完整**繳交（含作文）。
+   *
+   * 全域載入的是摘要，沒有作文內容 —— 實測 2,091 筆合計 2.8 MB，
+   * 每次開畫面都拉一次不可行（見 api/submissions.ts）。
+   * 但清單上的「開始批改」要判斷有沒有內容，批改頁更是直接要全文，
+   * 所以選定作業時補這一份。
+   */
+  useEffect(() => {
+    if (selectedAssignmentId) void ensureSubmissions(selectedAssignmentId);
+  }, [selectedAssignmentId, ensureSubmissions]);
   const setSelectedAssignmentId = (id: string) =>
     navigate(routes.gradingList({ assignmentId: id }), { replace: true });
 

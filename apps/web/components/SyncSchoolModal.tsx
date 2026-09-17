@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from "react";
 import { X, Check, RefreshCcw, Loader2, Info, Search, School, Users } from "lucide-react";
 import { SchoolCourse, SchoolLevel } from "../types";
-import { MOCK_SCHOOL_COURSES, semesterLabel } from "../mockData";
+import { MOCK_SCHOOL_COURSES } from "../mockData";
+import { semesterLabel } from "../lib/semester";
 import { parseCourseName, type ParsedCourseName } from "../lib/schoolName";
 import { canImportCourse, isAdmin, type CurrentUser } from "../lib/access";
 

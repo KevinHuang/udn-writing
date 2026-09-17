@@ -7,13 +7,14 @@ import { routes } from "../lib/routes";
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const {
-    currentSemester, setCurrentSemester, myCourses, assignments, submissions,
+    currentSemester, setCurrentSemester, semesterOptions, myCourses, assignments, submissions,
     setIsGradedStatsOpen, courses, questions, setSelectedAiModel, leaveMarks,
   } = useAppState();
 
   return (
     <DashboardView
       currentSemester={currentSemester}
+      semesterOptions={semesterOptions}
       onSemesterChange={setCurrentSemester}
       allCourses={myCourses}
       assignments={assignments}

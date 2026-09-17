@@ -5,36 +5,80 @@ import { db } from './database';
 import GenAIHelper from './genai_helper';
 import SubmissionFeedbackHelper from './submission_feedback_helper';
 import SubmissionHelper from './submission_helper';
+import { isAiConfigured, simulateFinalSummary } from './simulated_grading';
+
+/** calculate() 的結果。generated = 這次新產生的筆數，skipped = 沒有可總結的作品 */
+export interface CalculateResult { generated: number; skipped: number }
 
 class FinalReportHelper {
 
-    public static async getFinalReport(courseId: string) {
+    /**
+     * 指定課程每位學生的期末總結，**限定呼叫者任教的班級**。
+     *
+     * 原本沒有這道把關 —— 路由取了 userId 卻沒往下傳，任何教師拿任意
+     * course_id 就能讀到別班學生的姓名、分數與 AI 評語。
+     *
+     * 一併帶出姓名與座號：final_report 只存 ref_user_id，畫面上要印的是人。
+     * 座號可能是空的（校務系統沒給），排序時排到最後而不是被當成 0 排到最前。
+     */
+    public static async getFinalReport(courseId: string, instructorId: string) {
         const sql = `
-            /**  取得指定課程的每位學生的期末總結 */
-            select * from final_report 
-            where ref_course_id = $1 
+            SELECT
+                rpt.*,
+                u.name AS student_name,
+                l.seat_no
+            FROM final_report AS rpt
+                INNER JOIN "user" AS u ON u.id = rpt.ref_user_id
+                LEFT JOIN uc_learner AS l
+                    ON l.ref_user_id = rpt.ref_user_id
+                   AND l.ref_course_id = rpt.ref_course_id
+            WHERE rpt.ref_course_id = $1
+              AND rpt.ref_course_id IN (
+                    SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $2
+              )
+            ORDER BY l.seat_no NULLS LAST, u.name
         `;
-        const result = await db.default.manyOrNone(sql, [courseId]);
-        return result;
+        const result = await db.default.manyOrNone(sql, [courseId, instructorId]);
+        return result || [];
+    }
+
+    /** 這堂課是不是呼叫者教的。產生總結之前要先問過。 */
+    public static async isTaughtBy(courseId: string, instructorId: string): Promise<boolean> {
+        const row = await db.default.oneOrNone(
+            `SELECT 1 FROM uc_instructor WHERE ref_course_id = $1 AND ref_user_id = $2 LIMIT 1`,
+            [courseId, instructorId]);
+        return !!row;
     }
 
 
-    /** 計算指定課程的每位學生的期末總結 */
-    public static async calculate(courseId: string, created_by: string) {
-        if (!courseId) { return; }
+    /**
+     * 計算指定課程的每位學生的期末總結。
+     *
+     * **只處理還沒有總結的學生**（getNoFinalReporStuds），所以重複呼叫是安全的，
+     * 已經產生過的不會重算、也不會重複燒 AI 的錢。
+     *
+     * 回傳處理結果，呼叫端才有東西可以回給畫面 —— 原本什麼都不回，
+     * 前端按下按鈕之後無從得知到底做了幾筆。
+     */
+    public static async calculate(courseId: string, created_by: string): Promise<CalculateResult> {
+        if (!courseId) { return { generated: 0, skipped: 0 }; }
 
         // 1. 取得這門課的所有學生中，尚未計算期末總結的學生清單
         const studIds = await FinalReportHelper.getNoFinalReporStuds(courseId);
         // console.log({ studIds });
 
-        if (!studIds || studIds.length === 0) { return []; }
+        if (!studIds || studIds.length === 0) { return { generated: 0, skipped: 0 }; }
+
+        let generated = 0;
+        let skipped = 0;
 
         // 2. 分別取得這些在這堂課所繳交的所有作業。
         let index = 0;
         for (const studId of studIds) {
             index++;
             const submissions = await SubmissionFeedbackHelper.getByCourseIdUserId(courseId, studId.ref_user_id);
-            if (submissions.length === 0) { continue; }
+            // 一篇都沒交（或都沒批改）的學生沒有東西可以總結
+            if (submissions.length === 0) { skipped++; continue; }
             // console.log({ submissions })
             const articleCount = submissions.filter(sub => sub.sub_scores).length;
             console.log({ studId, progress: `${index}/${studIds.length}` })
@@ -52,6 +96,7 @@ class FinalReportHelper {
             const highestScoreRec = Util.findHightestScoreRec(submissions);
             if (!highestScoreRec || !highestScoreRec.score) {
                 console.log({ msg: '沒有任何批改的文章，跳過該學生', studId })
+                skipped++;
                 continue;
             }
 
@@ -90,10 +135,15 @@ class FinalReportHelper {
             ${final_summarys}
 
             `;
-            const modelName = 'gemini-3.5-flash-lite';
-            const ai = new GenAIHelper(modelName);
-            const result = await ai.createSummary(prompt);
-            // console.log(result);
+            /*
+              沒有設定 Vertex AI 憑證時走決定性的模擬摘要（見 dal/simulated_grading.ts）。
+              期末總結會寫進資料庫，少了這一段，開發環境沒有憑證就整條流程都跑不動，
+              也沒辦法寫測試。模擬出來的總評開頭會標明「示範模式」。
+            */
+            const modelName = isAiConfigured() ? 'gemini-3.5-flash-lite' : '示範模式（未設定 AI）';
+            const result = isAiConfigured()
+                ? await new GenAIHelper('gemini-3.5-flash-lite').createSummary(prompt)
+                : simulateFinalSummary(prompt);
 
             // 寫入資料庫
             await FinalReportHelper.saveFinalReport(
@@ -117,9 +167,11 @@ class FinalReportHelper {
                 hightestScoreRemark,
                 result.final_summarys
             );
+            generated++;
 
         }
 
+        return { generated, skipped };
     }
 
     public static async saveFinalReport(studentId: string, courseId: string,

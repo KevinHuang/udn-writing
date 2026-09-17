@@ -10,7 +10,8 @@ export const CoursesPage: React.FC = () => {
   const { goBack, canGoBack } = useGoBack();
   const {
     currentUser, myCourses, assignments, submissions, currentSemester,
-    setCurrentSemester, setCourses, handleSyncCourses, handleDeleteCourse,
+    semesterOptions,
+    setCurrentSemester, handleUpdateCourse, handleSyncCourses, handleDeleteCourse,
   } = useAppState();
 
   return (
@@ -22,14 +23,11 @@ export const CoursesPage: React.FC = () => {
       onOpenCourse={(course) => navigate(routes.courseDetail(course.id))}
       onSelectCourse={(course) => navigate(routes.grades({ courseId: course.id }))}
       currentSemester={currentSemester}
+      semesterOptions={semesterOptions}
       onSemesterChange={setCurrentSemester}
       onBack={goBack}
       canGoBack={canGoBack}
-      onUpdateCourse={(updatedCourse) => {
-        setCourses((prev) =>
-          prev.map((c) => (c.id === updatedCourse.id ? updatedCourse : c)),
-        );
-      }}
+      onUpdateCourse={handleUpdateCourse}
       onAddCourses={handleSyncCourses}
       onDeleteCourse={handleDeleteCourse}
     />

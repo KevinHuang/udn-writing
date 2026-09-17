@@ -51,6 +51,7 @@ gcloud run services update writing-classroom-server --region asia-east1 \
 |---|---|---|
 | GCP service account 私鑰 | `apps/api/writing-classroom-gcs-key.json` | `save-to-cs@writing-classroom-672f8`。已被 `.gitignore` 擋下，但它在檔案系統裡放了一段時間。Cloud Run 上其實不需要這個檔，用附掛的 service account 即可 |
 | session 簽章金鑰 | 先前寫死在 `src/index.ts` | 任何有 repo 存取權的人都看得過。第 2 項產生新的就等於輪替 |
+| **Gemini API 金鑰** | 曾經被 Vite 的 `define` 打進前端 bundle | **只要那份 bundle 曾經部署或分享出去，這把金鑰就等於公開的** —— 前端 JS 是明文，打開 devtools 就看得到。Phase 5 已經把 AI 呼叫整個移到後端（`apps/web` 不再有 `@google/genai`，也不再讀任何環境變數），但**已經外流的金鑰不會因為程式改好就失效**。請到 Google AI Studio／GCP 把它作廢。<br>後端走的是 Vertex AI + ADC，不需要這把金鑰，所以作廢它不會影響任何功能 |
 
 DB 密碼要不要換由你判斷 —— `writing_mng` 對 production 有 `GRANT ALL`，
 而密碼在兩份 `.env` 裡放了一段時間。
@@ -67,21 +68,94 @@ DB 密碼要不要換由你判斷 —— `writing_mng` 對 production 有 `GRANT
 
 ---
 
+### 4.5 ✅ 修 `semesters` 表的資料錯誤 —— **已完成**（2026-09-16）
+
+118 學年度有**兩列 `118-2`**、沒有 `118-1`：
+
+| id | 學年期 | 起 | 迄 | 應該是 |
+|---|---|---|---|---|
+| 4 | `118-2` | 2029-09-01 | 2030-02-28 | **`118-1`** |
+| 3 | `118-2` | 2030-03-01 | 2030-08-31 | 正確 |
+
+不影響現況（今天是 115-1，解析正確），但 2029 年 9 月之後
+「目前學期」會算成 `118-2`。三年後才會咬人的那種 bug。
+
+```sql
+UPDATE semesters SET semester = 1 WHERE id = 4;
+```
+
+⚠️ 三個資料庫都要改（production 那個要另外決定）。
+
+---
+
 ## 🟡 擋住後續開發
 
-### 5. 審核 migration 草案
+### 5. ✅ 套用 migration —— **已完成**
 
-`docs/migrations/001-prototype-gaps.sql` —— 補齊原型有、schema 沒有的五項功能。
-**還沒套用到任何資料庫。**
+`docs/migrations/001-prototype-gaps.sql` 已套用到 `writing_classroom_test` 與
+`writing_classroom_autotest`，三張新表、五個新欄位、三個外鍵都到位，
+擁有者是 postgres。production 仍待決定。
 
-審核時特別看檔案末尾那段：**要不要對三張新表加外鍵？**
-既有庫一個外鍵都沒有，所以草案也沒加，但 `CLAUDE.md` 有整整一節在講孤兒標記的坑。
-我建議加 `ON DELETE CASCADE`，理由與風險都寫在裡面，**請 DBA 確認**。
+<details><summary>原本的說明（保留給 production 那次）</summary>
 
-⛔ 通過後**先套用到 `writing_classroom_test` 驗證**。production 的套用是另一件事，
-要人決定與執行，不要自動化。
 
-### 6. Phase 3 的瀏覽器驗證
+`docs/migrations/001-prototype-gaps.sql` 已定案：外鍵依建議加上、學生草稿保留。
+
+**為什麼要你來跑：** 應用程式用的 `writing_mng` 雖然有 `GRANT ALL`，
+但 `assignment` / `task` / `submission` 三張表的**擁有者是 `postgres`**，
+而 `ALTER TABLE` 需要的是擁有權不是權限。我實際跑過一次，停在
+`must be owner of table assignment`，整個交易乾淨回滾（兩個資料庫都沒殘留）。
+
+要以 **postgres 身分**對這兩個資料庫執行：
+
+```
+writing_classroom_test       開發用
+writing_classroom_autotest   自動化測試
+```
+
+例如透過 Cloud SQL Studio，或：
+
+```bash
+gcloud sql connect <執行個體名稱> --user=postgres --database=writing_classroom_test
+\i docs/migrations/001-prototype-gaps.sql
+```
+
+⛔ **production（`writing_classroom`）是另一件事**，要單獨決定與執行。
+
+跑完把檔案末尾的「套用紀錄」打勾，我才知道第 8～10 號資源可以開工。
+
+（若你希望之後的 migration 我能自己跑，可以考慮把這三張表的擁有權轉給
+`writing_mng`，或另開一個有擁有權的 migration 專用角色 —— 那是 DBA 的決定。）
+</details>
+
+### 5.1 ✅ 套用 migration 002 —— **已完成**（2026-09-16）
+
+`docs/migrations/002-task-fields.sql` —— 補齊 `task` 表缺的五個欄位
+（封存、寫作類型、滿分、預選模型、配圖描述）。**已寫好、已驗證語法**
+（在一張自己擁有的暫存複製表上整份跑過一次再回滾），但與 001 一樣
+**需要 postgres 身分**才能套用。
+
+```bash
+gcloud sql connect <執行個體名稱> --user=postgres --database=writing_classroom_test
+\i docs/migrations/002-task-fields.sql
+# 再對 writing_classroom_autotest 跑一次
+```
+
+套用完跟我說，我就把題目（資源 4）接上去 —— 在那之前接等於讓老師存檔時
+安靜掉資料。
+
+### 6. ✅ 前端已能在瀏覽器執行 —— 剩下的驗證
+
+`npm run dev` 起得來、登入頁看得到（2026-09-16）。啟動途中踩到並修掉的兩個坑
+都寫進 `apps/web/vite.config.ts` 的註解了：Vite 靜靜換 port（已加 `strictPort`）、
+proxy 的字串前綴把 `/services/*` 一起吃掉（已改正規式）。
+
+**還沒有人實際點過的部分**（路由測試在 Node 裡跑，不涵蓋這些）：
+
+- 批改頁按返回是否回到清單、從儀表板點作業卡片進去再返回
+- 批改頁的「上一位／下一位」（刻意用 replace，不該灌爆返回鍵）
+- 深色模式（碑拓）下各頁的對比度 —— 見 `apps/web/CLAUDE.md`
+- 課程卡片的顯示名稱長度（我把「校名 + 班級」組起來，真實資料可能比 mock 長）
 
 路由重構有 11 個渲染測試，但那是在 Node 裡跑的 —— 證明「渲染不丟例外、內容對得上」，
 **不涵蓋點擊、捲動、CSS，也不涵蓋實際的返回鍵行為**。

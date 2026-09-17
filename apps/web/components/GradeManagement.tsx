@@ -1,3 +1,4 @@
+import { Markdown } from './Markdown';
 
 import React, { useState, useMemo } from 'react';
 import { 
@@ -5,7 +6,6 @@ import {
   Calendar, 
   ChevronDown, 
   Search, 
-  FileText,
   Users,
   ArrowLeft,
   FileClock,
@@ -15,7 +15,8 @@ import {
   TrendingUp,
   GraduationCap,
   ClipboardList,
-  Target
+  Target,
+  Sparkles
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
@@ -24,7 +25,8 @@ import {
 import { Course, Assignment, Submission, CATEGORY_LABELS } from '../types';
 import { MAX_LEVEL, MIN_LEVEL, levelStyle, toLevel, CRITERIA_SHORT_LABELS } from '../lib/scoring';
 import { SHOW_CATEGORY_SCORES } from '../lib/features';
-import { semesterLabel, studentIdFor } from '../mockData';
+import { studentIdFor } from '../mockData';
+import { semesterLabel } from '../lib/semester';
 import { isOnLeave, type LeaveMarks } from '../lib/leave';
 import { isAdmin, type CurrentUser } from '../lib/access';
 import { isOverdue as isAssignmentOverdue } from '../lib/assignments';
@@ -47,6 +49,8 @@ interface GradeManagementProps {
   onSetLeave?: (assignmentId: string, studentId: string, onLeave: boolean) => void;
   onBack?: () => void;
   canGoBack?: boolean;
+  /** 開這個班的期末總結。由頁面負責導向 */
+  onOpenFinalReport?: (courseId: string) => void;
 }
 
 // --- STUDENT HISTORY MODAL ---
@@ -167,25 +171,13 @@ const StudentHistoryModal: React.FC<StudentHistoryModalProps> = ({
                                     )}
 
                                     {/* Feedback */}
-                                    {selectedDetail.result?.teacherFeedback && (
-                                        <div className="bg-info-50 p-4 sm:p-5 rounded-brand border border-info-100">
-                                            <h4 className="text-body text-info-800 mb-1.5 sm:mb-2 flex items-center gap-1.5 sm:gap-2">
-                                                <Users size={14} className="sm:size-4" /> 教師評語
-                                            </h4>
-                                            <p className="text-body text-info-900 leading-relaxed">
-                                                {selectedDetail.result.teacherFeedback}
+                                    {selectedDetail.result?.feedback && (
+                                        <div className="mt-4">
+                                            <p className="text-caption text-text-muted mb-1">
+                                                {/* 評語只有一版 —— is_ai 決定它是誰寫的 */}
+                                                {selectedDetail.result.isAi ? 'AI 批改評語' : '教師評語'}
                                             </p>
-                                        </div>
-                                    )}
-
-                                    {selectedDetail.result?.aiFeedback && (
-                                        <div className="bg-mauve-50 p-4 sm:p-5 rounded-brand border border-mauve-100">
-                                            <h4 className="text-body text-mauve-800 mb-1.5 sm:mb-2 flex items-center gap-1.5 sm:gap-2">
-                                                <FileText size={14} className="sm:size-4" /> AI 分析建議
-                                            </h4>
-                                            <p className="text-body text-mauve-900 leading-relaxed whitespace-pre-wrap">
-                                                {selectedDetail.result.aiFeedback}
-                                            </p>
+                                            <Markdown>{selectedDetail.result.feedback}</Markdown>
                                         </div>
                                     )}
                                 </div>
@@ -271,7 +263,8 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
   onSetLeave,
   user,
   onBack,
-  canGoBack
+  canGoBack,
+  onOpenFinalReport
 }) => {
   // Filter courses by semester
   const semesterCourses = useMemo(() => 
@@ -519,13 +512,29 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
           </div>
 
           {selectedCourseId && (
-            <button
-              id="grademanagement-btn-export"
-              onClick={handleDownloadExcel}
-              className="shrink-0 bg-primary hover:bg-primary/90 text-on-accent px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
-            >
-              <Download size={16} className="shrink-0" /> 匯出 EXCEL
-            </button>
+            <div className="shrink-0 flex items-center gap-2">
+              {/*
+                期末總結是次要動作（一學期按一次），所以走描邊樣式，
+                不跟「匯出 EXCEL」搶同一個實心主色 —— 兩顆實心按鈕並排，
+                老師分不出哪一個才是這一頁的主要動作。
+              */}
+              {onOpenFinalReport && (
+                <button
+                  id="grademanagement-btn-finalreport"
+                  onClick={() => onOpenFinalReport(selectedCourseId)}
+                  className="bg-card hover:bg-surface-soft border border-border-strong text-text-primary px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
+                >
+                  <Sparkles size={16} className="shrink-0 text-primary" /> 期末總結
+                </button>
+              )}
+              <button
+                id="grademanagement-btn-export"
+                onClick={handleDownloadExcel}
+                className="bg-primary hover:bg-primary/90 text-on-accent px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
+              >
+                <Download size={16} className="shrink-0" /> 匯出 EXCEL
+              </button>
+            </div>
           )}
         </div>
 

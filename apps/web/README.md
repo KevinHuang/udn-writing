@@ -42,23 +42,30 @@ npm test -w @udn/api     # 後端的 57 個整合測試
 Node 建議 20 以上。`package-lock.json` 有進版控，請用 `npm install`
 （或 `npm ci`）安裝，不要換成別的套件管理器，會裝到不同版本的相依樹。
 
-### Gemini API 金鑰（選用）
+### AI 功能：前端**不需要**任何金鑰
 
-**沒有金鑰也能跑完整個流程。** 沒設定時，批改會走
-`services/simulatedGrading.ts` 的模擬批改 —— 分數由作文內容的雜湊決定
+AI 呼叫全部在後端（`apps/api`，走 Vertex AI）。前端只打自己的 API，
+對應在 `api/ai.ts`：
+
+| 函式 | 端點 |
+|---|---|
+| `extractTextFromImage` | `POST /service/gemini/ocr_text` |
+| `analyzeImageContent` | `POST /service/gemini/analyze_image` |
+| `generateGradingRubric` | `POST /service/gemini/rubric` |
+| `gradeEssayWithAI`（題庫試批改） | `POST /service/gemini/grade` |
+
+批改頁與批次批改走的是另一支 `POST /service/instructor/grading/:submissionId`
+—— 那支會把結果存成版本並記錄 token 用量。
+
+**沒有設定 Vertex AI 憑證也能跑完整個流程。** 沒設定時**後端**會走
+`apps/api/src/dal/simulated_grading.ts` 的模擬批改 —— 分數由作文內容的雜湊決定
 （同一篇永遠得到同一個結果，不是亂數），評語開頭會標明「示範模式」。
-會停用的只有真正需要呼叫 API 的功能：看圖出題、手寫稿 OCR、產生評分規準。
+憑證設定在 repo 根目錄的 `.env`（`GOOGLE_GENAI_USE_VERTEXAI`、`GOOGLE_CLOUD_PROJECT`）。
 
-要啟用的話，複製 `.env.example` 成 `.env.local` 並填入金鑰：
-
-```
-GEMINI_API_KEY=你的金鑰
-```
-
-> ⚠️ **金鑰目前是透過 Vite 的 `define` 直接替換進前端 bundle 的**，
-> 任何人打開 devtools 都看得到。這在展示原型可以接受，
-> 但**正式上線前必須把 Gemini 呼叫移到後端**，前端只呼叫自己的 API。
-> 這是交接時最重要的一件事。
+> 這裡曾經有一把 `GEMINI_API_KEY`，透過 Vite 的 `define` 直接替換進前端 bundle，
+> 任何人打開 devtools 都看得到。Phase 5 已經把整件事移到後端，
+> `apps/web` 不再有 `@google/genai` 相依，也不再讀任何環境變數。
+> **不要把它加回來。**
 
 ---
 
@@ -118,9 +125,9 @@ metadata.json        原型平台用的描述檔（含 camera 權限宣告，代
 
 ```
 components/          畫面元件
-services/
-  geminiService.ts   Gemini API 封裝（批改、圖片分析、OCR、評分規準）
-  simulatedGrading.ts 沒有金鑰時頂上的模擬批改（決定性，不是亂數）
+api/                 後端呼叫。**所有 fetch 都走這裡**，元件不自己打
+  client.ts          共同底層（credentials、錯誤處理、JSON 解析）
+  ai.ts              AI 功能。金鑰在後端，這裡只有端點路徑
 scripts/
   check-tokens.mjs     色彩 token 稽核（wired 進 npm run lint）
   check-mockdata.mjs   示範資料一致性稽核（同上）

@@ -24,12 +24,13 @@ import {
 import { concernStudentCount } from "../lib/concern";
 import { deadlineOf } from "../lib/assignments";
 import { type LeaveMarks } from "../lib/leave";
-import { SEMESTER_OPTIONS, CURRENT_SEMESTER, seatLabel } from "../mockData";
+import { CURRENT_SEMESTER, seatLabel } from "../mockData";
 
 import { getGreeting } from "../lib/constants";
 
 export const DashboardView = ({
   currentSemester,
+  semesterOptions,
   onSemesterChange,
   allCourses,
   assignments,
@@ -39,6 +40,7 @@ export const DashboardView = ({
   onSelectSubmission,
 }: {
   currentSemester: string;
+  semesterOptions: { value: string; label: string }[];
   onSemesterChange: (s: string) => void;
   allCourses: Course[];
   assignments: Assignment[];
@@ -151,7 +153,7 @@ export const DashboardView = ({
             onChange={(e) => onSemesterChange(e.target.value)}
             className="text-body text-text-primary bg-transparent outline-none appearance-none cursor-pointer pr-6 md:pr-8 relative z-10"
           >
-            {SEMESTER_OPTIONS.map((opt) => (
+            {semesterOptions.map((opt) => (
               <option key={opt.value} value={opt.value}>
                 {opt.label}
               </option>

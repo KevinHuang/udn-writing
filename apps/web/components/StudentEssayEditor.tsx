@@ -17,7 +17,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { Assignment, Question, Submission } from '../types';
-import { extractTextFromImage } from '../services/geminiService';
+import { extractTextFromImage } from '../api/ai';
 import { fileToBase64 } from '../lib/fileToBase64';
 import { hasDeadline, deadlineLabel, NO_DEADLINE_LABEL } from '../lib/assignments';
 

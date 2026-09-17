@@ -27,6 +27,7 @@ export const TeacherLayout: React.FC = () => {
     isSettingsOpen,
     setIsSettingsOpen,
     switchIdentityTo,
+    handleLogout,
     session,
     applyTheme,
     theme,
@@ -223,6 +224,7 @@ export const TeacherLayout: React.FC = () => {
               activeIdentity={session?.activeIdentity ?? null}
               onSwitchIdentity={handleSwitchIdentity}
               onOpenSettings={() => setIsSettingsOpen(true)}
+              onLogout={() => void handleLogout()}
             />
             <main className="flex-1 overflow-y-auto p-4 md:p-8 pb-24 lg:pb-8">
               <Outlet />

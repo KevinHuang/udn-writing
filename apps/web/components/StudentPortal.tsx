@@ -31,6 +31,7 @@ export const StudentPortal: React.FC = () => {
   const { pathname } = useLocation();
   const {
     studentName, assignments, submissions, switchIdentityTo, currentSemester,
+    handleLogout,
   } = useAppState();
   const { goBack, canGoBack } = useGoBack();
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -277,7 +278,7 @@ export const StudentPortal: React.FC = () => {
                   
                   <div className="h-px bg-border/30 my-2"></div>
                   
-                  <button id="student-nav-btn-logout" className="w-full px-4 py-2.5 text-left text-body text-danger-500 hover:bg-danger-50 flex items-center gap-3 transition-colors">
+                  <button id="student-nav-btn-logout" onClick={() => void handleLogout()} className="w-full px-4 py-2.5 text-left text-body text-danger-500 hover:bg-danger-50 flex items-center gap-3 transition-colors">
                     <LogOut size={18} /> 登出系統
                   </button>
                 </div>

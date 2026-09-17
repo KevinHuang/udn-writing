@@ -51,7 +51,7 @@ import {
 import { useApiList } from "./useApiList";
 import type { Semester } from "../lib/semester";
 import {
-  fetchSession, switchIdentity, toUserRole,
+  fetchSession, switchIdentity, toUserRole, logout,
   type IdentityType, type Session,
 } from "../api/auth";
 import { AppStateContext } from "./appStateContext";
@@ -122,6 +122,28 @@ function useAppStateValue() {
     const active = await switchIdentity(type);
     setSession((prev) => (prev ? { ...prev, activeIdentity: active } : prev));
     return toUserRole(active);
+  };
+
+  /**
+   * 登出。
+   *
+   * ⚠️ 兩顆「登出系統」按鈕（教師端的 Navigation、學生端的 StudentPortal）
+   *    以前**都沒有 onClick** —— api/auth.ts 的 logout() 寫好了卻沒有人呼叫，
+   *    按下去完全沒有反應。與那顆什麼都沒存的「儲存草稿」是同一類問題。
+   *
+   * 後端清掉 session 之後，這裡把前端狀態也退回匿名，SessionGate 就會
+   * 顯示登入頁（見 App.tsx）。**即使後端那一步失敗也要退**：使用者按了登出
+   * 卻留在原畫面，會以為自己還登著。
+   */
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch (e) {
+      console.error('登出失敗:', e);
+    } finally {
+      setSession(null);
+      setSessionStatus('anonymous');
+    }
   };
 
   /**
@@ -873,6 +895,7 @@ function useAppStateValue() {
     sessionStatus,
     userRole,
     switchIdentityTo,
+    handleLogout,
     currentUser,
     isSettingsOpen,
     setIsSettingsOpen,

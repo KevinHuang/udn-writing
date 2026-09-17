@@ -24,9 +24,10 @@ interface NavigationProps {
   activeIdentity: IdentityType | null;
   onSwitchIdentity: (type: IdentityType) => void;
   onOpenSettings: () => void;
+  onLogout: () => void;
 }
 
-export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdentity, onSwitchIdentity, onOpenSettings }) => {
+export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdentity, onSwitchIdentity, onOpenSettings, onLogout }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
@@ -215,7 +216,7 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
                     
                     <div className="h-px bg-border/30 my-2"></div>
                     
-                    <button id="nav-btn-logout" className="w-full px-4 py-2 text-left text-caption text-danger-500 hover:bg-danger-50 flex items-center gap-3 transition-colors">
+                    <button id="nav-btn-logout" onClick={onLogout} className="w-full px-4 py-2 text-left text-caption text-danger-500 hover:bg-danger-50 flex items-center gap-3 transition-colors">
                       <LogOut size={16} /> 登出系統
                     </button>
                  </div>

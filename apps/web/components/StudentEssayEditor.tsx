@@ -20,6 +20,7 @@ import { Assignment, Question, Submission } from '../types';
 import { extractTextFromImage } from '../api/ai';
 import { fileToBase64 } from '../lib/fileToBase64';
 import { hasDeadline, deadlineLabel, NO_DEADLINE_LABEL } from '../lib/assignments';
+import { CameraCapture } from './CameraCapture';
 import { countWords } from '../lib/wordCount';
 
 interface StudentEssayEditorProps {
@@ -47,6 +48,15 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
   const [content, setContent] = useState(existingSubmission?.content || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
+  /**
+   * 相機視窗。
+   *
+   * ⚠️ **不要改回 `<input type="file" capture="environment">`。** `capture` 只有
+   *    行動裝置的瀏覽器會理它，桌機完全忽略 —— 結果是「繼續拍照」跳出的是
+   *    一般檔案選擇器，跟「繼續上傳」一模一樣，使用者會以為按鈕壞了。
+   *    桌機要真的開鏡頭只能走 getUserMedia（見 CameraCapture）。
+   */
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isOcrLoading, setIsOcrLoading] = useState(false);
@@ -54,7 +64,6 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
 
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const cameraInputRef = React.useRef<HTMLInputElement>(null);
 
   const [ocrProgress, setOcrProgress] = useState({ current: 0, total: 0 });
 
@@ -149,11 +158,6 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
     if (files) processImages(files);
   };
 
-  const handleCameraCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files) processImages(files);
-  };
-
   const handleSubmit = async () => {
     if (!content.trim() || isLocked) return;
     setShowConfirmModal(true);
@@ -176,6 +180,37 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 animate-fade-in pb-20">
+      {/*
+        ⚠️ 這兩個隱藏的 file input **必須掛在最外層，不能放進任何條件區塊**。
+
+        它們原本在「選擇作文提供方式」那張覆蓋層裡（`showMethodSelector && !content`）。
+        學生一旦有了內容，那個區塊就卸載，兩個 ref 變成 null ——
+        而工具列的「繼續拍照／繼續上傳」是 `ref.current?.click()`，
+        那個 `?.` 把失敗安靜地吞掉，**按鈕按下去完全沒有反應也沒有錯誤**。
+        覆蓋層裡的按鈕能用、工具列的不能用，因為只有前者與 input 同時存在。
+
+        已批改時整組按鈕會收起來（isLocked），所以 input 留著也不會被觸發。
+      */}
+      <input id="studentessayeditor-input-file-upload"
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileUpload}
+        accept="image/*"
+        multiple
+        className="hidden"
+      />
+
+      {isCameraOpen && (
+        <CameraCapture
+          onClose={() => setIsCameraOpen(false)}
+          onCapture={(files) => {
+            setIsCameraOpen(false);
+            if (files.length) void processImages(files);
+          }}
+          // 開不了鏡頭（沒權限／沒相機／不是 https）時的退路
+          onFallbackToUpload={() => fileInputRef.current?.click()}
+        />
+      )}
       {/* Confirmation Modal */}
       {showConfirmModal && (
         <div id="studentessayeditor-confirmmodal" className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
@@ -310,7 +345,7 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
                     跟先前那顆什麼都沒存的「儲存草稿」是同一類問題 */}
                 {!isLocked && <button 
                   id="studentessayeditor-btn-ocr-camera"
-                  onClick={() => cameraInputRef.current?.click()}
+                  onClick={() => setIsCameraOpen(true)}
                   className="p-1.5 sm:p-2 hover:bg-card rounded-lg sm:rounded-xl text-primary transition-colors flex items-center gap-1 sm:gap-1.5 text-body"
                   title="繼續拍照"
                 >
@@ -374,7 +409,7 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
                     {/* Camera OCR Option - FEATURED */}
                     <button 
                       id="studentessayeditor-btn-method-camera"
-                      onClick={() => cameraInputRef.current?.click()}
+                      onClick={() => setIsCameraOpen(true)}
                       className="group relative p-6 sm:p-8 bg-card border-2 border-border/50 rounded-2xl sm:rounded-3xl hover:border-primary hover:shadow-xl hover:shadow-primary/10 transition-all flex flex-row sm:flex-col items-center text-left sm:text-center gap-4 sm:gap-6 active:scale-95"
                     >
                       <div className="w-14 h-14 sm:w-20 sm:h-20 bg-ink-100 rounded-xl sm:rounded-2xl flex items-center justify-center text-ink-600 group-hover:bg-primary group-hover:text-on-accent transition-all duration-500 sm:rotate-3 group-hover:rotate-0 shrink-0">
@@ -412,22 +447,6 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
                     </p>
                   </div>
 
-                  <input id="studentessayeditor-input-file-upload" 
-                    type="file" 
-                    ref={fileInputRef} 
-                    onChange={handleFileUpload} 
-                    accept="image/*" 
-                    multiple
-                    className="hidden" 
-                  />
-                  <input id="studentessayeditor-input-camera-upload" 
-                    type="file" 
-                    ref={cameraInputRef} 
-                    onChange={handleCameraCapture} 
-                    accept="image/*" 
-                    capture="environment" 
-                    className="hidden" 
-                  />
                 </div>
               </div>
             )}

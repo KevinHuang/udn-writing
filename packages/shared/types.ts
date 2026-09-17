@@ -214,6 +214,15 @@ export interface Submission {
   assignmentId: string;
   studentId: string;
   studentName: string;
+  /**
+   * 座號（`uc_learner.seat_no`）。校務系統沒給就是 undefined。
+   *
+   * ⚠️ **不要再從 studentId 解析座號。** 原型的 id 長得像 `s-c1-0`，
+   *    mockData 的 seatLabel() 靠 split 取出最後一段 —— 真實的 studentId
+   *    是 user.id，解出來是垃圾。這是 CLAUDE.md 那條「同一份資訊不要在多處
+   *    各自解析」的第五次。
+   */
+  seatNo?: number;
   content: string;
   submittedAt: string;
   publishedAt?: string;

@@ -106,10 +106,12 @@ export async function deleteAssignment(id: string): Promise<void> {
  *    而不是 `id`，而且多帶了課程與統計資訊）。差異吸收在這裡，
  *    外面拿到的都是同一個 Assignment。
  */
-interface RawTeacherAssignment extends Omit<RawAssignment, 'id' | 'ref_course_id' | 'ref_task_id' | 'total_students'> {
+interface RawTeacherAssignment extends Omit<RawAssignment, 'id' | 'ref_course_id' | 'ref_task_id' | 'total_students' | 'assigned_at'> {
   assignment_id: string;
   course_id: string;
   task_id: string;
+  /** ⚠️ 這支端點的派發時間叫 start_date，逐班那支才叫 assigned_at */
+  start_date: string | null;
   student_count: string | number | null;
   submission_count: string | number | null;
   graded_count: string | number | null;
@@ -124,6 +126,13 @@ export async function fetchAssignments(): Promise<Assignment[]> {
       ref_course_id: r.course_id,
       ref_task_id: r.task_id,
       total_students: r.student_count,
+      /*
+        ⚠️ **這支端點把派發時間叫做 `start_date`**，不是 `assigned_at`
+           （逐班那支才是 assigned_at）。少了這一行，createdAt 會是 undefined，
+           而批改清單直接 `new Date(createdAt || '')` —— 畫面上印出
+           「派發時間：Invalid Date Invalid Date」。實測看到的就是這個。
+      */
+      assigned_at: r.start_date ?? null,
     }),
   );
 }

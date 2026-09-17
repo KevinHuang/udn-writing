@@ -89,6 +89,7 @@ function toSubmission(
     assignmentId,
     studentId: String(r.user_id),
     studentName: r.student_name ?? '',
+    seatNo: r.seat_no ?? undefined,
     content: opts.content ?? '',
     submittedAt: r.submited_time ?? '',
     status: submissionStatusOf({

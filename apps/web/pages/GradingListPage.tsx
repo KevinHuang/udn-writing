@@ -11,15 +11,28 @@ import { useAppState } from "../state/appStateContext";
 import { useGoBack } from "../lib/useGoBack";
 import { routes, queryKeys } from "../lib/routes";
 import { canMark, hasMark } from "../lib/submissionMarks";
-import { assignmentRoster } from "../lib/gradingQueue";
+import { rosterOf, seatText } from "../lib/gradingQueue";
 import {
   assignmentsForCourse, isOverdue as isAssignmentOverdue, hasDeadline, deadlineLabel,
   firstWorthGrading,
 } from "../lib/assignments";
 import { orderedAssignments, orderNumbers } from "../lib/assignmentOrder";
 import { levelStyle, MAX_LEVEL } from "../lib/scoring";
-import { seatLabel, COURSE_ROSTERS } from "../mockData";
 import { SHOW_AI_MODEL_PICKER } from "../lib/features";
+
+
+/**
+ * 日期時間，沒有值或解析不出來就回「—」。
+ *
+ * `new Date(undefined || '')` 得到的是 Invalid Date，而它的
+ * toLocaleDateString() 回傳字串 "Invalid Date" —— 會原樣印在畫面上。
+ */
+function formatDateTime(value?: string): string {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
 
 export const GradingListPage: React.FC = () => {
   const navigate = useNavigate();
@@ -118,17 +131,20 @@ export const GradingListPage: React.FC = () => {
           : [];
         const switchableNo = orderNumbers(switchableAssignments);
 
-        // 名冊 × 繳交紀錄。批改頁的「上一位／下一位」用的是同一支函式，
-        // 兩邊的順序才會一致（見 lib/gradingQueue.ts）
-        const roster = assignment
-          ? COURSE_ROSTERS[assignment.courseId] || []
-          : [];
+        /*
+          名冊 × 繳交紀錄 —— **後端已經合併好了**，這裡只要篩出這份作業並排序。
+          批改頁的「上一位／下一位」走同一支 rosterOf()，兩邊順序才一致。
+
+          ⚠️ 以前是 `COURSE_ROSTERS[assignment.courseId]`，那是 mockData，
+             鍵是原型的課程 id（'c1'）。真實課程 id 是 '229'，查不到 →
+             **整張表是空的**（實測：卡片寫「待批改 1」，點進去 0 列）。
+        */
         const sortedSubmissions = assignment
-          ? assignmentRoster(assignment, roster, submissions)
+          ? rosterOf(assignment.id, submissions)
           : [];
         const filteredSubmissions = sortedSubmissions;
 
-        const totalStudents = assignment?.totalStudents || roster.length || 0;
+        const totalStudents = assignment?.totalStudents || sortedSubmissions.length || 0;
         const unsubmittedCount = filteredSubmissions.filter(
           (s) => s.status === "Unsubmitted" || s.status === "Draft",
         ).length;
@@ -482,7 +498,7 @@ export const GradingListPage: React.FC = () => {
                                 {s.studentName}
                               </span>
                               <span className="text-caption text-text-secondary opacity-60">
-                                #{seatLabel(s.studentId)}
+                                #{seatText(s)}
                               </span>
                             </div>
                             <div className="flex items-center gap-2 mt-1.5">
@@ -630,7 +646,7 @@ export const GradingListPage: React.FC = () => {
                             </div>
                           </td>
                           <td className="py-2 px-2 font-mono font-bold text-ink-500">
-                            {seatLabel(s.studentId)}
+                            {seatText(s)}
                           </td>
                           <td className="py-2 px-4">
                             <div className="flex items-center gap-3">
@@ -933,14 +949,15 @@ export const GradingListPage: React.FC = () => {
                   <div className="flex items-center gap-1.5 text-caption text-text-secondary font-normal">
                     <SendHorizontal size={14} className="text-text-muted" />
                     <span>派發時間：</span>
+                    {/*
+                      ⚠️ **不要寫 `new Date(x || '')`。** `new Date('')` 是
+                         Invalid Date，而 toLocaleDateString() 會把它印成字串
+                         「Invalid Date」直接顯示在畫面上 —— 實測時三張卡片
+                         都是這樣（createdAt 沒接上，見 api/assignments.ts
+                         的 start_date）。沒有值就顯示破折號。
+                    */}
                     <span className="font-mono text-text-primary/80">
-                      {new Date(
-                        assignment.createdAt || "",
-                      ).toLocaleDateString()}{" "}
-                      {new Date(assignment.createdAt || "").toLocaleTimeString(
-                        [],
-                        { hour: "2-digit", minute: "2-digit" },
-                      )}
+                      {formatDateTime(assignment.createdAt)}
                     </span>
                   </div>
                   <div

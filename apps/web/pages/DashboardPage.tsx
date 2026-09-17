@@ -9,6 +9,7 @@ export const DashboardPage: React.FC = () => {
   const {
     currentSemester, setCurrentSemester, semesterOptions, myCourses, assignments, submissions,
     setIsGradedStatsOpen, courses, questions, setSelectedAiModel, leaveMarks,
+    currentUser,
   } = useAppState();
 
   return (
@@ -33,6 +34,7 @@ export const DashboardPage: React.FC = () => {
         navigate(routes.gradingEditor(assignmentId, submission.id));
       }}
       leaveMarks={leaveMarks}
+      teacherName={currentUser.name}
     />
   );
 };

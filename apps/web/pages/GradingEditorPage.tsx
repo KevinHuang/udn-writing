@@ -5,8 +5,7 @@ import { useAppState } from "../state/appStateContext";
 import { useGoBack } from "../lib/useGoBack";
 import { routes } from "../lib/routes";
 import { NotFoundPage } from "./NotFoundPage";
-import { COURSE_ROSTERS } from "../mockData";
-import { assignmentRoster, gradableQueue, neighbours } from "../lib/gradingQueue";
+import { rosterOf, gradableQueue, neighbours } from "../lib/gradingQueue";
 
 export const GradingEditorPage: React.FC = () => {
   const navigate = useNavigate();
@@ -48,11 +47,8 @@ export const GradingEditorPage: React.FC = () => {
     清單上的第三位按下一位就真的是第四位。
     只走有交東西的人 —— 跳到未繳交只會開出一份空白稿。
   */
-  const queue = assign
-    ? gradableQueue(
-        assignmentRoster(assign, COURSE_ROSTERS[assign.courseId] || [], submissions),
-      )
-    : [];
+  // 順序與批改清單走同一支 rosterOf()，「下一位」才會真的是清單上的下一位
+  const queue = assign ? gradableQueue(rosterOf(assign.id, submissions)) : [];
   const { prev, next, index, total } = neighbours(queue, submission.id);
 
   /** 換人用 replace —— 批改一個班會按幾十次，每按一次留一筆歷史，返回鍵就廢了。 */

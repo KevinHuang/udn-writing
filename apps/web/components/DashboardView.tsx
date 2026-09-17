@@ -38,6 +38,7 @@ export const DashboardView = ({
   leaveMarks,
   onShowGradedStats,
   onSelectSubmission,
+  teacherName,
 }: {
   currentSemester: string;
   semesterOptions: { value: string; label: string }[];
@@ -49,6 +50,8 @@ export const DashboardView = ({
   leaveMarks?: LeaveMarks;
   onShowGradedStats: () => void;
   onSelectSubmission: (assignmentId: string, submission: Submission) => void;
+  /** 登入者的姓名。以前這裡是寫死的「Charles 老師」（原型的示範教師） */
+  teacherName: string;
 }) => {
   const navigate = useNavigate();
   const { goBack, canGoBack } = useGoBack();
@@ -66,14 +69,29 @@ export const DashboardView = ({
       (s.status === "Graded" || s.status === "Published"),
   ).length;
 
+  /*
+    ⚠️ 這兩個數字以前**沒有依學期過濾**，而旁邊的 gradedCount 與 concernCount
+       有 —— 同一張首頁上，「本學期已批改 0 份」旁邊寫著「待批改 16 份」，
+       而底下那張表（pendingSubmissions，有過濾）只列得出本學期的幾筆。
+       實測就是這個畫面。四張卡片與那張表現在都以本學期為準。
+  */
   const pendingGradingCount = submissions.filter(
-    (s) => s.status === "Pending",
+    (s) => semesterAssignmentIds.includes(s.assignmentId) && s.status === "Pending",
   ).length;
+
+  /** 本學期已批改佔本學期繳交的比例。沒有繳交時不顯示，不要變成 0% */
+  const semesterSubmissionCount = submissions.filter(
+    (s) => semesterAssignmentIds.includes(s.assignmentId),
+  ).length;
+  const gradedRatio = semesterSubmissionCount
+    ? Math.round((gradedCount / semesterSubmissionCount) * 100)
+    : null;
 
   // 「即將截止」只看有設截止日的。沒設的作業不會催 ——
   // 先前是靠 new Date(undefined) 變成 NaN 才被濾掉，那是巧合不是設計
   const upcomingAssignments = assignments
     .filter((a) => {
+      if (!semesterAssignmentIds.includes(a.id)) return false;
       const deadline = deadlineOf(a);
       if (!deadline) return false;
       const now = new Date();
@@ -129,7 +147,7 @@ export const DashboardView = ({
               </button>
             )}
             <h2 className="text-display font-serif font-bold text-text-primary tracking-tight">
-              {getGreeting()}，Charles 老師 👋
+              {getGreeting()}，{teacherName} 👋
             </h2>
           </div>
           <p className="text-text-secondary mt-2 font-normal text-title ml-0 md:ml-12 font-serif">
@@ -189,10 +207,19 @@ export const DashboardView = ({
               </h3>
               </div>
           </div>
-          <div className="flex items-center text-caption text-text-primary bg-surface-soft w-fit px-2.5 py-1 md:px-3 md:py-1.5 rounded-lg">
-            <TrendingUp size={10} className="mr-1 md:mr-1.5 md:size-[12px]" />
-            +5 本週新增
-          </div>
+          {/*
+            ⚠️ 這裡原本是寫死的「+5 本週新增」—— 不管實際批了幾份都顯示 +5，
+               實測時「本學期已批改 0 份」旁邊照樣掛著「+5 本週新增」。
+               「本週」目前**算不出來**：submission_feedback 沒有回傳批改時間，
+               Submission 上也只有繳交與發還的時間。要做真的週增量得先把
+               批改時間帶上來。在那之前顯示算得出來的比例。
+          */}
+          {gradedRatio !== null && (
+            <div className="flex items-center text-caption text-text-primary bg-surface-soft w-fit px-2.5 py-1 md:px-3 md:py-1.5 rounded-lg">
+              <TrendingUp size={10} className="mr-1 md:mr-1.5 md:size-[12px]" />
+              佔本學期繳交的 {gradedRatio}%
+            </div>
+          )}
         </div>
 
         {/* Card 2: Pending */}

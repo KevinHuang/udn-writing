@@ -36,8 +36,16 @@ function toCourse(r: RawCourse): Course {
 
   return {
     id: String(r.id),
-    // 校務系統的課程編號。前端拿它當「課程代碼」顯示
-    code: r.source_index != null ? String(r.source_index) : '',
+    /*
+      校務系統的課程編號（`course.source_index`，對應 dsa 的 course.id）。
+      前端拿它當「課程代碼」顯示。
+
+      ⚠️ **-1 是資料庫的預設值**，意思是「這門課不是從校務系統同步來的」，
+         不是一個編號。不濾掉的話卡片上會印出「-1」（實測看到的就是這個）。
+    */
+    code: r.source_index != null && String(r.source_index) !== '-1'
+      ? String(r.source_index)
+      : '',
     // 顯示用的完整名稱。資料庫沒有這一欄，是組出來的 ——
     // 管理人員會同時看到多校的課程，只印「國三8班」分不出是哪一間
     name: [schoolName, className].filter(Boolean).join(' '),

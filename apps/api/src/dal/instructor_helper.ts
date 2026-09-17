@@ -193,6 +193,23 @@ class InstructorHelper {
             [submission_id, instructor_id]);
         if (!owned) return null;
 
+        /*
+          **沿用前一筆有效批改的發還狀態。**
+
+          教師修改評語是「產生新版本」，不是「重新批改」—— 一份已經發還的
+          作品，老師改個錯字再存檔，它還是已發還的。新列的 is_returned 若吃
+          預設值 false，學生原本看得到的成績會**被無聲收回**
+          （實測：已發還的作品改完分數存檔，狀態退回「已批改」）。
+
+          在把舊版本設為失效**之前**讀，否則就讀不到了。
+        */
+        const previous = await db.default.oneOrNone(
+            `SELECT is_returned FROM public.submission_feedback
+              WHERE ref_submission_id = $1 AND is_valid = true
+              ORDER BY id DESC LIMIT 1`,
+            [submission_id]);
+        const wasReturned = previous?.is_returned === true;
+
         await db.default.none(`UPDATE public.submission_feedback SET is_valid = false WHERE ref_submission_id = $1`, [submission_id]);
 
         const sql = `
@@ -204,13 +221,14 @@ class InstructorHelper {
                 ref_user_id,
                 input_tokens,
                 output_tokens,
-                is_ai
+                is_ai,
+                is_returned
             ) VALUES (
-                $1, $2, $3::text, true, $4, $5, $6, $7
+                $1, $2, $3::text, true, $4, $5, $6, $7, $8
             ) RETURNING id;
         `;
         const contentStr = typeof analysis_content === 'string' ? analysis_content : JSON.stringify(analysis_content);
-        return await db.default.oneOrNone(sql, [submission_id, score || 0, contentStr, instructor_id, inputTokens, outputTokens, is_ai]);
+        return await db.default.oneOrNone(sql, [submission_id, score || 0, contentStr, instructor_id, inputTokens, outputTokens, is_ai, wasReturned]);
     }
 
     /**

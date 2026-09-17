@@ -120,6 +120,39 @@ describe('教師修改評語 = 新版本，不是新欄位', () => {
   });
 });
 
+  test('已發還的作品改完再存，仍然是已發還', async () => {
+    const { mySubmission, me, cookie } = await scenario();
+    await aiGraded(mySubmission, me.id, 5);
+    // 老師發還
+    await req(srv, '/service/instructor/submission_feedback/return', cookie,
+      { method: 'POST', ...json({ submissionIds: [mySubmission] }) });
+
+    await saveFeedback(cookie, mySubmission, 4, { score: 4, response: '改過的評語' });
+
+    const row = await rawDb.one(
+      `SELECT score, is_ai, is_returned FROM submission_feedback
+        WHERE ref_submission_id=$1 AND is_valid=true`, [mySubmission]);
+    assert.equal(Number(row.score), 4);
+    assert.equal(row.is_ai, false, '教師改的版本 is_ai 要是 false');
+    /*
+      ⚠️ 這一條是實測抓到的：新列的 is_returned 吃預設值 false，
+         於是老師改個分數就把已經發還的成績**無聲收回**，
+         學生端從「已完成」退回「批閱中」。
+    */
+    assert.equal(row.is_returned, true, '已發還的作品改完仍然是已發還');
+  });
+
+  test('還沒發還的作品改完不會變成已發還', async () => {
+    const { mySubmission, me, cookie } = await scenario();
+    await aiGraded(mySubmission, me.id, 5);
+    await saveFeedback(cookie, mySubmission, 4, { score: 4, response: '改過的評語' });
+
+    const row = await rawDb.one(
+      `SELECT is_returned FROM submission_feedback
+        WHERE ref_submission_id=$1 AND is_valid=true`, [mySubmission]);
+    assert.notEqual(row.is_returned, true);
+  });
+
 describe('授權：不能碰別班的批改', () => {
   test('批改別班的作品 → 403，而且什麼都沒寫進去', async () => {
     const s = await scenario();

@@ -42,6 +42,25 @@ function toAssignment(r: RawAssignment): Assignment {
   };
 }
 
+/**
+ * 畫面上的 `datetime-local` 值 → 帶時區的 ISO 字串。
+ *
+ * ⚠️ **不要把 datetime-local 的原字串直接送給後端。** 它長得像
+ *    `2026-09-24T23:59`，**不帶時區**，而 `assignment.deadline` 是
+ *    `timestamp with time zone` —— Postgres 會用伺服器的時區去解讀它。
+ *    伺服器是 UTC 的話，老師設的「9/24 23:59」會存成 UTC 23:59，
+ *    在台灣顯示就變成 **9/25 07:59**，整整差 8 小時（實測：派發精靈
+ *    設 23:59，資料庫與畫面都變成隔天 07:59）。
+ *
+ * `new Date('2026-09-24T23:59')` 依規格會當成**本地時間**解析，
+ * 所以 toISOString() 得到的才是正確的那個瞬間。
+ */
+function toIsoDeadline(local?: string): string | null {
+  if (!local) return null;
+  const d = new Date(local);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 /** 某個班級的作業。伺服器端只回你教的班，別人的班會拿到空陣列。 */
 export async function fetchAssignmentsByCourse(courseId: string): Promise<Assignment[]> {
   const rows = await api.get<RawAssignment[]>(`/service/instructor/courses/${courseId}/assignments`);
@@ -54,7 +73,7 @@ export async function createAssignment(
 ): Promise<Assignment> {
   const row = await api.post<RawAssignment>(`/service/instructor/courses/${courseId}/assignments`, {
     ref_task_id: input.questionId,
-    deadline: input.deadline || null,
+    deadline: toIsoDeadline(input.deadline),
     allow_late_submission: input.allowLateSubmission ?? false,
   });
   return toAssignment(row);
@@ -69,7 +88,7 @@ export async function updateAssignmentConfig(
   id: string, config: { deadline?: string; allowLateSubmission?: boolean },
 ): Promise<void> {
   await api.put(`/service/instructor/assignments/${id}/config`, {
-    deadline: config.deadline || null,
+    deadline: toIsoDeadline(config.deadline),
     allow_late_submission: config.allowLateSubmission,
   });
 }

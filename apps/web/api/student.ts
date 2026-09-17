@@ -1,4 +1,5 @@
 import { api } from './client';
+import { feedbackTextOf } from '../lib/feedbackText';
 import { semesterValue } from '../lib/semester';
 import {
   QuestionType, submissionStatusOf,
@@ -60,24 +61,6 @@ export interface StudentData {
   submissions: Submission[];
 }
 
-/**
- * 從 `submission_feedback.content` 取出評語本文。
- *
- * 與 api/submissions.ts 的 feedbackTextOf 同一件事 —— 後端存的是
- * `{ raw_score, score, response }` 的 JSON 字串，`response` 才是那份 markdown。
- * 解析失敗就把原字串當評語，舊資料的格式可能不一樣。
- */
-function feedbackTextOf(raw: string | null): string {
-  if (!raw) return '';
-  try {
-    const parsed = JSON.parse(raw);
-    if (typeof parsed?.response === 'string') return parsed.response;
-    if (typeof parsed?.feedback === 'string') return parsed.feedback;
-    return raw;
-  } catch {
-    return raw;
-  }
-}
 
 /** 四項分數在學生端是關著的（features.ts 的 SHOW_CATEGORY_SCORES），給零即可 */
 const NO_CATEGORY_SCORES = { content: 0, structure: 0, grammar: 0, vocabulary: 0 };

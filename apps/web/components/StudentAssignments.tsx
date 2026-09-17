@@ -137,9 +137,21 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
             const submission = submissions.find(s => s.assignmentId === assignment.id);
             const isReturned = submission && submission.status === 'Published';
             const isDraft = submission && submission.status === 'Draft';
+            /*
+              **學生端不分辨「批閱中」與「已批改未發還」。**
+
+              Graded 的意思是老師批完了但**還沒發還**，那正是發還這個動作
+              存在的理由 —— 在老師按下發還之前，學生看到的就該是「批閱中」。
+
+              ⚠️ 底下的顯示分支以前只處理 isReturned / isPending / isDraft，
+                 Graded 掉進最後的 else，於是狀態寫「進行中」、按鈕是「開始寫作」
+                 （實測：老師批完 5 分之後，學生那一列變回可以重寫）。
+                 用 isUnderReview 一起涵蓋兩種狀態。
+            */
             const isPending = submission && submission.status === 'Pending';
             const isGraded = submission && submission.status === 'Graded';
-            const isSubmitted = isPending || isGraded;
+            const isUnderReview = isPending || isGraded;
+            const isSubmitted = isUnderReview;
             
             const deadline = deadlineOf(assignment);
             // 沒有截止日就永遠不是「已逾期」
@@ -186,7 +198,7 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                             草稿
                           </span>
                         )}
-                        {isPending && (
+                        {isUnderReview && (
                           <span className="px-2 py-0.5 bg-info-100 text-info-700 text-body rounded-full border border-info-200/50 whitespace-nowrap">
                             批閱中
                           </span>
@@ -218,11 +230,11 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                     <p className={`text-ui font-bold flex items-center sm:justify-end gap-1.5 ${
                       isReturned ? 'text-success-600' : 
                       isDraft ? 'text-amber-600' : 
-                      isPending ? 'text-info-600' :
+                      isUnderReview ? 'text-info-600' :
                       isOverdue ? 'text-danger-600' : 
                       'text-primary'
                     }`}>
-                      {isReturned ? '已完成' : isPending ? '批閱中' : isOverdue && !isDraft ? '已逾期' : '進行中'}
+                      {isReturned ? '已完成' : isUnderReview ? '批閱中' : isOverdue && !isDraft ? '已逾期' : '進行中'}
                     </p>
                     {isReturned && submission.result && (
                       <p className="text-ui text-text-primary font-bold mt-0.5">{submission.result.totalScore} 分</p>
@@ -240,7 +252,7 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                       }
                     }}
                     className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl text-ui font-bold flex items-center justify-center gap-2 transition-all active:scale-95 ${
-                      isReturned || isPending
+                      isReturned || isUnderReview
                         ? 'bg-card text-text-primary hover:bg-surface border border-border/50 shadow-sm' 
                         : isDraft
                         ? 'bg-amber-500 text-on-accent hover:bg-amber-600 shadow-sm shadow-amber-500/20'
@@ -249,7 +261,7 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                   >
                     {isReturned ? (
                       <>查看回饋 <ChevronRight size={16} className="sm:size-[18px]" /></>
-                    ) : isPending ? (
+                    ) : isUnderReview ? (
                       <>已繳交 <CheckCircle2 size={16} className="sm:size-[18px]" /></>
                     ) : isDraft ? (
                       <><Save size={16} className="sm:size-[18px]" /> 繼續寫作</>

@@ -1,4 +1,5 @@
 import { api } from './client';
+import { feedbackTextOf } from '../lib/feedbackText';
 import { countWords } from '../lib/wordCount';
 import { submissionStatusOf, type Submission, type GradingResult } from '@udn/shared';
 
@@ -37,30 +38,17 @@ interface RawSummaryRow extends RawSubmissionBase {
 
 interface RawDetailRow extends RawSubmissionBase {
   content: string | null;
-  ai_analysis: string | null;
+  /**
+   * ⚠️ 這一欄**不一定是字串**。摘要端點給 JSON 字串，詳細端點的
+   *    `ai_analysis` 經過 jsonb 轉換，pg 直接回物件。宣告成 string 正是
+   *    先前沒發現這件事的原因之一 —— 交給 feedbackTextOf() 兩種都吃。
+   */
+  ai_analysis: unknown;
 }
 
 /** 空的四項分數。資料庫的 sub_scores 多半是 null，而畫面上這一區是關著的 */
 const NO_CATEGORY_SCORES = { content: 0, structure: 0, grammar: 0, vocabulary: 0 };
 
-/**
- * 從 `submission_feedback.content` 取出評語。
- *
- * 後端存的是 `{ raw_score, score, response }` 的 JSON 字串，
- * `response` 才是那份 markdown 報告。解析失敗就把原字串當評語 ——
- * 舊資料或手動寫入的格式可能不一樣，寧可顯示原文也不要整個空掉。
- */
-function feedbackTextOf(raw: string | null): string {
-  if (!raw) return '';
-  try {
-    const parsed = JSON.parse(raw);
-    if (typeof parsed?.response === 'string') return parsed.response;
-    if (typeof parsed?.feedback === 'string') return parsed.feedback;
-    return raw;
-  } catch {
-    return raw;
-  }
-}
 
 function resultOf(r: RawSubmissionBase, feedbackText: string): GradingResult | undefined {
   if (!r.feedback_id) return undefined;

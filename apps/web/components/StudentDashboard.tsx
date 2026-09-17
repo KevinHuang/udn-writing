@@ -59,9 +59,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     ? (currentSemesterSubmissions.reduce((acc, s) => acc + (s.result?.totalScore || 0), 0) / currentSemesterSubmissions.length).toFixed(1)
     : '0.0';
 
-  // 進行中：還沒繳交或還在草稿
+  /*
+    進行中：**本學期**、還沒繳交或還在草稿的作業。
+
+    ⚠️ 這裡以前沒有依學期過濾，所以首頁自己前後矛盾：「本學期 0 篇」用
+       currentCourseAssignmentIds 算（有過濾），底下的「進行中作業」卻把
+       過去學期的也列出來。實測一位學生看到三份 114-2 的作業掛在
+       「進行中」，而標頭寫的是 115-1。
+
+       學年期由 semesters 表依今天的日期決定（後端 SemesterHelper.current()），
+       所以「本學期」是會自己前進的 —— 過去學期的作業不該再催學生去寫。
+  */
   const inProgressAssignments = assignments
     .filter(a => {
+      if (!currentCourseAssignmentIds.has(a.id)) return false;
+
       const submission = submissions.find(s => s.assignmentId === a.id);
       const subStatus = submission?.status || 'Unsubmitted';
       
@@ -82,8 +94,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     .slice(0, 3);
 
   // Recent feedback
+  /*
+    近期發還：**本學期**已發還的作品，最新的兩份。
+
+    ⚠️ 這裡以前沒有依學期過濾，是首頁最後一處沒收斂的地方 ——
+       標頭寫 115-1，卡片卻是 114-2 的作品（實測看到的就是這個）。
+       規則與上面的 inProgressAssignments 一致，都走 currentCourseAssignmentIds。
+
+    「學習紀錄」那張卡刻意**不**過濾（見 totalGradedAndReturned）——
+    它與旁邊的「本學期」是一組對照：一個是累計、一個是這學期。
+  */
   const recentFeedback = submissions
-    .filter(s => s.result && s.status === 'Published')
+    .filter(s => currentCourseAssignmentIds.has(s.assignmentId) && s.result && s.status === 'Published')
     .sort((a, b) => {
       const dateA = new Date(a.publishedAt || a.submittedAt).getTime();
       const dateB = new Date(b.publishedAt || b.submittedAt).getTime();
@@ -328,11 +350,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         {submission.result?.totalScore} 分
                       </div>
                     </div>
-                    <p className="text-ui text-text-primary opacity-80 line-clamp-2 sm:line-clamp-3 mb-3 sm:mb-4 leading-relaxed font-normal">
+                    {/*
+                      ⚠️ 這裡**不能用 `<p>`**。評語是一整份 markdown，Markdown 元件會
+                      產出 <div>／<h2>／<ul>／<hr> —— 全都不允許出現在 <p> 裡面，
+                      React 會丟十筆 hydration 警告，瀏覽器也會把 <p> 提前收掉，
+                      line-clamp 因此夾不住。示範資料是純文字所以看不出來，
+                      真實的 AI 評語一進來就爆。
+                    */}
+                    <div className="text-ui text-text-primary opacity-80 line-clamp-2 sm:line-clamp-3 mb-3 sm:mb-4 leading-relaxed font-normal">
                       {submission.result?.feedback
                         ? <Markdown>{submission.result.feedback}</Markdown>
                         : '尚無評語'}
-                    </p>
+                    </div>
                     <button 
                       id={`studentdashboard-btn-viewdetail-feedback-${submission.id}`}
                       onClick={() => navigate(routes.studentGrades({ focusId: submission.id }))}

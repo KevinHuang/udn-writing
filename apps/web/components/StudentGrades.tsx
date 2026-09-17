@@ -8,7 +8,6 @@ import {
   ChevronRight, 
   FileText,
   Calendar,
-  Star,
   MessageSquare,
   ArrowLeft,
   Download,
@@ -109,6 +108,32 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
       const dateB = new Date(b.publishedAt || b.submittedAt).getTime();
       return dateB - dateA;
     });
+
+  /*
+    學習成就卡的數字。
+
+    ⚠️ 這裡原本有三個**寫死的假數字**：「本月進步 +5.2%」、「完成率 92%」，
+    以及三個固定的強項標籤（結構嚴謹／詞彙豐富／觀點獨特）。它們被當成
+    這位學生自己的紀錄呈現 —— 實測一位只有 1 筆成績的學生照樣看到
+    「本月進步 +5.2%」。編不出來的數字寧可不顯示，不要捏造。
+
+    現在只留算得出來的：最高分、平均分、完成率。
+    「強項分析」整張卡拿掉 —— 它要靠四項評分要素，而那是關著的
+    （lib/features.ts 的 SHOW_CATEGORY_SCORES），資料一路都是 0。
+  */
+  const scores = gradedSubmissions.map((s) => s.result?.totalScore ?? 0);
+  const highestScore = scores.length ? Math.max(...scores) : null;
+  const averageScore = scores.length
+    ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1)
+    : null;
+  /** 完成率＝有繳交紀錄的作業 ÷ 看得到的作業。沒有作業時不顯示，不要變成 0% */
+  const completionRate = assignments.length
+    ? Math.round(
+        (assignments.filter((a) => submissions.some((s) => s.assignmentId === a.id)).length /
+          assignments.length) * 100,
+      )
+    : null;
+
 
   const currentSubmission = gradedSubmissions.find(s => s.id === currentSubmissionId) || gradedSubmissions[0];
   const currentAssignment = assignments.find(a => a.id === currentSubmission?.assignmentId);
@@ -646,20 +671,22 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
           <div className="bg-primary p-6 sm:p-8 rounded-2xl sm:rounded-3xl shadow-sm text-on-accent relative overflow-hidden hover:shadow-md transition-all duration-500 cursor-default">
             <div className="relative z-10">
               <h3 id="studentgrades-achievement-title" className="text-title font-bold opacity-90 mb-2 tracking-tight">學習成就</h3>
-              <p className="text-display font-bold mb-6">Excellent!</p>
+              <p className="text-display font-bold mb-6">
+                {averageScore !== null ? `平均 ${averageScore} 級分` : '尚無已發還的成績'}
+              </p>
               <div className="space-y-3 sm:space-y-4">
-                <div className="flex justify-between items-center">
-                  <span className="text-body opacity-90">最高分</span>
-                  <span className="text-title font-bold">{Math.max(...gradedSubmissions.map(s => s.result?.totalScore || 0), 0)}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-body opacity-90">本月進步</span>
-                  <span className="text-title font-bold text-success-300">+5.2%</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-body opacity-90">完成率</span>
-                  <span className="text-title font-bold">92%</span>
-                </div>
+                {highestScore !== null && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-body opacity-90">最高分</span>
+                    <span className="text-title font-bold">{highestScore}</span>
+                  </div>
+                )}
+                {completionRate !== null && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-body opacity-90">完成率</span>
+                    <span className="text-title font-bold">{completionRate}%</span>
+                  </div>
+                )}
               </div>
             </div>
             <div className="absolute -right-8 -bottom-8 opacity-10 transform rotate-12">
@@ -667,17 +694,6 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
             </div>
           </div>
 
-          <div className="bg-surface/60 backdrop-blur-xl p-5 sm:p-6 rounded-2xl sm:rounded-3xl shadow-sm border border-card/20 hover:shadow-md transition-all duration-300">
-            <h3 className="font-bold text-text-primary mb-3 sm:mb-4 flex items-center gap-2 text-ui">
-              <Star size={18} className="text-amber-500" />
-              強項分析
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              <span className="px-3 py-1.5 bg-card/80 text-mauve-600 rounded-xl text-caption border border-mauve-100/50 shadow-sm">結構嚴謹</span>
-              <span className="px-3 py-1.5 bg-card/80 text-mauve-600 rounded-xl text-caption border border-mauve-100/50 shadow-sm">詞彙豐富</span>
-              <span className="px-3 py-1.5 bg-card/80 text-mauve-600 rounded-xl text-caption border border-mauve-100/50 shadow-sm">觀點獨特</span>
-            </div>
-          </div>
         </div>
       </div>
     </div>

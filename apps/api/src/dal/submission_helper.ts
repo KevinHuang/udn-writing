@@ -4,7 +4,23 @@ import AssignmentHelper from './assignment_helper';
 class SubmissionHelper {
 
     /** 提交作業 */
-    public static async submit(user_id: string, assignment_id: string, content: string, pic_files: any, word_count: number) {
+    /**
+     * 學生繳交（或存草稿）。同一份作業只會有一列，所以是 upsert。
+     *
+     * `is_submitted = false` 代表**草稿**：作文存起來了，但還沒送出。
+     * 這一欄是 migration 001 加的，`submissionStatusOf()` 靠它分辨 Draft
+     * 與 Pending —— 而這支先前完全沒收它，欄位一路吃預設值 true。
+     * 結果是「儲存草稿」在後端根本不存在，前端那顆按鈕也只是個空殼。
+     *
+     * **草稿不覆寫 submited_time。** 那一欄是「什麼時候送出的」，
+     * 存草稿時還沒送出。送出時才更新（COALESCE 保留第一次送出的時間）。
+     *
+     * **已經批改過的不接受覆寫。** 沒有這道擋，學生可以在老師批完之後
+     * 把作文整篇換掉 —— 分數與評語就會指向一段已經不存在的文字。
+     * 擋在 UPDATE 的 WHERE 裡（不是先查再寫），所以不會有「查完到寫入之間
+     * 剛好被批改」的空隙。擋下來時兩個 CTE 都是 0 筆，呼叫端據此回 409。
+     */
+    public static async submit(user_id: string, assignment_id: string, content: string, pic_files: any, word_count: number, is_submitted: boolean = true) {
 
         const sql = `
 
@@ -14,14 +30,19 @@ class SubmissionHelper {
                     $2::bigint as ref_assignment_id,
                     $3::text as content,
                     $4::jsonb as pic_files,
-                    $5::integer AS word_count
+                    $5::integer AS word_count,
+                    $6::boolean AS is_submitted
             )
             ,
             insert_data AS (
                 INSERT INTO public.submission (
-                    ref_user_id, ref_assignment_id, content, pic_files, word_count ) 
+                    ref_user_id, ref_assignment_id, content, pic_files, word_count, is_submitted,
+                    submited_time )
                 SELECT
-                    r.ref_user_id, r.ref_assignment_id, r.content, r.pic_files, r.word_count
+                    r.ref_user_id, r.ref_assignment_id, r.content, r.pic_files, r.word_count,
+                    r.is_submitted,
+                    -- 草稿還沒送出，送出時間留空
+                    CASE WHEN r.is_submitted THEN now() ELSE NULL END
                 FROM
                     raw_data AS r
                     LEFT OUTER JOIN submission AS s ON
@@ -39,12 +60,23 @@ class SubmissionHelper {
                     content = r.content,
                     pic_files = r.pic_files,
                     last_update = now(),
-                    word_count = r.word_count
+                    word_count = r.word_count,
+                    is_submitted = r.is_submitted,
+                    -- 只在送出時補時間，而且保留第一次送出的那個
+                    submited_time = CASE
+                        WHEN r.is_submitted THEN COALESCE(s.submited_time, now())
+                        ELSE s.submited_time
+                    END
                 FROM
                     raw_data AS r
                 WHERE
                     s.ref_user_id = r.ref_user_id AND
-                    s.ref_assignment_id = r.ref_assignment_id
+                    s.ref_assignment_id = r.ref_assignment_id AND
+                    -- 已經有有效批改就不給改了
+                    NOT EXISTS (
+                        SELECT 1 FROM submission_feedback f
+                        WHERE f.ref_submission_id = s.id AND f.is_valid = true
+                    )
                 RETURNING id
             )
             SELECT 'insert' as action_type, count(id) as count FROM insert_data
@@ -52,7 +84,7 @@ class SubmissionHelper {
             SELECT 'update' as action_type, count(id) as count FROM update_data
 
         `
-        const result = await db.default.manyOrNone(sql, [user_id, assignment_id, content, JSON.stringify(pic_files), word_count]);
+        const result = await db.default.manyOrNone(sql, [user_id, assignment_id, content, JSON.stringify(pic_files), word_count, is_submitted]);
 
         return result;
     }

@@ -18,7 +18,14 @@ import { deadlineOf, NO_DEADLINE_LABEL } from '../lib/assignments';
 interface StudentAssignmentsProps {
   assignments: Assignment[];
   submissions: Submission[];
-  courseName: string;
+  /**
+   * 作業 id → 班級名稱。
+   *
+   * 以前這裡是單一的 `courseName: string`，因為原型假設**一個學生只屬於一個班**。
+   * 真實資料不是這樣 —— 實測這位學生同時在 4 個班，而且四個班都派了同一題
+   * 「那次失敗之後」。少了班級名，清單上就是四筆一模一樣的卡片。
+   */
+  courseNameOf: (assignment: Assignment) => string;
   onBack?: () => void;
   canGoBack?: boolean;
 }
@@ -26,7 +33,7 @@ interface StudentAssignmentsProps {
 export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
   assignments,
   submissions,
-  courseName,
+  courseNameOf,
   onBack,
   canGoBack
 }) => {
@@ -77,7 +84,7 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
             )}
             <h1 className="text-display font-serif font-bold text-text-primary tracking-tight">我的作業</h1>
           </div>
-          <p className="text-caption sm:text-text-primary font-normal ml-0 sm:ml-12 opacity-80">{courseName} 的所有寫作任務</p>
+          <p className="text-caption sm:text-text-primary font-normal ml-0 sm:ml-12 opacity-80">本學期所有班級的寫作任務</p>
         </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
@@ -165,6 +172,10 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                      <FileText size={20} className="sm:size-24" />}
                   </div>
                   <div className="min-w-0 flex-1">
+                    {/* 同一題可能同時派給好幾個班，沒有班級名就分不出是哪一筆 */}
+                    <div className="text-caption text-text-muted truncate mb-0.5">
+                      {courseNameOf(assignment)}
+                    </div>
                     <div className="flex items-center flex-wrap gap-2 mb-1 sm:mb-1.5">
                       <h3 className="text-title font-bold text-text-primary group-hover:text-primary transition-colors truncate max-w-full">
                         {assignment.title}

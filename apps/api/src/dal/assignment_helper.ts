@@ -48,6 +48,21 @@ class AssignmentHelper {
                     t.pic_position,
                     t.note,
                     a.assigned_at,
+                    -- ⚠️ 以下欄位是**新增**的，舊前端（apps/api/public）也吃這支端點，
+                    --    所以既有欄位的名稱與語意一律不動，只往上疊。
+                    c.id as course_id,
+                    c.school_year,
+                    c.semester,
+                    a.deadline,
+                    a.allow_late_submission,
+                    sub.id as submission_id,
+                    sub.word_count,
+                    -- 真正的「已送出」旗標。底下那個 is_submitted 其實是
+                    -- 「有沒有繳交紀錄」（sub.id IS NOT NULL），草稿也算 true ——
+                    -- 語意不同但不能改，舊前端在用。新前端讀這一欄。
+                    sub.is_submitted as submission_is_submitted,
+                    fb.id as feedback_id,
+                    fb.is_ai,
                     -- 繳交狀態判斷
                     CASE 
                         WHEN sub.id IS NOT NULL THEN true

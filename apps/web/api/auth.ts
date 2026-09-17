@@ -12,6 +12,8 @@ export interface IdentityOption {
 
 /** `GET /auth/me` 的回應裡，前端真正會用到的部分。 */
 export interface Session {
+  /** `user.id`。學生端要拿它當 Submission.studentId */
+  id: string;
   account: string;
   name: string;
   identities: IdentityOption[];
@@ -19,6 +21,7 @@ export interface Session {
 }
 
 interface RawMe {
+  id: string;
   account: string;
   lastName?: string;
   firstName?: string;
@@ -43,6 +46,7 @@ export function toUserRole(identity: IdentityType | null): UserRole {
 export async function fetchSession(): Promise<Session> {
   const raw = await api.get<RawMe>('/auth/me');
   return {
+    id: String(raw.id ?? ''),
     account: raw.account,
     // 後端存的是姓與名兩欄，顯示時才合起來（auth/index.ts 的寫法一致）
     name: `${raw.lastName ?? ''}${raw.firstName ?? ''}`.trim() || raw.account,

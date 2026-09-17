@@ -20,6 +20,7 @@ import { Assignment, Question, Submission } from '../types';
 import { extractTextFromImage } from '../api/ai';
 import { fileToBase64 } from '../lib/fileToBase64';
 import { hasDeadline, deadlineLabel, NO_DEADLINE_LABEL } from '../lib/assignments';
+import { countWords } from '../lib/wordCount';
 
 interface StudentEssayEditorProps {
   assignment: Assignment;
@@ -27,7 +28,10 @@ interface StudentEssayEditorProps {
   existingSubmission?: Submission;
   onBack?: () => void;
   canGoBack?: boolean;
-  onSubmit: (content: string, submissionId?: string) => Promise<void>;
+  /** 送出。wordCount 由這個元件算好一起帶出去，不要在別處重算 */
+  onSubmit: (content: string, wordCount: number) => Promise<void>;
+  /** 存草稿。存起來但不算送出（submission.is_submitted = false） */
+  onSaveDraft: (content: string, wordCount: number) => Promise<void>;
 }
 
 export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
@@ -36,11 +40,13 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
   existingSubmission,
   onBack,
   canGoBack,
-  onSubmit
+  onSubmit,
+  onSaveDraft
 }) => {
   const navigate = useNavigate();
   const [content, setContent] = useState(existingSubmission?.content || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isOcrLoading, setIsOcrLoading] = useState(false);
@@ -54,21 +60,52 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
 
   // 字數是從 content 直接算得出來的，不需要另外存一份 state。
   // 原本用 effect 回寫 state，等於每打一個字就多跑一輪 render。
-  const wordCount = useMemo(() => {
-    if (question.subject !== 'English') {
-      return content.replace(/\s/g, '').length;
-    }
-    return content.trim().split(/\s+/).filter((w) => w.length > 0).length;
-  }, [content, question.subject]);
+  // 規則收在 lib/wordCount.ts —— 送給後端的也是同一個值（見 onSubmit / onSaveDraft）。
+  const wordCount = useMemo(
+    () => countWords(content, question.subject),
+    [content, question.subject],
+  );
 
-  const handleSaveDraft = () => {
-    // In a real app, this would save to a backend or localStorage
-    setLastSaved(new Date());
+  /**
+   * 這一份現在是什麼狀態。
+   *
+   * 以前標頭只看本地的 `lastSaved`，所以**重新打開一份已經提交過的作文，
+   * 標頭照樣寫「尚未儲存」** —— 學生會以為自己沒交。狀態要從
+   * existingSubmission 來，本地的存檔時間只是疊在上面的補充。
+   */
+  const isGraded = existingSubmission?.status === 'Graded'
+    || existingSubmission?.status === 'Published';
+  const isSubmitted = existingSubmission?.status === 'Pending' || isGraded;
+  const isDraft = existingSubmission?.status === 'Draft';
+
+  /** 已批改就不能再改 —— 後端也擋（submit 的 UPDATE WHERE），這裡只是不要讓人白打一篇 */
+  const isLocked = isGraded;
+
+  /**
+   * 存草稿。
+   *
+   * ⚠️ 這支以前只是 `setLastSaved(new Date())`，註解寫著「In a real app,
+   *    this would save to a backend」—— **畫面顯示「已儲存」但什麼都沒存**，
+   *    學生關掉分頁作文就沒了。實際點下去才看得出來（沒有發出任何請求）。
+   */
+  const handleSaveDraft = async () => {
+    if (!content.trim() || isSavingDraft || isLocked) return;
+    setIsSavingDraft(true);
+    setError(null);
+    try {
+      await onSaveDraft(content, wordCount);
+      setLastSaved(new Date());
+    } catch (err) {
+      console.error('Save draft failed:', err);
+      setError('草稿儲存失敗，請檢查網路連線');
+    } finally {
+      setIsSavingDraft(false);
+    }
   };
 
   const processImages = async (files: FileList | File[]) => {
     const fileArray = Array.from(files);
-    if (fileArray.length === 0) return;
+    if (fileArray.length === 0 || isLocked) return;
 
     setIsOcrLoading(true);
     setOcrProgress({ current: 0, total: fileArray.length });
@@ -118,7 +155,7 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
   };
 
   const handleSubmit = async () => {
-    if (!content.trim()) return;
+    if (!content.trim() || isLocked) return;
     setShowConfirmModal(true);
   };
 
@@ -127,7 +164,7 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
     setIsSubmitting(true);
     setError(null);
     try {
-      await onSubmit(content, existingSubmission?.id);
+      await onSubmit(content, wordCount);
       navigate(routes.studentAssignments());
     } catch (err) {
       console.error('Submission failed:', err);
@@ -148,7 +185,14 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
             </div>
             <div className="text-center space-y-2">
               <h3 className="text-title font-bold text-text-primary">確認提交作業？</h3>
-              <p className="text-body text-text-secondary">提交後將無法再進行修改，AI 將立即開始為您的作文進行初步評分。</p>
+              {/*
+                ⚠️ 這段原本寫「提交後將無法再進行修改，AI 將立即開始為您的作文
+                   進行初步評分」—— **兩句都不是真的**（實際提交後測出來的）：
+                   提交之後編輯區照樣能改、能重新提交；而學生的 submit 端點
+                   完全沒有碰 AI，批改一律由教師觸發。
+                   對學生說了不會發生的事，比不說更糟。
+              */}
+              <p className="text-body text-text-secondary">提交後老師就看得到這一份，並會安排批改。</p>
             </div>
             <div className="flex gap-3">
               <button 
@@ -206,10 +250,22 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
 
         <div className="flex items-center gap-2 sm:gap-3 w-full md:w-auto justify-end">
           <div className="hidden md:flex items-center gap-2 text-caption text-text-secondary mr-2 sm:mr-4">
-            {lastSaved ? (
+            {isGraded ? (
               <span className="flex items-center gap-1">
-                <CheckCircle2 size={12} className="text-success-500" /> 
-                已於 {lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} 自動儲存
+                <CheckCircle2 size={12} className="text-success-500" /> 已批改，不能再修改
+              </span>
+            ) : isSubmitted ? (
+              <span className="flex items-center gap-1">
+                <CheckCircle2 size={12} className="text-success-500" /> 已提交
+              </span>
+            ) : lastSaved ? (
+              <span className="flex items-center gap-1">
+                <CheckCircle2 size={12} className="text-success-500" />
+                草稿已於 {lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} 儲存
+              </span>
+            ) : isDraft ? (
+              <span className="flex items-center gap-1">
+                <Save size={12} /> 草稿已儲存
               </span>
             ) : (
               <span className="flex items-center gap-1">
@@ -217,14 +273,14 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
               </span>
             )}
           </div>
-          <button 
+          {!isLocked && <button 
             id="studentessayeditor-btn-savedraft"
             onClick={handleSaveDraft}
             className="px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl text-body text-text-primary hover:bg-card/50 transition-colors flex items-center gap-1.5 sm:gap-2 flex-1 md:flex-none justify-center border border-border/50 md:border-transparent bg-card/50 md:bg-transparent"
           >
             <Save size={16} className="sm:size-[18px]" /> <span className="hidden sm:inline">儲存草稿</span><span className="sm:hidden">儲存</span>
-          </button>
-          <button 
+          </button>}
+          {!isLocked && <button 
             id="studentessayeditor-btn-submit"
             onClick={handleSubmit}
             disabled={isSubmitting || !content.trim()}
@@ -232,7 +288,7 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
           >
             {isSubmitting ? <Loader2 size={16} className="sm:size-[18px] animate-spin" /> : <Send size={16} className="sm:size-[18px]" />}
             提交作業
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -250,32 +306,41 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
                 </span>
               </div>
               <div className="flex items-center gap-1 sm:gap-2">
-                <button 
+                {/* 已批改就不給改，那兩顆 OCR 也要跟著收起來 —— 留一顆按不動的按鈕，
+                    跟先前那顆什麼都沒存的「儲存草稿」是同一類問題 */}
+                {!isLocked && <button 
                   id="studentessayeditor-btn-ocr-camera"
                   onClick={() => cameraInputRef.current?.click()}
                   className="p-1.5 sm:p-2 hover:bg-card rounded-lg sm:rounded-xl text-primary transition-colors flex items-center gap-1 sm:gap-1.5 text-body"
                   title="繼續拍照"
                 >
                   <Camera size={14} className="sm:size-[16px]" /> <span className="hidden sm:inline">繼續拍照</span><span className="sm:hidden">拍照</span>
-                </button>
-                <button 
+                </button>}
+                {!isLocked && <button 
                   id="studentessayeditor-btn-ocr-upload"
                   onClick={() => fileInputRef.current?.click()}
                   className="p-1.5 sm:p-2 hover:bg-card rounded-lg sm:rounded-xl text-primary transition-colors flex items-center gap-1 sm:gap-1.5 text-body"
                   title="繼續上傳"
                 >
                   <ImageIcon size={14} className="sm:size-[16px]" /> <span className="hidden sm:inline">繼續上傳</span><span className="sm:hidden">上傳</span>
-                </button>
+                </button>}
                 <button id="studentessayeditor-btn-info" className="p-1.5 sm:p-2 hover:bg-card rounded-lg sm:rounded-xl text-text-primary transition-colors">
                   <Info size={16} className="sm:size-[18px]" />
                 </button>
               </div>
             </div>
+            {/*
+              已批改就唯讀。後端也擋（submit 的 UPDATE WHERE 會把它濾掉），
+              但讓人打完一整篇才在送出時被拒絕太糟 —— 兩邊都要擋。
+            */}
             <textarea id="studentessayeditor-textarea-content"
               value={content}
               onChange={(e) => setContent(e.target.value)}
+              readOnly={isLocked}
               placeholder="在此開始你的創作..."
-              className="flex-1 p-4 sm:p-8 text-title font-serif leading-loose focus:outline-none resize-none no-scrollbar text-text-primary bg-card/50"
+              className={`flex-1 p-4 sm:p-8 text-title font-serif leading-loose focus:outline-none resize-none no-scrollbar text-text-primary bg-card/50 ${
+                isLocked ? 'cursor-default' : ''
+              }`}
             />
 
             {showMethodSelector && !content && (

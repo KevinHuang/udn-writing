@@ -1,4 +1,5 @@
 import { api } from './client';
+import { countWords } from '../lib/wordCount';
 import { submissionStatusOf, type Submission, type GradingResult } from '@udn/shared';
 
 /**
@@ -175,12 +176,25 @@ export async function proxySubmit(
 }
 
 /** 學生自己繳交。 */
-export async function submitEssay(assignmentId: string, content: string): Promise<void> {
+/**
+ * 學生繳交，或存成草稿（`isSubmitted: false`）。
+ *
+ * 同一份作業只會有一列，後端是 upsert，所以存草稿與送出走同一支。
+ * 草稿不會寫入 submited_time —— 那一欄的意思是「什麼時候送出的」。
+ */
+export async function submitEssay(
+  assignmentId: string,
+  content: string,
+  opts: { isSubmitted?: boolean; wordCount?: number } = {},
+): Promise<void> {
   await api.post('/service/student/submit', {
     assignment_id: assignmentId,
     content,
     pic_files: [],
-    word_count: content.length,
+    // 字數由畫面算好帶進來（lib/wordCount.ts）。這裡以前是 content.length，
+    // 把空白與換行也算進去，跟畫面顯示的數字對不起來
+    word_count: opts.wordCount ?? countWords(content),
+    is_submitted: opts.isSubmitted !== false,
   });
 }
 

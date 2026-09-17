@@ -341,6 +341,19 @@ router.post('/submissions/proxy', async (ctx) => {
         }
 
         const result = await SubmissionHelper.submit(user_id, assignment_id, content, files, word_count);
+
+        /*
+          與學生端同一道擋：已經批改過的不接受覆寫，否則分數會指向一段
+          已經不存在的文字。兩個 CTE 都 0 筆就是被擋下來了。
+          這裡以前不論結果都回 success: true —— 擋下來還說成功，比擋不住更糟。
+        */
+        const changed = result.reduce((n: number, row: { count: string }) => n + Number(row.count), 0);
+        if (changed === 0) {
+            ctx.status = 409;
+            ctx.body = { error: '這份作業已經批改過了，要重新繳交請先重置批改。' };
+            return;
+        }
+
         ctx.body = { success: true, result };
     } catch (error) {
         console.error('Error in proxy submission:', error);

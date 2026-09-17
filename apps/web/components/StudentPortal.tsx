@@ -145,8 +145,14 @@ export const StudentPortal: React.FC = () => {
 
           {/* Desktop Navigation Tabs */}
           <nav className="hidden lg:flex items-center gap-1 overflow-x-auto no-scrollbar px-4">
+            {/*
+              id 要帶 item.key。以前三顆按鈕共用同一個寫死的
+              "student-nav-btn-profile" —— 重複 id 是無效 HTML，而且這個專案
+              拿 id 當測試掛鉤，選到的永遠是第一顆。
+              下面那排手機版導覽本來就是 `...-${item.key}`，對齊它。
+            */}
             {navItems.map((item) => (
-              <button id="student-nav-btn-profile"
+              <button id={`student-nav-btn-${item.key}`}
                 key={item.key}
                 onClick={() => navigate(item.path)}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-body font-bold transition-all duration-300 whitespace-nowrap active:scale-95 ${

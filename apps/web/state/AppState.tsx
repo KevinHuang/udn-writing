@@ -37,6 +37,7 @@ import {
 import { ApiError } from "../api/client";
 import { fetchSemesters } from "../api/semesters";
 import { fetchCourses, fetchRoster, deleteCourse, setCourseArchived } from "../api/courses";
+import { fetchStudentData, type StudentData } from "../api/student";
 import {
   fetchAssignments, createAssignment, setAssignmentOpened, updateAssignmentConfig,
   swapAssignmentQuestion, reorderAssignments, deleteAssignment,
@@ -96,6 +97,20 @@ function useAppStateValue() {
 
   /** 前端角色由後端的「目前身分」推導，不是獨立的一份狀態 */
   const userRole = toUserRole(session?.activeIdentity ?? null);
+
+  /**
+   * **載哪一組資料，由目前身分決定。**
+   *
+   * 以前不分身分，一律載教師端那七支 —— 學生登入之後每一支都 403，
+   * console 一整片紅字，而且學生端的四個畫面本來就從這些陣列讀資料，
+   * 所以全部是空的。學生端等於沒有資料來源（實際登入測出來的）。
+   *
+   * 教師端的資料量大（作業、繳交摘要、題庫、名冊），學生端只有一支
+   * `my_assignments`，兩邊沒有交集，所以是「二選一」不是「都載」。
+   */
+  const isStudentRole = userRole === UserRole.STUDENT;
+  const teacherDataReady = sessionStatus === 'ready' && !isStudentRole;
+  const studentDataReady = sessionStatus === 'ready' && isStudentRole;
 
   /**
    * 切換身分。
@@ -159,7 +174,13 @@ function useAppStateValue() {
       // 存不進去就算了，主題本身還是會生效
     }
   }, [theme]);
-  const studentName = DEMO_STUDENT.name;
+  /**
+   * 學生端顯示的姓名。
+   *
+   * 以前是寫死的 `DEMO_STUDENT.name` —— 不管誰登入，學生首頁都喊
+   * 「早安，林冠宇」（原型示範資料裡的第一個學生）。實際登入才看得出來。
+   */
+  const studentName = session?.name ?? '';
   const studentCourseId = DEMO_STUDENT.courseId;
   /**
    * 學年期。來自後端的 `semesters` 表，不再是 mockData 的寫死清單。
@@ -189,7 +210,7 @@ function useAppStateValue() {
   const loadCourses = useCallback(() => fetchCourses(), []);
   const {
     items: courses, setItems: setCourses, reload: reloadCourses,
-  } = useApiList<Course>(loadCourses, sessionStatus === 'ready');
+  } = useApiList<Course>(loadCourses, teacherDataReady);
 
   /**
    * 班級名冊，依課程 id 快取。
@@ -218,12 +239,12 @@ function useAppStateValue() {
   const loadQuestions = useCallback(() => fetchQuestions(), []);
   const {
     items: questions, reload: reloadQuestions,
-  } = useApiList<Question>(loadQuestions, sessionStatus === 'ready');
+  } = useApiList<Question>(loadQuestions, teacherDataReady);
 
   const loadFolders = useCallback(() => fetchFolders(), []);
   const {
     items: folders, reload: reloadFolders,
-  } = useApiList<Folder>(loadFolders, sessionStatus === 'ready');
+  } = useApiList<Folder>(loadFolders, teacherDataReady);
 
   /**
    * 題目與資料夾的異動。
@@ -365,11 +386,12 @@ function useAppStateValue() {
    */
   const myCourses = courses;
 
+
   /** 這位教師所有班級的作業。狀態與排序都由後端給（見 api/assignments.ts） */
   const loadAssignments = useCallback(() => fetchAssignments(), []);
   const {
     items: assignments, reload: reloadAssignments,
-  } = useApiList<Assignment>(loadAssignments, sessionStatus === 'ready');
+  } = useApiList<Assignment>(loadAssignments, teacherDataReady);
   /**
    * 請假註記（作業 × 學生）。逾期未繳分成真的沒寫和請假兩種，
    * 只有老師知道差別 —— 見 lib/leave.ts。
@@ -384,7 +406,26 @@ function useAppStateValue() {
   const loadSubmissions = useCallback(() => fetchSubmissionSummary(), []);
   const {
     items: submissions, setItems: setSubmissions, reload: reloadSubmissions,
-  } = useApiList<Submission>(loadSubmissions, sessionStatus === 'ready');
+  } = useApiList<Submission>(loadSubmissions, teacherDataReady);
+
+  /**
+   * 學生端的全部資料。
+   *
+   * 一支 `GET /service/student/my_assignments` 拆成四個陣列（見 api/student.ts）。
+   * 學生端的元件吃的是與教師端同一組型別，所以拆好之後它們不必知道自己
+   * 是從哪一支端點來的。
+   *
+   * 走 useApiList 是為了拿它的兩個既有決定：初值就是 loading、
+   * 以及重新載入失敗時不清空既有資料。
+   */
+  const loadStudentData = useCallback(
+    () => fetchStudentData(session?.id ?? '', session?.name ?? '').then((d) => [d]),
+    [session?.id, session?.name],
+  );
+  const {
+    items: studentDataList, reload: reloadStudentData,
+  } = useApiList<StudentData>(loadStudentData, studentDataReady);
+  const studentData = studentDataList[0];
 
   const loadMarks = useCallback(() => fetchMarks(), []);
   const [submissionMarks, setSubmissionMarks] = useState<SubmissionMarks>({});
@@ -392,7 +433,8 @@ function useAppStateValue() {
   const [leaveMarks, setLeaveMarks] = useState<LeaveMarks>({});
 
   useEffect(() => {
-    if (sessionStatus !== 'ready') return;
+    // 作品標記與請假註記都是教師端的概念，學生端完全不顯示
+    if (!teacherDataReady) return;
     let cancelled = false;
     void Promise.all([loadMarks(), loadLeaves()])
       .then(([marks, leaves]) => {
@@ -402,7 +444,7 @@ function useAppStateValue() {
       })
       .catch((e) => console.error('載入標記／請假失敗:', e));
     return () => { cancelled = true; };
-  }, [sessionStatus, loadMarks, loadLeaves]);
+  }, [teacherDataReady, loadMarks, loadLeaves]);
 
   /**
    * 設定／取消請假註記。
@@ -553,10 +595,19 @@ function useAppStateValue() {
    */
   const [gradingResetSeq, setGradingResetSeq] = useState(0);
  
-  const handleSubmitEssay = async (assignmentId: string, content: string) => {
+  /**
+   * 學生繳交，或存草稿（`isSubmitted: false`）。
+   *
+   * 重新載入的是**學生自己那一份**（reloadStudentData）——
+   * reloadSubmissions 打的是教師端端點，學生會拿到 403。
+   */
+  const handleSubmitEssay = async (
+    assignmentId: string, content: string,
+    opts: { isSubmitted?: boolean; wordCount?: number } = {},
+  ) => {
     try {
-      await submitEssay(assignmentId, content);
-      await reloadSubmissions();
+      await submitEssay(assignmentId, content, opts);
+      await reloadStudentData();
     } catch (e) {
       console.error('繳交失敗:', e);
       throw e;   // 讓畫面知道沒成功，不要顯示「已繳交」
@@ -801,6 +852,21 @@ function useAppStateValue() {
   };
 
 
+  /**
+   * **對外的四個陣列**。學生身分時換成學生自己那一份。
+   *
+   * 學生端的四個畫面（概況、我的作業、作答、成績）讀的就是這幾個名字，
+   * 而它們以前只被教師端的端點填 —— 學生看到的永遠是空的。
+   * 在這裡做一次切換，畫面端就不必知道自己的資料是從哪支端點來的。
+   *
+   * 學生沒有題庫資料夾、作品標記、請假註記這些概念，那幾項不切換，
+   * 學生身分時本來就是空的。
+   */
+  const visibleCourses = isStudentRole ? (studentData?.courses ?? []) : myCourses;
+  const visibleQuestions = isStudentRole ? (studentData?.questions ?? []) : questions;
+  const visibleAssignments = isStudentRole ? (studentData?.assignments ?? []) : assignments;
+  const visibleSubmissions = isStudentRole ? (studentData?.submissions ?? []) : submissions;
+
   return {
     applyTheme,
     session,
@@ -818,10 +884,10 @@ function useAppStateValue() {
     currentSemester,
     setCurrentSemester,
     semesterOptions,
-    courses,
+    courses: visibleCourses,
     setCourses,
     handleUpdateCourse,
-    questions,
+    questions: visibleQuestions,
     questionOps,
     folders,
     folderOps,
@@ -830,16 +896,17 @@ function useAppStateValue() {
     reloadCourses,
     handleSyncCourses,
     handleDeleteCourse,
-    myCourses,
-    assignments,
+    myCourses: visibleCourses,
+    assignments: visibleAssignments,
     reloadAssignments,
     leaveMarks,
     toggleLeave,
     submissionMarks,
     setSubmissionMarks,
-    submissions,
+    submissions: visibleSubmissions,
     ensureSubmissions,
     reloadSubmissions,
+    reloadStudentData,
     handleAssignmentOperation,
     toggleMark,
     selectedSubmissionIds,

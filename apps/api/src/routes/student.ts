@@ -49,12 +49,27 @@ router.get('/submission', async (ctx: Context) => {
 router.post('/submit', async (ctx: Context) => {
     try {
         // console.log({ body: ctx.request.body })
-        const { assignment_id, content, pic_files, word_count } = ctx.request.body as { assignment_id: string, content: string, pic_files: any, word_count: number };
+        const { assignment_id, content, pic_files, word_count, is_submitted } = ctx.request.body as
+            { assignment_id: string, content: string, pic_files: any, word_count: number, is_submitted?: boolean };
         if (!assignment_id || !content) {
             Util.returnError(ctx, 400, 'Missing required fields.');
             return;
         }
-        const result = await SubmissionHelper.submit(ctx.session.userInfo.id, assignment_id, content, JSON.stringify(pic_files), word_count);
+        // 沒給就當成送出 —— 舊前端不會帶這個欄位，語意要維持原樣
+        const submitted = is_submitted !== false;
+        const result = await SubmissionHelper.submit(ctx.session.userInfo.id, assignment_id, content, JSON.stringify(pic_files), word_count, submitted);
+
+        /*
+          兩個 CTE 都是 0 筆 = 沒有新增也沒有更新，代表這一份已經批改過，
+          UPDATE 的 WHERE 把它擋掉了（見 SubmissionHelper.submit）。
+          回 409 而不是 200 —— 回 200 的話學生會以為存進去了。
+        */
+        const changed = result.reduce((n: number, row: { count: string }) => n + Number(row.count), 0);
+        if (changed === 0) {
+            Util.returnError(ctx, 409, '這份作業已經批改過了，不能再修改。');
+            return;
+        }
+
         Util.returnMsg(ctx, 200, result);
     }
     catch (error) {

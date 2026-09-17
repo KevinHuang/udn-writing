@@ -347,3 +347,113 @@ describe('重置繳交', () => {
     assert.equal((await reset(undefined, s.submission)).status, 401);
   });
 });
+
+/**
+ * 學生繳交（`POST /service/student/submit`）。
+ *
+ * 三件事要釘住：
+ *   1. 草稿與送出是同一支端點、同一列（upsert），差別在 `is_submitted`
+ *   2. 草稿不寫 `submited_time` —— 那一欄的意思是「什麼時候送出的」
+ *   3. **批改過就不能再改** —— 少了這道擋，學生可以在老師批完之後把作文
+ *      整篇換掉，分數與評語就會指向一段已經不存在的文字
+ */
+describe('學生繳交與草稿', () => {
+  const submit = (cookie: string, assignmentId: string, content: string, isSubmitted?: boolean) =>
+    req(srv, '/service/student/submit', cookie, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        assignment_id: assignmentId, content, pic_files: [], word_count: content.length,
+        ...(isSubmitted === undefined ? {} : { is_submitted: isSubmitted }),
+      }),
+    });
+
+  const rowOf = (assignmentId: string, userId: string) =>
+    rawDb.oneOrNone(
+      `SELECT id, content, is_submitted, submited_time FROM submission
+       WHERE ref_assignment_id = $1 AND ref_user_id = $2`, [assignmentId, userId]);
+
+  /**
+   * 以**學生身分**登入的情境。
+   *
+   * ⚠️ `uc_learner` 一定要在 `login()` **之前**建好 —— `isLearner` 是登入當下
+   *    算進 session 的，事後補資料列不會讓已經發出的 session 變成學生，
+   *    打 /service/student/* 會拿到 403。（第一次寫這組測試就是這樣失敗的。）
+   *
+   * 假 IdP 固定回 ACCOUNT，所以讓同一個人既是這個班的授課教師也是學生。
+   * 這在真實資料裡也成立 —— 實測有帳號同時具備兩種身分。
+   */
+  async function asStudent() {
+    const me = await seedUser(ACCOUNT, '我');
+    const school = await seedSchool();
+    const course = await seedCourse(school, '我的班');
+    await seedInstructor(course, me.id);
+    await seedLearner(course, me.id, 1);
+    const task = await seedTask(me.id);
+    const assignment = await seedAssignment(course, task, me.id);
+    return { me, course, assignment, cookie: await login(srv) };
+  }
+
+  test('存草稿：is_submitted = false，submited_time 留空', async () => {
+    const s = await asStudent();
+    const res = await submit(s.cookie, s.assignment, '草稿內容', false);
+    assert.equal(res.status, 200);
+
+    const row = await rowOf(s.assignment, s.me.id);
+    assert.equal(row.is_submitted, false);
+    assert.equal(row.submited_time, null, '草稿還沒送出，不該有送出時間');
+  });
+
+  test('草稿再送出：同一列，補上 submited_time', async () => {
+    const s = await asStudent();
+    await submit(s.cookie, s.assignment, '草稿內容', false);
+    const draft = await rowOf(s.assignment, s.me.id);
+
+    await submit(s.cookie, s.assignment, '正式內容', true);
+    const sent = await rowOf(s.assignment, s.me.id);
+
+    assert.equal(sent.id, draft.id, 'upsert 不該產生第二筆');
+    assert.equal(sent.is_submitted, true);
+    assert.equal(sent.content, '正式內容');
+    assert.ok(sent.submited_time, '送出時要補上時間');
+  });
+
+  test('沒帶 is_submitted 時當成送出（舊前端的語意不能變）', async () => {
+    const s = await asStudent();
+    await submit(s.cookie, s.assignment, '直接送出');
+    const row = await rowOf(s.assignment, s.me.id);
+    assert.equal(row.is_submitted, true);
+  });
+
+  test('批改之後不能再改 → 409，內容原封不動', async () => {
+    const s = await asStudent();
+    await submit(s.cookie, s.assignment, '原本的作文', true);
+    const before = await rowOf(s.assignment, s.me.id);
+
+    await rawDb.none(
+      `INSERT INTO submission_feedback (ref_submission_id, score, content, ref_user_id, is_ai, is_valid)
+       VALUES ($1, 5, '{}', $2, true, true)`, [before.id, s.me.id]);
+
+    const res = await submit(s.cookie, s.assignment, '偷偷換掉的作文', true);
+    assert.equal(res.status, 409);
+
+    const after = await rowOf(s.assignment, s.me.id);
+    assert.equal(after.content, '原本的作文', '批改過的作文不可以被覆寫');
+  });
+
+  test('批改被重置之後又可以改了', async () => {
+    const s = await asStudent();
+    await submit(s.cookie, s.assignment, '原本的作文', true);
+    const row = await rowOf(s.assignment, s.me.id);
+    await rawDb.none(
+      `INSERT INTO submission_feedback (ref_submission_id, score, content, ref_user_id, is_ai, is_valid)
+       VALUES ($1, 5, '{}', $2, true, true)`, [row.id, s.me.id]);
+    assert.equal((await submit(s.cookie, s.assignment, '改一次', true)).status, 409);
+
+    // 老師重置批改（is_valid 轉 false）之後就不擋了
+    await rawDb.none(
+      `UPDATE submission_feedback SET is_valid = false WHERE ref_submission_id = $1`, [row.id]);
+    assert.equal((await submit(s.cookie, s.assignment, '改一次', true)).status, 200);
+    assert.equal((await rowOf(s.assignment, s.me.id)).content, '改一次');
+  });
+});

@@ -26,7 +26,12 @@ export const StudentEditorPage: React.FC = () => {
       // handleSubmitEssay 只收兩個參數：它自己會找出同一位學生對同一份作業
       // 的既有紀錄並就地更新。舊的 StudentPortal 型別宣告寫了第三個
       // submissionId，但那個值從來沒有被用到。
-      onSubmit={(content) => handleSubmitEssay(assignment.id, content)}
+      onSubmit={(content, wordCount) =>
+        handleSubmitEssay(assignment.id, content, { wordCount })
+      }
+      onSaveDraft={(content, wordCount) =>
+        handleSubmitEssay(assignment.id, content, { wordCount, isSubmitted: false })
+      }
     />
   );
 };

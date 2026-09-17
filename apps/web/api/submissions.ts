@@ -38,12 +38,29 @@ interface RawSummaryRow extends RawSubmissionBase {
 
 interface RawDetailRow extends RawSubmissionBase {
   content: string | null;
+  /** jsonb。pg 多半給陣列，舊資料也可能是 JSON 字串 —— 交給 picFilesOf() */
+  pic_files: unknown;
   /**
    * ⚠️ 這一欄**不一定是字串**。摘要端點給 JSON 字串，詳細端點的
    *    `ai_analysis` 經過 jsonb 轉換，pg 直接回物件。宣告成 string 正是
    *    先前沒發現這件事的原因之一 —— 交給 feedbackTextOf() 兩種都吃。
    */
   ai_analysis: unknown;
+}
+
+/**
+ * `submission.pic_files` → 路徑陣列。
+ *
+ * 那一欄是 jsonb，pg 多半直接給陣列；舊資料裡也有存成 JSON 字串的，
+ * 兩種都要吃。認不得就當作沒有原稿，不要讓畫面掛掉。
+ */
+function picFilesOf(raw: unknown): string[] {
+  if (!raw) return [];
+  let arr: unknown = raw;
+  if (typeof raw === 'string') {
+    try { arr = JSON.parse(raw); } catch { return []; }
+  }
+  return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : [];
 }
 
 /** 空的四項分數。資料庫的 sub_scores 多半是 null，而畫面上這一區是關著的 */
@@ -65,7 +82,7 @@ function resultOf(r: RawSubmissionBase, feedbackText: string): GradingResult | u
 function toSubmission(
   r: RawSubmissionBase,
   assignmentId: string,
-  opts: { content?: string; feedbackText?: string } = {},
+  opts: { content?: string; feedbackText?: string; picFiles?: string[] } = {},
 ): Submission {
   return {
     /**
@@ -78,6 +95,7 @@ function toSubmission(
     studentId: String(r.user_id),
     studentName: r.student_name ?? '',
     seatNo: r.seat_no ?? undefined,
+    picFiles: opts.picFiles,
     content: opts.content ?? '',
     submittedAt: r.submited_time ?? '',
     status: submissionStatusOf({
@@ -105,6 +123,7 @@ export async function fetchSubmissionsByAssignment(assignmentId: string): Promis
     toSubmission(r, assignmentId, {
       content: r.content ?? '',
       feedbackText: feedbackTextOf(r.ai_analysis),
+      picFiles: picFilesOf(r.pic_files),
     }),
   );
 }
@@ -174,12 +193,13 @@ export async function proxySubmit(
 export async function submitEssay(
   assignmentId: string,
   content: string,
-  opts: { isSubmitted?: boolean; wordCount?: number } = {},
+  opts: { isSubmitted?: boolean; wordCount?: number; picFiles?: string[] } = {},
 ): Promise<void> {
   await api.post('/service/student/submit', {
     assignment_id: assignmentId,
     content,
-    pic_files: [],
+    // 手寫原稿在 GCS 的相對路徑。以前這裡寫死 []，所以新繳交一張原稿都沒留
+    pic_files: opts.picFiles ?? [],
     // 字數由畫面算好帶進來（lib/wordCount.ts）。這裡以前是 content.length，
     // 把空白與換行也算進去，跟畫面顯示的數字對不起來
     word_count: opts.wordCount ?? countWords(content),

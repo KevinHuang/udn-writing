@@ -15,17 +15,37 @@ import type { AiGradingResponse } from '@udn/shared';
  * 這件事以前發生在前端，現在整個在伺服器 —— 前端不再需要知道 AI 有沒有設定好。
  */
 
+/** OCR 的結果。`files` 是存進 GCS 的相對路徑，沒有留檔時是空陣列 */
+export interface OcrResult {
+  text: string;
+  files: string[];
+}
+
+/** 顯示手寫原稿用的前綴。bucket 公開讀取，與舊前端同一套 */
+export const STORAGE_BASE = 'https://storage.googleapis.com/writing-classroom/';
+
+/** 相對路徑 → 可以直接放進 <img src> 的網址 */
+export const imageUrlOf = (path: string): string =>
+  /^https?:\/\//.test(path) ? path : STORAGE_BASE + path;
+
 /**
- * 圖片 OCR，只取文字、不留檔。
+ * 圖片 OCR。
  *
- * 繳交流程另有 `/service/gemini/ocr`，那支會把圖片存進 Cloud Storage
- * 並處理多頁排序；這支給「在編輯器裡插入辨識文字」用。
+ * **給 `assignmentId` 就會把原圖存進 Cloud Storage**（`submit/assign_<id>/`），
+ * 回傳的 `files` 要跟著繳交一起送出去，存進 `submission.pic_files`。
+ *
+ * ⚠️ 手寫稿一定要留檔 —— OCR 會辨識錯，老師必須能對照原稿。
+ *    不給 assignmentId 的話只做辨識（題庫的看圖出題那類用途）。
  */
-export async function extractTextFromImage(base64Image: string, mimeType: string): Promise<string> {
-  const { text } = await api.post<{ text: string }>('/service/gemini/ocr_text', {
-    base64Image, mimeType,
+export async function extractTextFromImage(
+  base64Image: string,
+  mimeType: string,
+  assignmentId?: string,
+): Promise<OcrResult> {
+  const r = await api.post<{ text: string; files?: string[] }>('/service/gemini/ocr_text', {
+    base64Image, mimeType, assignmentId,
   });
-  return text;
+  return { text: r.text, files: r.files ?? [] };
 }
 
 /** 看圖寫作的出題參考：描述圖片內容、氛圍與可能的象徵意義。 */

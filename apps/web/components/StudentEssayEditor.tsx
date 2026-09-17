@@ -29,10 +29,13 @@ interface StudentEssayEditorProps {
   existingSubmission?: Submission;
   onBack?: () => void;
   canGoBack?: boolean;
-  /** 送出。wordCount 由這個元件算好一起帶出去，不要在別處重算 */
-  onSubmit: (content: string, wordCount: number) => Promise<void>;
+  /**
+   * 送出。wordCount 由這個元件算好一起帶出去，不要在別處重算。
+   * picFiles 是手寫原稿在 GCS 的相對路徑。
+   */
+  onSubmit: (content: string, wordCount: number, picFiles: string[]) => Promise<void>;
   /** 存草稿。存起來但不算送出（submission.is_submitted = false） */
-  onSaveDraft: (content: string, wordCount: number) => Promise<void>;
+  onSaveDraft: (content: string, wordCount: number, picFiles: string[]) => Promise<void>;
 }
 
 export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
@@ -57,6 +60,13 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
    *    桌機要真的開鏡頭只能走 getUserMedia（見 CameraCapture）。
    */
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+  /**
+   * 這次辨識過的手寫原稿在 GCS 的相對路徑。
+   *
+   * 繳交時一起送出去存進 `submission.pic_files`，老師才看得到原稿。
+   * 既有的紀錄先帶進來，這樣「再上傳一張」不會把先前那幾張蓋掉。
+   */
+  const [picFiles, setPicFiles] = useState<string[]>(existingSubmission?.picFiles ?? []);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isOcrLoading, setIsOcrLoading] = useState(false);
@@ -102,7 +112,7 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
     setIsSavingDraft(true);
     setError(null);
     try {
-      await onSaveDraft(content, wordCount);
+      await onSaveDraft(content, wordCount, picFiles);
       setLastSaved(new Date());
     } catch (err) {
       console.error('Save draft failed:', err);
@@ -128,9 +138,16 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
         const file = fileArray[i];
         
         const base64 = await fileToBase64(file);
-        const extractedText = await extractTextFromImage(base64, file.type);
-        if (extractedText) {
-          combinedText += (combinedText ? '\n\n' : '') + extractedText;
+        /*
+          ⚠️ 帶 assignment.id 進去，後端才會把原圖存進 GCS。
+             回傳的是 { text, files } —— 以前這裡當成字串直接串接，
+             TypeScript 不會擋（string + object 合法），但作文裡會被塞進
+             「[object Object]」。
+        */
+        const ocr = await extractTextFromImage(base64, file.type, assignment.id);
+        if (ocr.files.length) setPicFiles((prev) => [...prev, ...ocr.files]);
+        if (ocr.text) {
+          combinedText += (combinedText ? '\n\n' : '') + ocr.text;
           successCount++;
         }
       }
@@ -168,7 +185,7 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
     setIsSubmitting(true);
     setError(null);
     try {
-      await onSubmit(content, wordCount);
+      await onSubmit(content, wordCount, picFiles);
       navigate(routes.studentAssignments());
     } catch (err) {
       console.error('Submission failed:', err);

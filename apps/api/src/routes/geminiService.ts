@@ -86,17 +86,47 @@ function readImageBody(ctx: Context): { base64Image: string; mimeType: string } 
 }
 
 /**
- * 單張圖片 OCR，只回文字。
+ * 單張圖片 OCR。回傳辨識出的文字，**並把原圖存進 Cloud Storage**。
  *
- * 與上面的 /ocr 不同：那支是繳交流程用的，會把圖片存進 Cloud Storage 並排序多頁，
- * 需要 assignmentId 與 userId。這支給「編輯器裡插入辨識文字」用，不留檔。
+ * ⚠️ **手寫稿一定要留檔。** OCR 會辨識錯（實測辨識過一張藥袋），老師必須
+ *    能對照原稿，而且那是學生的作品證據。這支端點最初做成「不留檔」，
+ *    理由只是前端的 extractTextFromImage 只有兩個參數 —— 那個取捨是錯的，
+ *    後果是新繳交的 `submission.pic_files` 全部是空的，批改頁的「原稿」
+ *    永遠打不開（舊系統存了 965 筆，新的一筆都沒有）。
+ *
+ * `assignmentId` 給了才會存檔（存到 `submit/assign_<id>/`，與舊系統同一個
+ * 位置）。沒給就只做辨識 —— 題庫的看圖出題那類用途不需要留檔。
+ *
+ * 回傳的 `files` 是**相對路徑**，要顯示得接上
+ * `https://storage.googleapis.com/writing-classroom/`（bucket 公開讀取，
+ * 與舊前端同一套）。
  */
 router.post('/ocr_text', OAuthMiddleware.requireLogin, async (ctx: Context) => {
   const img = readImageBody(ctx);
   if (!img) return;
+  const { assignmentId } = ctx.request.body as { assignmentId?: string };
+
   try {
     const result = await new GenAIHelper().OCR([img.base64Image], img.mimeType);
-    ctx.body = { text: result.text || '' };
+
+    const files: string[] = [];
+    if (assignmentId) {
+      const userId = ctx.session.userInfo.id;
+      const bucketFolder = `submit/assign_${assignmentId}`;
+      const dt = new Date();
+      const prefix = `sub_${assignmentId}_${userId}_`
+        + `${String(dt.getMonth() + 1).padStart(2, '0')}${String(dt.getDate()).padStart(2, '0')}-`
+        + `${String(dt.getHours()).padStart(2, '0')}${String(dt.getMinutes()).padStart(2, '0')}_`;
+      /*
+        uploadImageIfBase64 需要帶 data URI 前綴才認得出是 base64；
+        前端送過來的是裸的 base64（fileToBase64 的輸出）。
+      */
+      const fileName = await StorageHelper.uploadImageIfBase64(
+        `data:${img.mimeType};base64,${img.base64Image}`, bucketFolder, prefix);
+      if (fileName) files.push(`${bucketFolder}/${fileName}`);
+    }
+
+    ctx.body = { text: result.text || '', files };
   } catch (error) {
     console.error('Error in OCR:', error);
     Util.returnError(ctx, 502, 'OCR 文字提取失敗');

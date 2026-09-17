@@ -10,7 +10,13 @@ import {
   X,
 } from 'lucide-react';
 import { Assignment, Submission } from '../types';
-import { seatLabel } from '../mockData';
+/*
+  ⚠️ 座號走 lib/gradingQueue 的 seatText()，**不要用 mockData 的 seatLabel()**。
+     那一支是從原型的 studentId（`s-c1-0`）split 出最後一段，真實的 studentId
+     是 user.id —— 它會把 user id 當成座號印出來（實測：畫面顯示 52、53，
+     那其實是使用者編號，而這個班的 seat_no 全是 null）。
+*/
+import { seatText } from '../lib/gradingQueue';
 import { checkImageFile } from '../lib/questionMeta';
 import { fileToBase64 } from '../lib/fileToBase64';
 import { extractTextFromImage } from '../api/ai';
@@ -90,7 +96,8 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
         const file = usable[i];
         try {
           const base64 = await fileToBase64(file);
-          const text = await extractTextFromImage(base64, file.type);
+          // 教師代繳交同樣要留檔 —— 回傳的是 { text, files }，不是字串
+          const { text } = await extractTextFromImage(base64, file.type, assignment.id);
           if (text) combined += (combined ? '\n\n' : '') + text;
           else issues.push(`${file.name}：辨識不到文字`);
         } catch {
@@ -175,7 +182,7 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                         }`}
                       >
                         <span className="text-caption text-text-muted font-mono shrink-0">
-                          {seatLabel(s.studentId)}
+                          {seatText(s.seatNo)}
                         </span>
                         <span className="truncate">{s.studentName}</span>
                       </button>
@@ -199,7 +206,7 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
               <div className="space-y-4">
                 <div className="flex items-center gap-2">
                   <span className="text-caption text-text-muted font-mono">
-                    {seatLabel(active.studentId)}
+                    {seatText(active.seatNo)}
                   </span>
                   <span className="text-title font-bold text-text-primary">
                     {active.studentName}

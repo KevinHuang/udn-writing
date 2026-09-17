@@ -42,9 +42,14 @@ export function rosterOf(assignmentId: string, submissions: Submission[]): Submi
 }
 
 
-/** 座號顯示。沒有座號時用破折號，不要印出 NaN 或 00 */
-export function seatText(s: Submission): string {
-  return s.seatNo == null ? '—' : String(s.seatNo).padStart(2, '0');
+/**
+ * 座號顯示。**沒有座號時用破折號**，不要印出 NaN、00 或 undefined。
+ *
+ * `uc_learner.seat_no` 在真實資料裡經常是 null（校務系統沒給），
+ * 而 `seatNo.toString()` 會直接丟例外把整頁打掉（實測踩過）。
+ */
+export function seatText(seatNo?: number | null): string {
+  return seatNo == null ? '—' : String(seatNo).padStart(2, '0');
 }
 
 /**

@@ -625,7 +625,7 @@ function useAppStateValue() {
    */
   const handleSubmitEssay = async (
     assignmentId: string, content: string,
-    opts: { isSubmitted?: boolean; wordCount?: number } = {},
+    opts: { isSubmitted?: boolean; wordCount?: number; picFiles?: string[] } = {},
   ) => {
     try {
       await submitEssay(assignmentId, content, opts);

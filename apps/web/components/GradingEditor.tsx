@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { ArrowLeft, Save, CheckCircle2, PenTool, Highlighter, FileText, Layout, PanelLeftClose, PanelLeftOpen, BookOpen, Image as ImageIcon, X, Sparkles, Bot, ChevronDown, RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Submission, GradingResult } from '../types';
 import { Markdown } from './Markdown';
+import { imageUrlOf } from '../api/ai';
 import { MAX_LEVEL, MIN_LEVEL, toLevel } from '../lib/scoring';
 import { StatusBadge } from './StatusBadge';
 import {
@@ -110,9 +111,15 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
   /** 有沒有還沒存的改動 */
   const isDirty = snapshot(result) !== savedSnapshot;
 
-  // 模擬判斷是否有原稿 (邏輯與列表頁面一致)
-  // 實際串接時請改成 const hasDraft = submission.hasHandwritten;
-  const hasDraft = submission.id.charCodeAt(submission.id.length - 1) % 2 === 0;
+  /**
+   * 有沒有手寫原稿。
+   *
+   * ⚠️ 這裡以前是 `submission.id.charCodeAt(...) % 2 === 0` —— **用 id 末字元的
+   *    奇偶數在假裝**，註解還寫著「實際串接時請改成…」。所以有原稿的看不到、
+   *    沒原稿的按鈕卻是亮的（而且點開來是 Unsplash 的一張示範照片）。
+   */
+  const draftImages = submission.picFiles ?? [];
+  const hasDraft = draftImages.length > 0;
 
 
 
@@ -625,15 +632,23 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                 >
                     <X size={24} />
                 </button>
-                <div className="overflow-auto max-h-full rounded-lg shadow-2xl">
-                    <img 
-                        src="https://images.unsplash.com/photo-1517842645767-c639042777db?q=80&w=2070&auto=format&fit=crop" 
-                        alt="Handwritten Draft" 
-                        referrerPolicy="no-referrer"
-                        className="max-h-[85vh] max-w-full object-contain" 
-                    />
+                {/*
+                  ⚠️ 這裡以前寫死一張 Unsplash 的示範照片，跟學生完全無關。
+                     現在顯示 submission.pic_files 裡真正的原稿（可能多頁）。
+                */}
+                <div className="overflow-auto max-h-full rounded-lg shadow-2xl space-y-2">
+                    {draftImages.map((path, i) => (
+                      <img
+                        key={path}
+                        src={imageUrlOf(path)}
+                        alt={`手寫原稿第 ${i + 1} 頁`}
+                        className="max-h-[85vh] max-w-full object-contain"
+                      />
+                    ))}
                 </div>
-                <p className="text-white mt-4 font-normal bg-black/50 px-4 py-2 rounded-full backdrop-blur-md">學生手寫原稿預覽</p>
+                <p className="text-on-solid mt-4 font-normal bg-black/50 px-4 py-2 rounded-full backdrop-blur-md">
+                  學生手寫原稿{draftImages.length > 1 ? `（${draftImages.length} 頁）` : ''}
+                </p>
             </div>
         </div>
       )}

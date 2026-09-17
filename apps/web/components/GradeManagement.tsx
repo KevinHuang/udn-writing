@@ -26,6 +26,7 @@ import { Course, Assignment, Submission, CATEGORY_LABELS } from '../types';
 import { MAX_LEVEL, MIN_LEVEL, levelStyle, toLevel, CRITERIA_SHORT_LABELS } from '../lib/scoring';
 import { SHOW_CATEGORY_SCORES } from '../lib/features';
 import { semesterLabel } from '../lib/semester';
+import { seatText } from '../lib/gradingQueue';
 import { isOnLeave, type LeaveMarks } from '../lib/leave';
 import { isAdmin, type CurrentUser } from '../lib/access';
 import { isOverdue as isAssignmentOverdue } from '../lib/assignments';
@@ -98,7 +99,7 @@ const StudentHistoryModal: React.FC<StudentHistoryModalProps> = ({
                     <div>
                         <div className="flex items-center gap-2 mb-0.5 sm:mb-1">
                             <span className="bg-text-primary text-surface text-caption px-1.5 sm:px-2 py-0.5 rounded-md font-mono">
-                                {student.seatNo.toString().padStart(2, '0')}
+                                {seatText(student.seatNo)}
                             </span>
                             <h3 className="text-title font-bold text-text-primary">{student.name}</h3>
                         </div>
@@ -442,15 +443,25 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
       if (!selectedCourse) return;
 
       // 1. CSV Header
+      /*
+        CSV 的欄位要跳脫 —— 題目名稱或學生姓名裡只要有一個逗號或引號，
+        整份報表的欄位就會錯位。
+      */
+      const cell = (v: string | number) => {
+          const s = String(v ?? '');
+          return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+
       let csvContent = "座號,學生姓名";
       scopedAssignments.forEach(a => {
-          csvContent += `,${a.title}`;
+          csvContent += `,${cell(a.title)}`;
       });
       csvContent += ",平均級分\n";
 
       // 2. CSV Rows
       students.forEach(student => {
-          let row = `${student.seatNo},${student.name}`;
+          // ⚠️ 直接寫 student.seatNo 的話，沒有座號的人會印出「undefined」
+          let row = `${cell(seatText(student.seatNo))},${cell(student.name)}`;
           let totalScore = 0;
           let gradedCount = 0;
 
@@ -475,7 +486,8 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
               row += `,${scoreText}`;
           });
 
-          const avg = gradedCount > 0 ? (totalScore / gradedCount).toFixed(1) : "0.0";
+          // 一份都沒批改時不要寫 0.0 —— 那會被讀成「這位學生平均 0 分」
+          const avg = gradedCount > 0 ? (totalScore / gradedCount).toFixed(1) : "—";
           row += `,${avg}\n`;
           csvContent += row;
       });
@@ -815,15 +827,15 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                     let gradedCount = 0;
 
                                     return (
-                                        <tr key={student.seatNo} id={`grademanagement-table-row-${student.seatNo}`} className="hover:bg-surface/60 transition-colors group">
+                                        <tr key={student.studentId} id={`grademanagement-table-row-${student.studentId}`} className="hover:bg-surface/60 transition-colors group">
                                             <td className="p-3 sm:p-4 px-1.5 sm:px-2 text-text-primary font-mono text-center sticky left-0 bg-surface group-hover:bg-secondary/5 border-r border-border/50 z-10 w-12 sm:w-14 min-w-[3rem] sm:min-w-[3.5rem] text-body">
-                                                {student.seatNo.toString().padStart(2, '0')}
+                                                {seatText(student.seatNo)}
                                             </td>
                                             <td className="p-3 sm:p-4 px-2 sm:px-3 text-text-primary sticky left-12 sm:left-14 bg-surface group-hover:bg-secondary/5 border-r border-border/50 z-10 w-24 sm:w-28 min-w-[6rem] sm:min-w-[7rem] text-body">
                                                 <div className="flex items-center justify-between gap-1">
                                                     <span className="truncate">{student.name}</span>
                                                     <button 
-                                                        id={`grademanagement-btn-history-${student.seatNo}`}
+                                                        id={`grademanagement-btn-history-${student.studentId}`}
                                                         onClick={() => setHistoryModalStudent(student)}
                                                         className="tap-target text-text-primary/60 hover:text-primary hover:bg-primary/5 p-1 rounded-full transition-colors opacity-100 md:opacity-0 md:group-hover:opacity-100 shrink-0"
                                                         title="查看歷史作業"
@@ -850,7 +862,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                                         */
                                                         content = (
                                                             <select
-                                                                id={`grademanagement-select-leave-${a.id}-${student.seatNo}`}
+                                                                id={`grademanagement-select-leave-${a.id}-${student.studentId}`}
                                                                 value={onLeave ? 'leave' : 'missing'}
                                                                 onChange={(e) => onSetLeave?.(a.id, studentId, e.target.value === 'leave')}
                                                                 title={onLeave ? '已標為請假，不列入逾期未繳。點擊可改回缺繳' : '逾期未繳。點擊可改標為請假'}

@@ -498,7 +498,7 @@ export const GradingListPage: React.FC = () => {
                                 {s.studentName}
                               </span>
                               <span className="text-caption text-text-secondary opacity-60">
-                                #{seatText(s)}
+                                #{seatText(s.seatNo)}
                               </span>
                             </div>
                             <div className="flex items-center gap-2 mt-1.5">
@@ -646,7 +646,7 @@ export const GradingListPage: React.FC = () => {
                             </div>
                           </td>
                           <td className="py-2 px-2 font-mono font-bold text-ink-500">
-                            {seatText(s)}
+                            {seatText(s.seatNo)}
                           </td>
                           <td className="py-2 px-4">
                             <div className="flex items-center gap-3">

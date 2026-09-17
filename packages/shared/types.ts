@@ -223,6 +223,13 @@ export interface Submission {
    *    各自解析」的第五次。
    */
   seatNo?: number;
+  /**
+   * 手寫原稿在 Cloud Storage 的相對路徑（`submit/assign_<id>/xxx.jpg`）。
+   *
+   * 要顯示時接上 `https://storage.googleapis.com/writing-classroom/`
+   * （見 api/ai.ts 的 imageUrlOf）。沒有原稿就是空陣列。
+   */
+  picFiles?: string[];
   content: string;
   submittedAt: string;
   publishedAt?: string;

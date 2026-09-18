@@ -313,20 +313,45 @@ class AssignmentHelper {
     }
 
     /** 更換現有 assignment 的題目（更換模式） */
+    /**
+     * 更換作業的題目。
+     *
+     * **底下的繳交、批改、作品標記會一併刪除。** 換了題目之後，學生寫的
+     * 還是舊題目的作文、老師打的還是舊題目的分數 —— 留著就是把一篇
+     * 「那次失敗之後」掛在「給未來自己的一封信」底下（實測看到的就是這個）。
+     *
+     * ⚠️ 這件事**前端的換題視窗早就寫在畫面上了**：「這份作業已有 N 筆繳交
+     *    紀錄（含已批改的）。換題後會全部刪除，無法復原。」但後端只改了
+     *    ref_task_id，什麼都沒刪 —— 對老師說了不會發生的事。
+     *
+     * 資料庫沒有外鍵，連鎖清理要自己寫全，而且要在同一個交易裡：
+     * 刪到一半失敗會留下沒有繳交紀錄卻還有批改的孤兒。
+     */
     public static async updateTask(assignmentId: string, ref_task_id: string, userId: string) {
-        const sql = `
-            UPDATE assignment
-            SET ref_task_id = $2,
-                assigned_at = NOW()
-            WHERE id = $1
-              AND ref_course_id IN (
-                    SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $3
-              )
-            RETURNING *;
-        `;
-        // ⚠️ 授權進 WHERE —— 先前只比對 id，任何教師都能換掉別人班作業的題目
-        const result = await db.default.oneOrNone(sql, [assignmentId, ref_task_id, userId]);
-        return result || null;
+        return await db.default.tx(async (tx) => {
+            const owned = await tx.oneOrNone(
+                `SELECT id FROM assignment
+                  WHERE id = $1
+                    AND ref_course_id IN (
+                          SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $2
+                    )`,
+                [assignmentId, userId]);
+            // ⚠️ 授權進 WHERE —— 先前只比對 id，任何教師都能換掉別人班作業的題目
+            if (!owned) return null;
+
+            const subIds = `SELECT id FROM submission WHERE ref_assignment_id = $1`;
+            await tx.none(`DELETE FROM submission_mark WHERE ref_submission_id IN (${subIds})`, [assignmentId]);
+            await tx.none(`DELETE FROM submission_feedback WHERE ref_submission_id IN (${subIds})`, [assignmentId]);
+            await tx.none(`DELETE FROM submission WHERE ref_assignment_id = $1`, [assignmentId]);
+
+            return await tx.oneOrNone(
+                `UPDATE assignment
+                    SET ref_task_id = $2,
+                        assigned_at = NOW()
+                  WHERE id = $1
+                  RETURNING *`,
+                [assignmentId, ref_task_id]);
+        });
     }
 }
 

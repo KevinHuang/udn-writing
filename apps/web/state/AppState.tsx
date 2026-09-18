@@ -171,7 +171,16 @@ function useAppStateValue() {
     } catch {
       // 隱私模式或封鎖 site data 時會丟例外，忽略即可
     }
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    /*
+      **預設淺色（宣紙），不跟隨系統偏好。**
+
+      以前是 `matchMedia('(prefers-color-scheme: dark)')` —— 把作業系統設成
+      深色的老師一登入就掉進碑拓模式，而那是個刻意做得很重的主題。
+      第一次看到的畫面應該是我們設計時的基準樣貌，深色留給使用者自己選。
+
+      使用者選過就記住（上面那段讀 localStorage），所以這只影響第一次。
+    */
+    return 'light';
   });
 
   /**

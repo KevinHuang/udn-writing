@@ -1,0 +1,21 @@
+# Cloud Build —— 從 repo 根目錄建置整個 monorepo。
+#
+#     gcloud builds submit --config cloudbuild.yaml
+#
+# Dockerfile 在 apps/api/，但 **context 必須是根目錄**（前端與共用型別都在外面）。
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=apps/api/Dockerfile
+      - --tag=asia-east1-docker.pkg.dev/$PROJECT_ID/writing-classroom-repo/udn-writing-test:$SHORT_SHA
+      - --tag=asia-east1-docker.pkg.dev/$PROJECT_ID/writing-classroom-repo/udn-writing-test:latest
+      - .
+
+images:
+  - asia-east1-docker.pkg.dev/$PROJECT_ID/writing-classroom-repo/udn-writing-test:$SHORT_SHA
+  - asia-east1-docker.pkg.dev/$PROJECT_ID/writing-classroom-repo/udn-writing-test:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8

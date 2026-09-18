@@ -1,34 +1,70 @@
-# 使用 Node.js 20 輕量版作為基礎映像檔
-FROM node:20-slim
+# ============================================================
+# udn-writing-classroom —— 後端 + 前端打包成一個 Cloud Run 服務
+# ============================================================
+#
+# ⚠️ **build context 是 repo 根目錄，不是 apps/api。**
+#    這是 monorepo：前端在 apps/web、共用型別在 packages/shared。
+#    建置指令要在根目錄下：
+#
+#        gcloud builds submit --config cloudbuild.yaml
+#
+#    （舊的 Dockerfile 假設 context 是 apps/api，改成 monorepo 之後
+#      連 tsconfig.build.json 都沒複製進去，建置一定失敗。）
+#
+# 產出的映像檔長這樣：
+#     /app/dist          apps/api 編譯後的 JS
+#     /app/public        apps/web 的建置產物（後端用 koa-static 送出去）
+#     /app/node_modules  只有 production 相依
+#
+# `/app/public` 這個位置是 app.ts 寫死的（`path.join(__dirname, '../public')`），
+# 不要改。
 
-# 設定工作目錄
+# ── 第一階段：建置 ──────────────────────────────────────────
+FROM node:20-slim AS builder
+WORKDIR /repo
+
+# 先只複製 manifest，讓相依安裝這一層可以被快取
+COPY package.json package-lock.json ./
+COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+COPY packages/shared/package.json ./packages/shared/
+
+# npm workspaces：一次裝好三個 workspace 的相依（含建置需要的 devDependencies）
+RUN npm ci
+
+# 原始碼。
+# ⚠️ 根目錄**沒有** tsconfig.json —— 每個 workspace 各自有一份。
+#    先前寫 `COPY tsconfig*.json ./` 會因為找不到檔案而讓建置失敗。
+COPY packages ./packages
+COPY apps/api ./apps/api
+COPY apps/web ./apps/web
+
+# 前端。產出在 apps/web/dist
+RUN npm run build -w @udn/web
+
+# 後端。tsconfig.build.json 會排除 src/test/**
+RUN npm run build -w @udn/api
+
+# ── 第二階段：執行 ──────────────────────────────────────────
+FROM node:20-slim AS runtime
 WORKDIR /app
 
-# 複製 package.json 與 package-lock.json (若有)
-COPY package*.json ./
+ENV NODE_ENV=production
 
-# 安裝所有相依套件（包含編譯 TypeScript 需要的 devDependencies）
-RUN npm install
+# apps/api 的相依是自足的（沒有用到 @udn/shared 的執行期程式碼），
+# 所以這裡可以只裝它自己的 production 相依，不需要整個 workspace。
+COPY apps/api/package.json ./package.json
+RUN npm install --omit=dev --no-audit --no-fund
 
-# 複製原始碼與 TypeScript 設定
-COPY tsconfig.json ./
-COPY src ./src
-COPY public ./public
+COPY --from=builder /repo/apps/api/dist ./dist
+COPY --from=builder /repo/apps/web/dist ./public
 
-# 執行編譯 (產出 dist 目錄)
-RUN npm run build
+# dist 裡的 .js 要當成 CommonJS 解讀。
+# 根目錄的 package.json 沒有 "type"，預設就是 commonjs，這行是保險。
+RUN echo '{"type":"commonjs"}' > dist/package.json
 
-# 修正 ESM 衝突：在 dist 目錄建立一個 package.json 宣告為 commonjs
-RUN echo '{"type": "commonjs"}' > dist/package.json
-
-# 移除開發用的套件，只保留運行所需的生產環境套件
-RUN npm prune --production
-
-# 設定環境變數
+# Cloud Run 會注入 PORT，這裡只是本機直接跑時的預設值
 ENV PORT=8080
-
-# Expose port (Cloud Run 預設會看 $PORT 環境變數，通常是 8080)
 EXPOSE 8080
 
-# 啟動指令
-CMD ["npm", "start"]
+CMD ["node", "dist/index.js"]

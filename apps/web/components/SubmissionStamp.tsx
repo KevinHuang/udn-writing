@@ -75,8 +75,16 @@ export const SubmissionStamp: React.FC<SubmissionStampProps> = ({
         'tap-target inline-flex items-center justify-center rounded-[4px] border tabular-nums',
         'whitespace-nowrap transition-all select-none',
         box,
+        /*
+          ⚠️ **停用狀態不要用 opacity 壓文字。** 原本是
+             `text-text-muted opacity-40` —— text-text-muted 自己是合格的
+             （淺色 5.16、深色也過 AA），但乘上 0.4 之後在碑拓模式只剩
+             **1.97:1**，看得到卻讀不動（實測 12 顆按鈕都是）。
+             這正是 CLAUDE.md 那條「次要文字用 text-text-muted，不要用
+             不透明度調」。停用改用比較柔的邊框來區分，文字維持可讀。
+        */
         disabled
-          ? 'border-dashed border-border-strong text-text-muted opacity-40 cursor-not-allowed'
+          ? 'border-dashed border-border-card text-text-muted cursor-not-allowed'
           : on
             ? `${tone.solid} text-on-accent shadow-sm active:scale-95`
             : `border-dashed border-border-strong text-text-muted bg-transparent active:scale-95 ${tone.ink}`,

@@ -321,7 +321,7 @@ export const GradingListPage: React.FC = () => {
                 <div className="hidden lg:block h-8 w-px bg-border"></div>
                 <div className="flex flex-col gap-1 text-caption w-full lg:w-auto">
                   <div className="flex items-center gap-3 md:gap-4">
-                    <span className="flex items-center gap-1.5 md:gap-2 text-ink-400">
+                    <span className="flex items-center gap-1.5 md:gap-2 text-text-muted">
                       <span className="w-2 h-2 md:w-2.5 md:h-2.5 rounded-full bg-ink-300"></span>
                       未繳交 {unsubmittedCount}
                     </span>
@@ -645,7 +645,7 @@ export const GradingListPage: React.FC = () => {
                               )}
                             </div>
                           </td>
-                          <td className="py-2 px-2 font-mono font-bold text-ink-500">
+                          <td className="py-2 px-2 font-mono font-bold text-text-muted">
                             {seatText(s.seatNo)}
                           </td>
                           <td className="py-2 px-4">
@@ -699,7 +699,7 @@ export const GradingListPage: React.FC = () => {
                               )}
                             </div>
                           </td>
-                          <td className="py-2 px-4 text-ink-500 text-caption font-normal whitespace-nowrap">
+                          <td className="py-2 px-4 text-text-muted text-caption font-normal whitespace-nowrap">
                             {s.status === "Unsubmitted" || s.status === "Draft" || !s.submittedAt
                               ? "-"
                               : `${new Date(s.submittedAt).toLocaleDateString()} ${new Date(s.submittedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
@@ -734,7 +734,7 @@ export const GradingListPage: React.FC = () => {
                                 {score}
                               </span>
                             ) : (
-                              <span className="text-ink-500 font-bold">
+                              <span className="text-text-muted font-bold">
                                 -
                               </span>
                             )}
@@ -1011,7 +1011,7 @@ export const GradingListPage: React.FC = () => {
             ))}
 
             {activeAssignments.length === 0 && (
-              <div className="col-span-full py-20 text-center text-ink-400 bg-card/40 rounded-xl border border-dashed border-ink-300">
+              <div className="col-span-full py-20 text-center text-text-muted bg-card/40 rounded-xl border border-dashed border-border-strong">
                 <CheckSquare size={48} className="mx-auto mb-3 opacity-30" />
                 <p className="font-normal">目前沒有進行中的作業</p>
               </div>

@@ -221,3 +221,78 @@ describe('刪除作業的連鎖清理', () => {
     assert.ok(await rawDb.oneOrNone(`SELECT 1 FROM submission WHERE id=$1`, [keepSub]));
   });
 });
+
+/**
+ * 更換題目。
+ *
+ * 換了題目之後，學生寫的還是舊題目的作文、老師打的還是舊題目的分數 ——
+ * 留著就是把一篇「那次失敗之後」掛在「給未來自己的一封信」底下。
+ *
+ * 前端的換題視窗早就把這件事寫在畫面上了（「換題後會全部刪除，無法復原」），
+ * 但後端原本只改 ref_task_id，什麼都沒刪 —— 對老師說了不會發生的事。
+ */
+describe('更換題目', () => {
+  const swap = (cookie: string, assignmentId: string, taskId: string) =>
+    req(srv, `/service/instructor/assignments/${assignmentId}/task`, cookie, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ref_task_id: taskId }),
+    });
+
+  test('題目換掉，底下的繳交、批改、作品標記一併清乾淨', async () => {
+    const s = await twoCourses();
+    const student = await seedUser('stu@test.edu.tw', '學生');
+    await seedLearner(s.mine, student.id);
+    const sub = await seedSubmission(s.myAssignment, student.id);
+    await rawDb.none(
+      `INSERT INTO submission_feedback (ref_submission_id, score, content, ref_user_id) VALUES ($1, 5, '{}', $2)`,
+      [sub, s.me.id]);
+    await rawDb.none(
+      `INSERT INTO submission_mark (ref_submission_id, kind, ref_user_id) VALUES ($1, 'featured', $2)`,
+      [sub, s.me.id]);
+
+    const newTask = await seedTask(s.me.id, '換過去的新題目');
+    const res = await swap(s.cookie, s.myAssignment, newTask);
+    assert.equal(res.status, 200);
+
+    const a = await rawDb.one('SELECT ref_task_id FROM assignment WHERE id=$1', [s.myAssignment]);
+    assert.equal(String(a.ref_task_id), String(newTask), '題目要真的換掉');
+
+    for (const [table, where, param] of [
+      ['submission', 'ref_assignment_id', s.myAssignment],
+      ['submission_feedback', 'ref_submission_id', sub],
+      ['submission_mark', 'ref_submission_id', sub],
+    ] as const) {
+      const { count } = await rawDb.one(`SELECT count(*)::int FROM ${table} WHERE ${where} = $1`, [param]);
+      assert.equal(count, 0, `${table} 應該跟著舊題目一起清掉`);
+    }
+  });
+
+  test('請假註記留著 —— 那是作業層級的，與題目無關', async () => {
+    const s = await twoCourses();
+    const student = await seedUser('stu@test.edu.tw', '學生');
+    await seedLearner(s.mine, student.id);
+    await rawDb.none(
+      `INSERT INTO assignment_leave (ref_assignment_id, ref_user_id) VALUES ($1, $2)`,
+      [s.myAssignment, student.id]);
+
+    await swap(s.cookie, s.myAssignment, await seedTask(s.me.id, '新題目'));
+
+    const { count } = await rawDb.one(
+      'SELECT count(*)::int FROM assignment_leave WHERE ref_assignment_id=$1', [s.myAssignment]);
+    assert.equal(count, 1);
+  });
+
+  test('換別人班作業的題目 → 404，而且對方的繳交原封不動', async () => {
+    const s = await twoCourses();
+    const other = await seedUser('stu2@test.edu.tw', '別班學生');
+    await seedLearner(s.theirs, other.id);
+    const sub = await seedSubmission(s.theirAssignment, other.id);
+
+    const res = await swap(s.cookie, s.theirAssignment, await seedTask(s.me.id, '新題目'));
+    assert.equal(res.status, 404);
+
+    const { count } = await rawDb.one('SELECT count(*)::int FROM submission WHERE id=$1', [sub]);
+    assert.equal(count, 1, '擋下來就不該刪到對方的資料');
+  });
+});

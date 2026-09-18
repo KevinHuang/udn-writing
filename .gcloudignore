@@ -1,0 +1,17 @@
+# 不要上傳到 Cloud Build 的東西。
+# node_modules 讓映像檔自己 npm ci，上傳它只會拖慢建置。
+node_modules/
+**/node_modules/
+**/dist/
+.git/
+.playwright-mcp/
+artifacts/
+legacy-server/
+
+# ⚠️ 憑證與環境變數絕對不要進映像檔。
+# Cloud Run 的環境變數用 --set-env-vars / Secret Manager 設定。
+.env
+.env.*
+*-key.json
+*-credentials.json
+service-account*.json

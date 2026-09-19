@@ -13,12 +13,25 @@ import { startFakeIdp, startServer, req, rawDb, type TestServer } from './helper
 const API_ROOT = path.resolve(__dirname, '../..');
 const ENV_FILE = path.resolve(API_ROOT, '../../.env');
 
+/**
+ * 用目前這個 node 直接跑 tsx 的 CLI。
+ *
+ * ⚠️ **不要用 `spawnSync('npx', ...)`。** Windows 上 npx 是 `npx.cmd`，
+ *    不開 shell 就 ENOENT —— status 是 null，每一條斷言都拿 null 去比，
+ *    看起來像防護壞了，其實子行程根本沒起來。也不要改成 `shell: true`：
+ *    .env 的路徑可能帶空白（例如 `C:\Users\Charles iSchool\...`），
+ *    交給 shell 會被切成兩個參數。
+ */
+const TSX_CLI = require.resolve('tsx/cli');
+const tsx = (args: string[], env: Record<string, string | undefined>) =>
+  spawnSync(process.execPath, [TSX_CLI, ...args],
+    { cwd: API_ROOT, env: { ...process.env, ...env }, encoding: 'utf8' });
+
 /** 在子行程裡載入某個模組，回傳 stderr 與結束碼。 */
 function loadInChild(module: string, env: Record<string, string | undefined>) {
-  const r = spawnSync(
-    'npx',
-    ['tsx', `--env-file=${ENV_FILE}`, '-e', `import('${module}').catch(e => { console.error(e.message); process.exit(1); })`],
-    { cwd: API_ROOT, env: { ...process.env, ...env }, encoding: 'utf8' }
+  const r = tsx(
+    [`--env-file=${ENV_FILE}`, '-e', `import('${module}').catch(e => { console.error(e.message); process.exit(1); })`],
+    env,
   );
   return { code: r.status, stderr: (r.stderr ?? '') + (r.stdout ?? '') };
 }
@@ -56,8 +69,7 @@ describe('SESSION_KEY 防護', () => {
 
 describe('測試資料庫防護', () => {
   function runSetup(env: Record<string, string | undefined>) {
-    const r = spawnSync('npx', ['tsx', `--env-file=${ENV_FILE}`, './src/test/setup.ts'],
-      { cwd: API_ROOT, env: { ...process.env, ...env }, encoding: 'utf8' });
+    const r = tsx([`--env-file=${ENV_FILE}`, './src/test/setup.ts'], env);
     return { code: r.status, out: (r.stderr ?? '') + (r.stdout ?? '') };
   }
 

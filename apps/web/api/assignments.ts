@@ -18,8 +18,9 @@ interface RawAssignment {
 /**
  * 資料庫列 → 前端的 Assignment。
  *
- * 狀態不是資料庫欄位，是 `opened` + `opened_at` 推導出來的 ——
+ * 狀態不是資料庫欄位，是 `opened` 推導出來的（看不看得到）——
  * 推導規則在 `@udn/shared` 的 `assignmentStatusOf()`，前後端共用一份。
+ * 收不收件看截止日，由 lib/assignments.ts 的 assignmentPhase() 算。
  */
 function toAssignment(r: RawAssignment): Assignment {
   return {
@@ -69,17 +70,22 @@ export async function fetchAssignmentsByCourse(courseId: string): Promise<Assign
 
 export async function createAssignment(
   courseId: string,
-  input: { questionId: string; deadline?: string; allowLateSubmission?: boolean },
+  input: { questionId: string; deadline?: string; allowLateSubmission?: boolean; opened?: boolean },
 ): Promise<Assignment> {
   const row = await api.post<RawAssignment>(`/service/instructor/courses/${courseId}/assignments`, {
     ref_task_id: input.questionId,
     deadline: toIsoDeadline(input.deadline),
     allow_late_submission: input.allowLateSubmission ?? false,
+    // 派發精靈的「立即開放」。不帶就是先存著（未開放）
+    opened: input.opened ?? false,
   });
   return toAssignment(row);
 }
 
-/** 開關作業（Draft ⇄ Published）。收回時 `opened_at` 會保留，Closed 才分得出來 */
+/**
+ * 開關作業（Draft ⇄ Published）：學生看不看得到。
+ * 收不收件不歸這裡管，看截止日（見 lib/assignments.ts 的 assignmentPhase）。
+ */
 export async function setAssignmentOpened(id: string, opened: boolean): Promise<void> {
   await api.put(`/service/instructor/assignments/${id}/status`, { opened });
 }
@@ -93,7 +99,10 @@ export async function updateAssignmentConfig(
   });
 }
 
-/** 換題。只有作業已關閉時前端才讓按，後端不管這條規則（見 lib/assignments.ts） */
+/**
+ * 換題。可換的條件（未開放，或已截止且不收遲交）前後端各擋一次：
+ * 前端是 lib/assignments.ts 的 canSwapQuestion，後端不符合時回 409。
+ */
 export async function swapAssignmentQuestion(id: string, questionId: string): Promise<void> {
   await api.put(`/service/instructor/assignments/${id}/task`, { ref_task_id: questionId });
 }

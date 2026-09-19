@@ -38,7 +38,11 @@ export const QuestionPreviewModal: React.FC<QuestionPreviewModalProps> = ({
         className="absolute inset-0 bg-ink-900/45 backdrop-blur-sm"
         onClick={onClose}
       />
-      <div className="relative w-full max-w-2xl bg-surface rounded-2xl shadow-2xl border border-border flex flex-col max-h-[88vh] overflow-hidden">
+      {/*
+        放大到 4xl（896px）、高度 92vh：題說常常是好幾段，加上看圖寫作的配圖，
+        原本的 2xl 要一直捲（使用者回饋「稍微大一點，比較方便瀏覽」）。
+      */}
+      <div className="relative w-full max-w-4xl bg-surface rounded-2xl shadow-2xl border border-border flex flex-col max-h-[92vh] overflow-hidden">
         {/* 標頭 */}
         <div className="p-5 border-b border-border flex items-start justify-between gap-4 shrink-0">
           <div className="min-w-0">
@@ -72,7 +76,7 @@ export const QuestionPreviewModal: React.FC<QuestionPreviewModalProps> = ({
         </div>
 
         {/* 內容 */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+        <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5">
           {/* 題幹 */}
           <div>
             <p className="text-caption text-text-secondary uppercase tracking-widest mb-2">
@@ -112,7 +116,7 @@ export const QuestionPreviewModal: React.FC<QuestionPreviewModalProps> = ({
                   src={question.imageUrl}
                   alt="題目參考圖片"
                   referrerPolicy="no-referrer"
-                  className="max-h-72 w-auto rounded-lg object-contain"
+                  className="max-h-[28rem] w-auto rounded-lg object-contain"
                 />
               </div>
             </div>

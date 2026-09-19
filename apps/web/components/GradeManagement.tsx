@@ -28,7 +28,6 @@ import { SHOW_CATEGORY_SCORES } from '../lib/features';
 import { semesterLabel } from '../lib/semester';
 import { seatText } from '../lib/gradingQueue';
 import { isOnLeave, type LeaveMarks } from '../lib/leave';
-import { isAdmin, type CurrentUser } from '../lib/access';
 import { isOverdue as isAssignmentOverdue } from '../lib/assignments';
 import { orderedAssignments, orderNumbers } from '../lib/assignmentOrder';
 import { CoursePickerModal } from './CoursePickerModal';
@@ -43,8 +42,6 @@ interface GradeManagementProps {
   initialCourseId?: string | null;
   /** 請假註記（作業 × 學生），見 lib/leave.ts */
   leaveMarks?: LeaveMarks;
-  /** 目前身分。管理人員的班級改用挑選視窗，教師維持簡單下拉 */
-  user: CurrentUser;
   onSetLeave?: (assignmentId: string, studentId: string, onLeave: boolean) => void;
   onBack?: () => void;
   canGoBack?: boolean;
@@ -259,7 +256,6 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
   initialCourseId,
   leaveMarks,
   onSetLeave,
-  user,
   onBack,
   canGoBack,
   onOpenFinalReport
@@ -285,14 +281,14 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
   // History Modal State
   const [historyModalStudent, setHistoryModalStudent] = useState<{ studentId: string; seatNo?: number; name: string } | null>(null);
 
-  /** 任務篩選。'ALL' 代表全部任務 —— 圖表與成績表都吃這個值 */
+  /** 作業篩選。'ALL' 代表全部作業 —— 圖表與成績表都吃這個值 */
   const [pickedAssignmentId, setPickedAssignmentId] = useState<string>('ALL');
-  /** 班級挑選視窗（只有管理人員用得到） */
+  /** 班級挑選視窗 */
   const [isCoursePickerOpen, setIsCoursePickerOpen] = useState(false);
 
   /**
-   * 換班。兩個入口（教師的下拉、管理人員的挑選視窗）都要走這一支 ——
-   * 少了 setPickedAssignmentId('ALL')，換班後會停在一個新班沒有的任務上。
+   * 換班。班級挑選視窗與預設選班都要走這一支 ——
+   * 少了 setPickedAssignmentId('ALL')，換班後會停在一個新班沒有的作業上。
    */
   const changeCourse = (courseId: string) => {
     setPickedCourseId(courseId);
@@ -333,14 +329,14 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
     [courseAssignments],
   );
 
-  /** 真正生效的任務：選到的若不屬於這個班（換班後），退回全部 */
+  /** 真正生效的作業：選到的若不屬於這個班（換班後），退回全部 */
   const selectedAssignmentId =
     pickedAssignmentId !== 'ALL' &&
     courseAssignments.some((a) => a.id === pickedAssignmentId)
       ? pickedAssignmentId
       : 'ALL';
 
-  /** 納入統計的任務。單選時只算那一份，全部時算整學期 */
+  /** 納入統計的作業。單選時只算那一份，全部時算整學期 */
   const scopedAssignments = useMemo(
     () =>
       selectedAssignmentId === 'ALL'
@@ -551,7 +547,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
             <div className="shrink-0 flex items-center gap-2">
               {/*
                 期末總結是次要動作（一學期按一次），所以走描邊樣式，
-                不跟「匯出 EXCEL」搶同一個實心主色 —— 兩顆實心按鈕並排，
+                不跟「匯出成績」搶同一個實心主色 —— 兩顆實心按鈕並排，
                 老師分不出哪一個才是這一頁的主要動作。
               */}
               {onOpenFinalReport && (
@@ -568,7 +564,8 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                 onClick={handleDownloadExcel}
                 className="bg-primary hover:bg-primary/90 text-on-accent px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
               >
-                <Download size={16} className="shrink-0" /> 匯出 EXCEL
+                {/* 檔案是什麼格式就寫什麼格式 —— 產生的是 .csv，寫 EXCEL 老師會找不到檔 */}
+                <Download size={16} className="shrink-0" /> 匯出成績（CSV）
               </button>
             </div>
           )}
@@ -596,54 +593,34 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
           </label>
 
           {/*
-            班級。管理人員看得到全省數十個班，攤成一條下拉找不到東西，
-            所以改成開挑選視窗（縣市篩選 → 搜尋 → 學校分組）。
-            授課教師只有三個班，維持原本的下拉反而快。
+            班級。一律開挑選視窗（縣市篩選 → 搜尋 → 學校分組）——
+            管理人員看得到全省數十個班，授課教師也可能跨縣市、跨校
+            （實測一位老師有 8 所學校的班），攤成一條下拉找不到東西。
+            與課程管理、批改作業頁用同一套分組。
           */}
           <div className="flex-1 min-w-0 px-4 py-2.5 hover:bg-surface/80 transition-colors">
             <span className="flex items-center gap-1.5 text-caption text-text-secondary uppercase tracking-wider">
               <Users size={12} className="shrink-0 text-primary" />
               班級
             </span>
-            {isAdmin(user) ? (
-              <button
-                id="grademanagement-btn-pick-course"
-                onClick={() => setIsCoursePickerOpen(true)}
-                disabled={semesterCourses.length === 0}
-                title="搜尋並選擇班級"
-                className="tap-target mt-0.5 w-full flex items-center gap-2 text-left text-ui text-text-primary cursor-pointer disabled:cursor-not-allowed"
-              >
-                <span className="flex-1 min-w-0 truncate">
-                  {selectedCourse?.name ?? '本學期沒有課程'}
-                </span>
-                <Search size={14} className="shrink-0 text-text-secondary" />
-              </button>
-            ) : (
-              <div className="relative mt-0.5">
-                <select
-                  id="grademanagement-select-course"
-                  value={selectedCourseId ?? ''}
-                  onChange={(e) => changeCourse(e.target.value)}
-                  disabled={semesterCourses.length === 0}
-                  className="w-full appearance-none bg-transparent text-ui text-text-primary outline-none cursor-pointer pr-6 truncate disabled:cursor-not-allowed"
-                >
-                  {semesterCourses.length === 0 ? (
-                    <option value="">本學期沒有課程</option>
-                  ) : (
-                    semesterCourses.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))
-                  )}
-                </select>
-                <ChevronDown size={14} className="text-text-secondary absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none" />
-              </div>
-            )}
+            <button
+              id="grademanagement-btn-pick-course"
+              onClick={() => setIsCoursePickerOpen(true)}
+              disabled={semesterCourses.length === 0}
+              title="搜尋並選擇班級"
+              className="tap-target mt-0.5 w-full flex items-center gap-2 text-left text-ui text-text-primary cursor-pointer disabled:cursor-not-allowed"
+            >
+              <span className="flex-1 min-w-0 truncate">
+                {selectedCourse?.name ?? '本學期沒有課程'}
+              </span>
+              <Search size={14} className="shrink-0 text-text-secondary" />
+            </button>
           </div>
 
           <label className="flex-1 min-w-0 px-4 py-2.5 hover:bg-surface/80 transition-colors cursor-pointer">
             <span className="flex items-center gap-1.5 text-caption text-text-secondary uppercase tracking-wider">
               <ClipboardList size={12} className="shrink-0 text-primary" />
-              任務
+              作業
             </span>
             <div className="relative mt-0.5">
               <select
@@ -652,7 +629,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                 onChange={(e) => setPickedAssignmentId(e.target.value)}
                 className="w-full appearance-none bg-transparent text-ui text-text-primary outline-none cursor-pointer pr-6 truncate"
               >
-                <option value="ALL">全部任務</option>
+                <option value="ALL">全部作業</option>
                 {courseAssignments.map((a) => (
                   <option key={a.id} value={a.id}>
                     {assignmentNo[a.id]}. {a.title}
@@ -676,7 +653,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
 
       {/*
         班級診斷：左邊看分數怎麼散開，右邊看四個向度誰強誰弱。
-        兩張都吃上方的「班級 × 任務」篩選，只採計已批改與已發還的成績 ——
+        兩張都吃上方的「班級 × 作業」篩選，只採計已批改與已發還的成績 ——
         待批改的還沒有分數，算成 0 會把平均整個拉下來。
       */}
       {selectedCourse && (
@@ -930,7 +907,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
              ) : (
                  <div id="grademanagement-empty-state" className="flex flex-col items-center justify-center py-32 text-text-muted">
                      <Users size={48} className="mb-4 opacity-80" />
-                     <p className="font-normal">請選擇左側課程以查看成績</p>
+                     <p className="font-normal">請先在上方選擇班級</p>
                  </div>
              )}
          </div>

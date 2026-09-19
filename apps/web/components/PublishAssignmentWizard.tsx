@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Assignment, Course, Question, AssignmentConfig, Folder } from '../types';
 import { questionCountsByFolder } from '../lib/folders';
+import { openAssignment } from '../lib/assignments';
 import { QuestionPreviewModal } from './QuestionPreviewModal';
 
 interface PublishAssignmentWizardProps {
@@ -79,15 +80,23 @@ export const PublishAssignmentWizard: React.FC<PublishAssignmentWizardProps> = (
 
   const [config, setConfig] = useState<AssignmentConfig>({
     deadline: '',
-    allowLateSubmission: true
+    // 截止後預設不收件，要收遲交由老師勾選
+    allowLateSubmission: false
   });
-  
+
+  /**
+   * 發布後要不要馬上讓學生看到。**預設先存著** ——
+   * 很多老師會先把整學期的作業排好，再一份一份打開。
+   */
+  const [openNow, setOpenNow] = useState(false);
+
   const resetForm = () => {
     setSelectedQuestionIds([]);
     setHasDeadline(false);
+    setOpenNow(false);
     setConfig({
       deadline: '',
-      allowLateSubmission: true
+      allowLateSubmission: false
     });
     setCurrentPath([]);
     setActiveTab('SHARED');
@@ -97,29 +106,31 @@ export const PublishAssignmentWizard: React.FC<PublishAssignmentWizardProps> = (
   const handlePublish = () => {
     if (!targetCourse || selectedQuestionIds.length === 0) return;
 
+    const now = new Date().toISOString();
     const creates: Assignment[] = selectedQuestionIds.flatMap(qId => {
         const question = questions.find(q => q.id === qId);
         if (!question) return [];
-        return [{
+        const draft: Assignment = {
             id: `a-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             title: question.title,
             courseId: targetCourse.id,
             questionId: question.id,
-            config: { ...config },
-            // 預設未開放：老師先把題目排好，再自己決定什麼時候讓學生看到。
-            // 清單每一列的開關（toggleVisibility）就是放行的地方。
-            status: 'Draft' as const,
+            // 沒設截止日時「允許遲交」沒有意義，不要留一個看不到的設定
+            config: { ...config, allowLateSubmission: hasDeadline && config.allowLateSubmission },
+            status: 'Draft',
             totalStudents: targetCourse.studentCount,
-            createdAt: new Date().toISOString(),
-        }];
+            createdAt: now,
+        };
+        // 立即開放走同一支函式，publishedAt 的規則只有一處
+        return [openNow ? openAssignment(draft) : draft];
     });
 
     onAssignmentOperation(creates, [], []);
     alert(
-      `已建立 ${creates.length} 份作業給${targetCourse.name}。
-
-` +
-        `目前是「未開放」，學生還看不到。在作業清單按下開關才會放行。`,
+      `已建立 ${creates.length} 份作業給${targetCourse.name}。\n\n` +
+        (openNow
+          ? `已經開放，學生現在就看得到。`
+          : `目前是「未開放」，學生還看不到。在作業清單按下開關才會放行。`),
     );
     resetForm();
     onPublished?.();
@@ -440,14 +451,26 @@ export const PublishAssignmentWizard: React.FC<PublishAssignmentWizardProps> = (
                 設定截止日期
               </label>
               {hasDeadline ? (
-                <input
-                  id="assignmentmanager-create-input-samedeadline"
-                  type="datetime-local"
-                  value={config.deadline}
-                  onChange={(e) => setConfig({...config, deadline: e.target.value})}
-                  className="w-full px-3.5 py-2.5 border border-border rounded-brand bg-surface/80 text-text-primary text-ui focus:ring-4 focus:ring-primary/10 focus:border-primary outline-none shadow-sm transition-all"
-                  style={{ colorScheme: 'light' }}
-                />
+                <>
+                  <input
+                    id="assignmentmanager-create-input-samedeadline"
+                    type="datetime-local"
+                    value={config.deadline}
+                    onChange={(e) => setConfig({...config, deadline: e.target.value})}
+                    className="w-full px-3.5 py-2.5 border border-border rounded-brand bg-surface/80 text-text-primary text-ui focus:ring-4 focus:ring-primary/10 focus:border-primary outline-none shadow-sm transition-all"
+                    style={{ colorScheme: 'light' }}
+                  />
+                  <label className="mt-2 flex items-center gap-2 text-caption text-text-secondary cursor-pointer">
+                    <input
+                      id="assignmentmanager-create-toggle-allowlate"
+                      type="checkbox"
+                      checked={config.allowLateSubmission === true}
+                      onChange={(e) => setConfig({ ...config, allowLateSubmission: e.target.checked })}
+                      className="w-4 h-4 shrink-0 accent-primary cursor-pointer"
+                    />
+                    允許遲交（截止後仍可交，會標示遲交）
+                  </label>
+                </>
               ) : (
                 <p className="px-3.5 py-2.5 text-caption text-text-muted border border-dashed border-border rounded-brand">
                   不限期繳交，之後仍可在作業清單設定
@@ -455,7 +478,29 @@ export const PublishAssignmentWizard: React.FC<PublishAssignmentWizardProps> = (
               )}
            </div>
 
-           <div className="flex flex-1 items-center justify-end gap-3">
+           <div className="flex flex-1 flex-wrap items-center justify-end gap-3">
+              {/* 發布方式。預設先存著，要馬上給學生才選立即開放 */}
+              <div role="radiogroup" aria-label="發布方式" className="flex p-1 bg-secondary/5 rounded-brand">
+                {[
+                  { value: false, label: '先存著', id: 'assignmentmanager-create-mode-draft' },
+                  { value: true, label: '立即開放', id: 'assignmentmanager-create-mode-open' },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    id={m.id}
+                    role="radio"
+                    aria-checked={openNow === m.value}
+                    onClick={() => setOpenNow(m.value)}
+                    className={`px-3 py-1.5 rounded-lg text-caption whitespace-nowrap transition-all ${
+                      openNow === m.value
+                        ? 'bg-surface text-primary shadow-sm'
+                        : 'text-text-secondary hover:text-text-primary'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
               <span className="text-caption text-text-secondary whitespace-nowrap">
                 {selectedQuestionIds.length > 0
                   ? `已選 ${selectedQuestionIds.length} 題，發布給${targetCourse.name}`

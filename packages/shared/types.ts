@@ -1,6 +1,10 @@
 
-/** 作業的發布狀態 */
-export type AssignmentStatus = 'Published' | 'Draft' | 'Closed';
+/**
+ * 作業的發布狀態：學生看不看得到。
+ * 收不收件看截止日，不是狀態（見 derive.ts 的 assignmentStatusOf）——
+ * 以前的 `Closed` 已經拿掉，不要加回來。
+ */
+export type AssignmentStatus = 'Published' | 'Draft';
 
 /** 學生繳交紀錄的狀態 */
 export type SubmissionStatus =
@@ -152,6 +156,10 @@ export interface AssignmentConfig {
    * 而顯示會變成「Invalid Date」。
    */
   deadline?: string;
+  /**
+   * 截止後是否仍收件（會標示遲交）。**預設 false** —— 要收遲交由老師勾選。
+   * 沒有截止日時沒有意義。
+   */
   allowLateSubmission?: boolean;
 }
 

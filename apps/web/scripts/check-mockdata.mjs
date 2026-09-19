@@ -77,6 +77,15 @@ if (/submittedCount/.test(src)) {
   problems.push('mockData.ts 又出現 submittedCount —— 這個欄位沒有人讀且必然漂移，請改為由 submissions 計算');
 }
 
+/*
+  作業已經沒有「已關閉」這個狀態 —— 收不收件只看截止日（lib/assignments.ts）。
+  Closed 若長回來，作業清單、學生端各自判斷的老問題就會跟著回來。
+  types.ts 已經擋住型別，但 mockData 裡用 `as AssignmentStatus` 轉型就會漏掉，所以這裡再看一次。
+*/
+if (/["']Closed["']/.test(src)) {
+  problems.push('mockData.ts 出現 Closed —— 作業已沒有這個狀態，停止收件請把截止日設在過去');
+}
+
 if (problems.length) {
   console.error('\n示範資料一致性檢查未通過：');
   problems.forEach((p) => console.error('  - ' + p));

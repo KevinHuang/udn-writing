@@ -1,6 +1,7 @@
 import { api } from './client';
 import { feedbackTextOf } from '../lib/feedbackText';
 import { semesterValue } from '../lib/semester';
+import { questionImageUrl } from './questions';
 import {
   QuestionType, submissionStatusOf, assignmentStatusOf,
   type Assignment, type Course, type Question, type Submission,
@@ -108,7 +109,8 @@ export async function fetchStudentData(
         folderId: null,
         gradeLevel: '',
         // **評分規準刻意不帶**：那是給 AI 與教師看的，後端也沒有回傳
-        imageUrl: r.pic1 ?? undefined,
+        // pic1 只存檔名，要組成 GCS 網址（規則在 api/questions.ts）
+        imageUrl: questionImageUrl(r.pic1),
         imagePosition: r.pic_position === 'before' ? 'before' : 'after',
         teacherNotes: r.note ?? undefined,
       });
@@ -124,13 +126,14 @@ export async function fetchStudentData(
         allowLateSubmission: r.allow_late_submission ?? false,
       },
       /*
-        狀態由 opened / opened_at 推導，與教師端共用同一支。
+        狀態由 opened 推導，與教師端共用同一支。收不收件看截止日，
+        由 lib/assignments.ts 的 canStudentSubmit() 判斷。
 
-        ⚠️ 以前這裡寫死 'Published'，理由是「學生只看得到已開放的作業」——
-           那個前提已經不成立：已關閉的作業現在也會回傳（學生要看得到自己
-           的成績），寫死的話會讓已結束的作業顯示成進行中、還能按「開始寫作」。
+        ⚠️ 不要寫死 'Published'：開過又改回未開放的作業也會回傳
+           （學生要看得到已發還的成績），它們是 Draft —— 不列在作業清單，
+           也不能再交。
       */
-      status: assignmentStatusOf({ opened: r.opened, opened_at: r.opened_at }),
+      status: assignmentStatusOf({ opened: r.opened }),
       totalStudents: 0,
       createdAt: r.assigned_at ?? undefined,
     });

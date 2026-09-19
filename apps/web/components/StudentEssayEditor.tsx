@@ -10,7 +10,7 @@ import {
   Loader2, 
   Info, 
   FileText,
-  Camera,
+  ScanLine,
   Keyboard,
   Image as ImageIcon,
   X,
@@ -18,10 +18,28 @@ import {
 } from 'lucide-react';
 import { Assignment, Question, Submission } from '../types';
 import { extractTextFromImage } from '../api/ai';
+import { ApiError } from '../api/client';
 import { fileToBase64 } from '../lib/fileToBase64';
-import { hasDeadline, deadlineLabel, NO_DEADLINE_LABEL } from '../lib/assignments';
-import { CameraCapture } from './CameraCapture';
+import {
+  hasDeadline,
+  deadlineLabel,
+  NO_DEADLINE_LABEL,
+  assignmentPhase,
+  canStudentSubmit,
+} from '../lib/assignments';
+import { DocumentScannerModal, type ScannedPage } from './scan/DocumentScannerModal';
+import { blobToBase64 } from '../lib/scan/image';
 import { countWords } from '../lib/wordCount';
+
+/**
+ * 送出／存草稿失敗時給學生看的話。
+ *
+ * 後端有講原因的（截止了、已經批改過）照實說 —— 那是學生能理解、也能據以行動的；
+ * 其餘才當作網路問題。一律寫「請檢查網路連線」會讓截止後才交的學生一直重試。
+ */
+function failureMessage(err: unknown, fallback: string): string {
+  return err instanceof ApiError && err.status === 409 ? err.message : fallback;
+}
 
 interface StudentEssayEditorProps {
   assignment: Assignment;
@@ -52,21 +70,29 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   /**
-   * 相機視窗。
-   *
-   * ⚠️ **不要改回 `<input type="file" capture="environment">`。** `capture` 只有
-   *    行動裝置的瀏覽器會理它，桌機完全忽略 —— 結果是「繼續拍照」跳出的是
-   *    一般檔案選擇器，跟「繼續上傳」一模一樣，使用者會以為按鈕壞了。
-   *    桌機要真的開鏡頭只能走 getUserMedia（見 CameraCapture）。
+   * 稿紙掃描視窗（components/scan）。取代了原本的相機視窗 ——
+   * 掃描視窗自己有即時相機（getUserMedia）、系統相機與相簿三個入口，
+   * 拍下來會拉正、去陰影再送辨識，辨識率比直接拍照好很多。
    */
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
   /**
-   * 這次辨識過的手寫原稿在 GCS 的相對路徑。
+   * 手寫原稿在 GCS 的相對路徑。
    *
    * 繳交時一起送出去存進 `submission.pic_files`，老師才看得到原稿。
    * 既有的紀錄先帶進來，這樣「再上傳一張」不會把先前那幾張蓋掉。
    */
   const [picFiles, setPicFiles] = useState<string[]>(existingSubmission?.picFiles ?? []);
+  /**
+   * 這次打開頁面之後掃過沒有。
+   *
+   * **重掃是整份覆蓋**（依新版的規則）：這次第一次掃描時，先前留存的原稿全部換掉，
+   * 之後同一次掃的每一頁接在後面。不這樣做的話，學生重掃一次就會留下
+   * 兩套原稿，老師批改時分不出哪一份才是現在這篇作文。
+   * 用 ref 不用 state —— 連掃兩頁時第二頁的回呼要馬上讀得到。
+   */
+  const scannedThisSession = React.useRef(false);
+  /** 這次掃了幾頁。給掃描視窗顯示「第 N 頁」用（render 裡不能讀 ref） */
+  const [sessionScanCount, setSessionScanCount] = useState(0);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isOcrLoading, setIsOcrLoading] = useState(false);
@@ -97,15 +123,20 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
   const isSubmitted = existingSubmission?.status === 'Pending' || isGraded;
   const isDraft = existingSubmission?.status === 'Draft';
 
-  /** 已結束收件。學生仍看得到自己的作文與成績，但不能再改 */
-  const isClosed = assignment.status === 'Closed';
+  /**
+   * 已截止且不收遲交（或老師改回了未開放）。學生仍看得到自己的作文，但不能再改。
+   * 規則是 lib/assignments.ts 的 canStudentSubmit()，後端 /student/submit 也擋同一條。
+   */
+  const isEnded = !canStudentSubmit(assignment);
+  /** 已截止但允許遲交：可以交，但要先講清楚會被標示遲交 */
+  const isLateWindow = !isEnded && assignmentPhase(assignment) === 'ended';
 
   /**
    * 不能再編輯的兩種情形：
    *   已批改 —— 後端也擋（submit 的 UPDATE WHERE），這裡只是不要讓人白打一篇
-   *   已結束收件 —— 老師按過「結束收件」
+   *   已截止 —— 過了截止時間又不收遲交
    */
-  const isLocked = isGraded || isClosed;
+  const isLocked = isGraded || isEnded;
 
   /**
    * 存草稿。
@@ -123,7 +154,7 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
       setLastSaved(new Date());
     } catch (err) {
       console.error('Save draft failed:', err);
-      setError('草稿儲存失敗，請檢查網路連線');
+      setError(failureMessage(err, '草稿儲存失敗，請檢查網路連線'));
     } finally {
       setIsSavingDraft(false);
     }
@@ -182,6 +213,47 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
     if (files) processImages(files);
   };
 
+  /**
+   * 掃好一頁：辨識出來的文字接在作文後面，全解析度原稿由後端存進 GCS。
+   *
+   * 一頁有兩份影像：縮到 2000px 的送辨識（傳得快、AI 讀得夠），
+   * 全解析度的留給老師對照 —— 同一個請求一起送，不會辨識成功卻沒存到原稿。
+   */
+  const handleScannedPage = async (page: ScannedPage) => {
+    if (isLocked) return;
+    setIsOcrLoading(true);
+    setOcrProgress({ current: 1, total: 1 });
+    try {
+      const [ocrBase64, fullBase64] = await Promise.all([
+        blobToBase64(page.ocrBlob),
+        blobToBase64(page.fullBlob),
+      ]);
+      const ocr = await extractTextFromImage(ocrBase64, page.ocrBlob.type, assignment.id, {
+        base64Image: fullBase64,
+        mimeType: page.fullBlob.type,
+      });
+      if (ocr.files.length) {
+        // 這次第一次掃描：換掉先前留存的原稿（見 scannedThisSession）
+        const first = !scannedThisSession.current;
+        scannedThisSession.current = true;
+        setPicFiles((prev) => [...(first ? [] : prev), ...ocr.files]);
+        setSessionScanCount((n) => n + 1);
+      }
+      if (ocr.text) {
+        setContent((prev) => (prev ? prev + '\n\n' + ocr.text : ocr.text));
+        setShowMethodSelector(false);
+      } else {
+        alert('這一張沒有辨識出文字，可以重掃一次或直接打字。');
+      }
+    } catch (err) {
+      console.error('OCR failed:', err);
+      alert('文字提取失敗，請稍後再試。');
+    } finally {
+      setIsOcrLoading(false);
+      setOcrProgress({ current: 0, total: 0 });
+    }
+  };
+
   const handleSubmit = async () => {
     if (!content.trim() || isLocked) return;
     setShowConfirmModal(true);
@@ -196,7 +268,7 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
       navigate(routes.studentAssignments());
     } catch (err) {
       console.error('Submission failed:', err);
-      setError('提交失敗，請檢查網路連線');
+      setError(failureMessage(err, '提交失敗，請檢查網路連線'));
     } finally {
       setIsSubmitting(false);
     }
@@ -224,15 +296,12 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
         className="hidden"
       />
 
-      {isCameraOpen && (
-        <CameraCapture
-          onClose={() => setIsCameraOpen(false)}
-          onCapture={(files) => {
-            setIsCameraOpen(false);
-            if (files.length) void processImages(files);
-          }}
-          // 開不了鏡頭（沒權限／沒相機／不是 https）時的退路
-          onFallbackToUpload={() => fileInputRef.current?.click()}
+      {scannerOpen && (
+        <DocumentScannerModal
+          subtitle={assignment.title}
+          pageCount={sessionScanCount}
+          onClose={() => setScannerOpen(false)}
+          onPage={handleScannedPage}
         />
       )}
       {/* Confirmation Modal */}
@@ -313,9 +382,9 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
               <span className="flex items-center gap-1">
                 <CheckCircle2 size={12} className="text-success-500" /> 已批改，不能再修改
               </span>
-            ) : isClosed ? (
+            ) : isEnded ? (
               <span className="flex items-center gap-1">
-                <Clock size={12} /> 已結束收件
+                <Clock size={12} /> 已截止
               </span>
             ) : isSubmitted ? (
               <span className="flex items-center gap-1">
@@ -355,6 +424,29 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
         </div>
       </div>
 
+      {/* 已批改的有自己的狀態字樣，不必再疊一條截止橫幅 */}
+      {isEnded && !isGraded && (
+        <div
+          id="studentessayeditor-banner-ended"
+          className="flex items-start gap-2 px-4 py-3 rounded-2xl bg-mauve-100 border border-mauve-200 text-mauve-700 text-body"
+        >
+          <AlertCircle size={18} className="shrink-0 mt-0.5" />
+          <span>
+            這份作業已經截止，不能再繳交或修改。
+            {isSubmitted && ' 你之前交的作品仍然保留，老師發還後就看得到成績。'}
+          </span>
+        </div>
+      )}
+      {isLateWindow && !isGraded && (
+        <div
+          id="studentessayeditor-banner-late"
+          className="flex items-start gap-2 px-4 py-3 rounded-2xl bg-warning-100 border border-warning-200 text-warning-700 text-body"
+        >
+          <AlertCircle size={18} className="shrink-0 mt-0.5" />
+          <span>已經過了截止時間。老師允許遲交，但現在繳交會標示為「遲交」。</span>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
         {/* Editor Area */}
         <div className="lg:col-span-2 space-y-4">
@@ -373,11 +465,11 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
                     跟先前那顆什麼都沒存的「儲存草稿」是同一類問題 */}
                 {!isLocked && <button 
                   id="studentessayeditor-btn-ocr-camera"
-                  onClick={() => setIsCameraOpen(true)}
+                  onClick={() => setScannerOpen(true)}
                   className="p-1.5 sm:p-2 hover:bg-card rounded-lg sm:rounded-xl text-primary transition-colors flex items-center gap-1 sm:gap-1.5 text-body"
-                  title="繼續拍照"
+                  title="再掃一張稿紙"
                 >
-                  <Camera size={14} className="sm:size-[16px]" /> <span className="hidden sm:inline">繼續拍照</span><span className="sm:hidden">拍照</span>
+                  <ScanLine size={14} className="sm:size-[16px]" /> <span className="hidden sm:inline">再掃一張</span><span className="sm:hidden">掃描</span>
                 </button>}
                 {!isLocked && <button 
                   id="studentessayeditor-btn-ocr-upload"
@@ -406,7 +498,8 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
               }`}
             />
 
-            {showMethodSelector && !content && (
+            {/* 已截止或已批改就不給選輸入方式 —— 選了也交不出去，只是讓人白做（新版也這樣擋） */}
+            {!isLocked && showMethodSelector && !content && (
               <div className="absolute inset-0 z-10 bg-card/95 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 md:p-12 overflow-y-auto">
                 <div className="max-w-4xl w-full space-y-8 sm:space-y-12 text-center my-auto">
                   <div className="space-y-2 sm:space-y-4">
@@ -437,16 +530,16 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
                     {/* Camera OCR Option - FEATURED */}
                     <button 
                       id="studentessayeditor-btn-method-camera"
-                      onClick={() => setIsCameraOpen(true)}
+                      onClick={() => setScannerOpen(true)}
                       className="group relative p-6 sm:p-8 bg-card border-2 border-border/50 rounded-2xl sm:rounded-3xl hover:border-primary hover:shadow-xl hover:shadow-primary/10 transition-all flex flex-row sm:flex-col items-center text-left sm:text-center gap-4 sm:gap-6 active:scale-95"
                     >
                       <div className="w-14 h-14 sm:w-20 sm:h-20 bg-ink-100 rounded-xl sm:rounded-2xl flex items-center justify-center text-ink-600 group-hover:bg-primary group-hover:text-on-accent transition-all duration-500 sm:rotate-3 group-hover:rotate-0 shrink-0">
-                        <Camera size={28} className="sm:size-[40px]" strokeWidth={1.5} />
+                        <ScanLine size={28} className="sm:size-[40px]" strokeWidth={1.5} />
                       </div>
                       <div className="space-y-1 sm:space-y-2 flex-1">
-                        <div className="font-bold text-text-primary text-title">相機拍照 OCR</div>
+                        <div className="font-bold text-text-primary text-title">掃描稿紙</div>
                         <div className="text-body text-text-secondary leading-relaxed">
-                          拍攝您的手寫稿，由 AI 自動轉為文字。最適合繳交手寫作業。
+                          拍攝手寫稿紙，系統會自動拉正、去陰影，再由 AI 轉成文字。最推薦。
                         </div>
                       </div>
                     </button>
@@ -500,7 +593,7 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
             )}
           </div>
 
-          {!showMethodSelector && !content && (
+          {!isLocked && !showMethodSelector && !content && (
             <button 
               id="studentessayeditor-btn-retry-method"
               onClick={() => setShowMethodSelector(true)}

@@ -425,32 +425,78 @@ describe('學生繳交與草稿', () => {
     assert.equal(row.is_submitted, true);
   });
 
-  test('已結束收件的作業不收繳交 → 409', async () => {
+  test('改回未開放的作業不收繳交 → 409', async () => {
     const s = await asStudent();
     await rawDb.none(
       `UPDATE assignment SET opened = false, opened_at = now() WHERE id = $1`, [s.assignment]);
 
-    const res = await submit(s.cookie, s.assignment, '結束收件之後才送的', true);
+    const res = await submit(s.cookie, s.assignment, '收回之後才送的', true);
     assert.equal(res.status, 409);
     assert.equal(await rowOf(s.assignment, s.me.id), null, '不該留下任何繳交紀錄');
   });
 
   /**
-   * 「結束收件」之後學生仍要看得到那份作業 —— 他已經繳交的作文與成績
-   * 不該跟著消失。這是刪除作業對話框對老師的承諾。
+   * 改回未開放之後，學生的成績紀錄仍要看得到已發還的成績 ——
+   * 這是「改回未開放」確認視窗對老師的承諾。所以後端照樣回傳，
+   * 由前端決定只在成績紀錄出現（opened = false → Draft）。
    */
-  test('已結束收件的作業，學生仍然看得到', async () => {
+  test('開過又改回未開放的作業，後端仍回傳（成績紀錄要用）', async () => {
     const s = await asStudent();
-    await submit(s.cookie, s.assignment, '關閉前就交了', true);
+    await submit(s.cookie, s.assignment, '收回前就交了', true);
     await rawDb.none(
       `UPDATE assignment SET opened = false, opened_at = now() WHERE id = $1`, [s.assignment]);
 
     const rows = await (await req(srv, '/service/student/my_assignments', s.cookie)).json();
     const found = rows.find((x: { assignment_id: string }) => String(x.assignment_id) === String(s.assignment));
-    assert.ok(found, '已關閉的作業必須還在清單裡');
-    assert.equal(found.opened, false, '狀態要能分辨出已關閉');
-    assert.ok(found.opened_at, 'opened_at 是判斷已關閉的依據');
-    assert.equal(found.submission_content, '關閉前就交了', '學生的作文要還看得到');
+    assert.ok(found, '開過的作業必須還在回傳裡');
+    assert.equal(found.opened, false, '前端靠 opened 判斷是不是未開放');
+    assert.ok(found.opened_at, 'opened_at 是「曾經開放過」的依據');
+    assert.equal(found.submission_content, '收回前就交了', '學生的作文要還看得到');
+  });
+
+  /*
+    收不收件只看截止日（與前端 lib/assignments.ts 的 canStudentSubmit 同一條規則）。
+    以前後端只看 opened，過了截止日照樣收得進來 —— 畫面擋住了，API 沒有。
+  */
+  const setDeadline = (id: string, deadline: string | null, allowLate: boolean) =>
+    rawDb.none(
+      `UPDATE assignment SET deadline = $2::timestamptz, allow_late_submission = $3 WHERE id = $1`,
+      [id, deadline, allowLate]);
+  const PAST = () => new Date(Date.now() - 60_000).toISOString();
+  const FUTURE = () => new Date(Date.now() + 86_400_000).toISOString();
+
+  test('截止時間還沒到 → 收', async () => {
+    const s = await asStudent();
+    await setDeadline(s.assignment, FUTURE(), false);
+    assert.equal((await submit(s.cookie, s.assignment, '準時交', true)).status, 200);
+  });
+
+  test('過了截止時間、不收遲交 → 409，草稿也存不進去', async () => {
+    const s = await asStudent();
+    await setDeadline(s.assignment, PAST(), false);
+
+    assert.equal((await submit(s.cookie, s.assignment, '截止後才送', true)).status, 409);
+    assert.equal((await submit(s.cookie, s.assignment, '截止後才存草稿', false)).status, 409);
+    assert.equal(await rowOf(s.assignment, s.me.id), null, '不該留下任何繳交紀錄');
+  });
+
+  test('過了截止時間、允許遲交 → 收，送出時間晚於截止（前端據此標示遲交）', async () => {
+    const s = await asStudent();
+    const deadline = PAST();
+    await setDeadline(s.assignment, deadline, true);
+
+    assert.equal((await submit(s.cookie, s.assignment, '遲交的作文', true)).status, 200);
+    const row = await rowOf(s.assignment, s.me.id);
+    assert.ok(new Date(row.submited_time) > new Date(deadline), '遲交不存欄位，用送出時間與截止日比出來');
+  });
+
+  test('老師把截止日往後改＝重新開放 → 又收了', async () => {
+    const s = await asStudent();
+    await setDeadline(s.assignment, PAST(), false);
+    assert.equal((await submit(s.cookie, s.assignment, '太晚了', true)).status, 409);
+
+    await setDeadline(s.assignment, FUTURE(), false);
+    assert.equal((await submit(s.cookie, s.assignment, '延長之後再交', true)).status, 200);
   });
 
   test('從未開放的作業，學生看不到', async () => {
@@ -493,5 +539,68 @@ describe('學生繳交與草稿', () => {
       `UPDATE submission_feedback SET is_valid = false WHERE ref_submission_id = $1`, [row.id]);
     assert.equal((await submit(s.cookie, s.assignment, '改一次', true)).status, 200);
     assert.equal((await rowOf(s.assignment, s.me.id)).content, '改一次');
+  });
+
+  test('原稿路徑存成 jsonb 陣列，不是 JSON 字串', async () => {
+    const s = await asStudent();
+    const files = ['submit/assign_1/scan-1.jpg', 'submit/assign_1/scan-2.jpg'];
+    const res = await req(srv, '/service/student/submit', s.cookie, {
+      method: 'POST',
+      ...json({ assignment_id: s.assignment, content: '掃描的作文', pic_files: files, word_count: 5 }),
+    });
+    assert.equal(res.status, 200);
+    const row = await rawDb.one(
+      `SELECT pic_files, jsonb_typeof(pic_files) AS t FROM submission WHERE ref_assignment_id = $1 AND ref_user_id = $2`,
+      [s.assignment, s.me.id]);
+    assert.equal(row.t, 'array', '以前路由先 stringify 一次、helper 又一次，存成的是字串');
+    assert.deepEqual(row.pic_files, files);
+  });
+});
+
+/**
+ * 教師代繳交（`POST /service/instructor/submissions/proxy`）。
+ *
+ * 紙本作文由老師掃描登錄，原稿路徑要跟著存進 `submission.pic_files` ——
+ * 批改頁的「原稿」讀的就是它。以前前端把辨識回來的路徑丟掉了，
+ * 代繳交的作品永遠看不到原稿。pic_files 要存成 jsonb **陣列**，不是 JSON 字串。
+ */
+describe('教師代繳交', () => {
+  async function asTeacher() {
+    const me = await seedUser(ACCOUNT, '老師');
+    const student = await seedUser('stu@test.edu.tw', '學生');
+    const school = await seedSchool();
+    const course = await seedCourse(school, '我的班');
+    await seedInstructor(course, me.id);
+    await seedLearner(course, student.id, 1);
+    const task = await seedTask(me.id);
+    const assignment = await seedAssignment(course, task, me.id);
+    return { student, assignment, cookie: await login(srv) };
+  }
+
+  const proxy = (cookie: string, assignmentId: string, userId: string, files: string[]) =>
+    req(srv, '/service/instructor/submissions/proxy', cookie, {
+      method: 'POST',
+      ...json({ assignment_id: assignmentId, user_id: userId, content: '紙本作文', word_count: 4, files }),
+    });
+
+  test('帶原稿路徑 → 存成 JSON 陣列，批改頁讀得到', async () => {
+    const s = await asTeacher();
+    const files = ['submit/assign_1/a.jpg', 'submit/assign_1/b.jpg'];
+    const res = await proxy(s.cookie, s.assignment, s.student.id, files);
+    assert.equal(res.status, 200);
+
+    const row = await rawDb.one(
+      `SELECT pic_files FROM submission WHERE ref_assignment_id = $1 AND ref_user_id = $2`,
+      [s.assignment, s.student.id]);
+    assert.deepEqual(row.pic_files, files);
+  });
+
+  test('沒有原稿 → 空陣列，不是空物件', async () => {
+    const s = await asTeacher();
+    assert.equal((await proxy(s.cookie, s.assignment, s.student.id, [])).status, 200);
+    const row = await rawDb.one(
+      `SELECT pic_files FROM submission WHERE ref_assignment_id = $1 AND ref_user_id = $2`,
+      [s.assignment, s.student.id]);
+    assert.deepEqual(row.pic_files, []);
   });
 });

@@ -332,6 +332,23 @@ describe('AI 端點：登入與參數', () => {
     assert.equal(res.status, 413);
   });
 
+  /*
+    稿紙掃描會多帶一張全解析度的 original 給後端留檔。
+    它一樣要先檢查 —— 否則辨識完（已經花了 AI 額度）才發現原稿存不了。
+  */
+  test('留檔用的 original 也檢查格式與大小，不合格就不送去 AI', async () => {
+    const cookie = await login(srv);
+    const ok = { base64Image: 'AAAA', mimeType: 'image/jpeg' };
+    const tooBig = await post('/service/gemini/ocr_text', cookie,
+      { ...ok, original: { base64Image: 'A'.repeat(11 * 1024 * 1024 + 1), mimeType: 'image/jpeg' } });
+    assert.equal(tooBig.status, 413);
+    const notImage = await post('/service/gemini/ocr_text', cookie,
+      { ...ok, original: { base64Image: 'AAAA', mimeType: 'application/pdf' } });
+    assert.equal(notImage.status, 400);
+    const missing = await post('/service/gemini/ocr_text', cookie, { ...ok, original: { mimeType: 'image/jpeg' } });
+    assert.equal(missing.status, 400);
+  });
+
   test('試批改沒有憑證時走模擬批改，而且不寫資料庫', async () => {
     const { cookie } = await scenario();
     const res = await post('/service/gemini/grade', cookie, { content: '一段測試用的作文內容。', topic: '測試題目' });

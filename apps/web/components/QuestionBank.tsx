@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Folder as FolderIcon, Plus, Copy, MoreVertical, Search, FileText, Layers, Home, ArrowLeft, Archive, Trash2, FolderInput, X, Check, Filter, RotateCcw, Save, AlignLeft, Image as ImageIcon, Upload, Sparkles, Loader2, ListChecks, Download, Users, User, Bot, GraduationCap, BookOpen, Wand2, Info, PenLine, Eye } from 'lucide-react';
-import { Question, QuestionType, Folder, AiGradingResponse, TargetGrade, QuestionSource } from '../types';
+import { Folder as FolderIcon, Plus, Copy, MoreVertical, Search, FileText, Layers, Home, ArrowLeft, Archive, Trash2, FolderInput, X, Check, Filter, RotateCcw, Save, AlignLeft, Image as ImageIcon, Upload, Sparkles, Loader2, ListChecks, Users, User, Bot, GraduationCap, BookOpen, Wand2, Info, PenLine, Eye } from 'lucide-react';
+import { Question, QuestionType, Folder, TargetGrade, QuestionSource } from '../types';
 import {
   TARGET_GRADES,
   QUESTION_SOURCES,
@@ -14,13 +14,13 @@ import {
 } from '../lib/questionMeta';
 import { StudentQuestionPreview } from './StudentQuestionPreview';
 import { QuestionPreviewModal } from './QuestionPreviewModal';
-import { analyzeImageContent, generateGradingRubric, gradeEssayWithAI } from '../api/ai';
+import { analyzeImageContent, generateGradingRubric } from '../api/ai';
 import { isAdmin, type CurrentUser } from '../lib/access';
 import { ConfirmDialog } from './ConfirmDialog';
 import { AVAILABLE_AI_MODELS } from '../mockData';
 import { questionCountsByFolder } from '../lib/folders';
 import { MAX_LEVEL } from '../lib/scoring';
-import { SHOW_CATEGORY_SCORES, SHOW_AI_MODEL_PICKER } from '../lib/features';
+import { SHOW_AI_MODEL_PICKER } from '../lib/features';
 
 
 interface MoveModalProps {
@@ -108,131 +108,6 @@ const MoveModal: React.FC<MoveModalProps> = ({ isOpen, onClose, onConfirm, folde
   );
 };
 
-// --- NEW: ImportModal ---
-interface ImportModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  personalQuestions: Question[];
-  onImport: (selectedIds: string[]) => void;
-}
-
-const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, personalQuestions, onImport }) => {
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-
-  if (!isOpen) return null;
-
-  const filteredQuestions = personalQuestions.filter(q => 
-    q.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    q.content.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const toggleSelect = (id: string) => {
-    setSelectedIds(prev => 
-      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
-    );
-  };
-
-  const handleConfirm = () => {
-    if (selectedIds.length > 0) {
-      onImport(selectedIds);
-      setSelectedIds([]);
-      onClose();
-    }
-  };
-
-  return (
-    <div id="questionbank-importmodal" className="fixed inset-0 z-50 flex items-center justify-center bg-text-primary/40 backdrop-blur-md p-4 animate-fade-in">
-      <div className="bg-surface/90 backdrop-blur-2xl rounded-brand shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh] border border-surface/50 ring-1 ring-surface/60">
-        <div className="p-6 border-b border-surface/30 flex justify-between items-center bg-surface/40">
-          <div>
-            <h3 className="text-title font-bold text-text-primary flex items-center gap-2">
-              <Download size={22} className="text-primary" />
-              從個人題庫匯入題目
-            </h3>
-            <p className="text-body text-text-secondary mt-1">選取您想分享至共同題庫的題目</p>
-          </div>
-          <button id="questionbank-importmodal-btn-close" onClick={onClose} className="text-text-secondary hover:text-text-primary p-2 hover:bg-black/5 rounded-full transition-colors">
-            <X size={24} />
-          </button>
-        </div>
-        
-        <div className="p-4 bg-secondary/5 border-b border-border/50">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" size={18} />
-            <input 
-              id="questionbank-importmodal-input-search"
-              type="text" 
-              placeholder="搜尋您的個人題目..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-surface border border-border rounded-brand text-body focus:ring-2 focus:ring-primary/10 focus:border-primary outline-none transition-all"
-            />
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {filteredQuestions.length > 0 ? (
-            filteredQuestions.map(q => (
-              <div 
-                key={q.id}
-                id={`questionbank-importmodal-item-${q.id}`}
-                onClick={() => toggleSelect(q.id)}
-                className={`p-4 rounded-brand border cursor-pointer transition-all flex items-start gap-4 ${
-                  selectedIds.includes(q.id) 
-                    ? 'bg-primary/5 border-primary/20 shadow-sm ring-1 ring-primary/10' 
-                    : 'bg-surface border-border/50 hover:border-primary/20 hover:bg-secondary/5'
-                }`}
-              >
-                <div className={`mt-1 shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
-                  selectedIds.includes(q.id) ? 'bg-primary border-primary' : 'bg-surface border-border'
-                }`}>
-                  {selectedIds.includes(q.id) && <Check size={14} className="text-surface" strokeWidth={3} />}
-                </div>
-                <div className="min-w-0">
-                  <h4 className={`font-bold text-body mb-1 ${selectedIds.includes(q.id) ? 'text-primary' : 'text-text-primary'}`}>{q.title}</h4>
-                  <p className="text-caption text-text-secondary line-clamp-1">{q.content}</p>
-                  <div className="mt-2 flex items-center gap-2">
-                    <span className="text-caption px-2 py-0.5 bg-secondary/10 text-text-secondary rounded uppercase tracking-wider">{q.gradeLevel}</span>
-                    {q.folderName && <span className="text-caption font-normal text-text-muted">於 {q.folderName}</span>}
-                  </div>
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="py-20 text-center text-text-muted">
-              <FileText size={48} className="mx-auto mb-3 opacity-20" />
-              <p className="font-normal text-body">找不到符合的個人題目</p>
-            </div>
-          )}
-        </div>
-
-        <div className="p-6 border-t border-surface/30 bg-surface/40 flex justify-between items-center">
-          <span className="text-body text-text-secondary">已選擇 {selectedIds.length} 個項目</span>
-          <div className="flex gap-3">
-            <button 
-              id="questionbank-importmodal-btn-cancel"
-              onClick={onClose}
-              className="px-6 py-2.5 text-body text-text-secondary hover:bg-surface/60 rounded-xl transition-colors"
-            >
-              取消
-            </button>
-            <button 
-              id="questionbank-importmodal-btn-confirm"
-              onClick={handleConfirm}
-              disabled={selectedIds.length === 0}
-              className="px-8 py-2.5 text-body text-surface bg-primary hover:bg-primary/90 rounded-xl shadow-lg shadow-primary/30 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:scale-100 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              <Check size={18} strokeWidth={3} /> 確定匯入
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-
 // --- NEW: NewFolderModal ---
 interface NewFolderModalProps {
   isOpen: boolean;
@@ -295,136 +170,6 @@ const NewFolderModal: React.FC<NewFolderModalProps> = ({ isOpen, onClose, onConf
           >
             建立
           </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// --- NEW: SimulateGradingModal ---
-interface SimulateGradingModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  question: Question | null;
-}
-
-const SimulateGradingModal: React.FC<SimulateGradingModalProps> = ({ isOpen, onClose, question }) => {
-  const [essayContent, setEssayContent] = useState('');
-  const [isGrading, setIsGrading] = useState(false);
-  const [gradingResult, setGradingResult] = useState<AiGradingResponse | null>(null);
-
-  if (!isOpen || !question) return null;
-
-  const handleSimulate = async () => {
-    if (!essayContent.trim()) {
-      alert("請輸入模擬文章內容");
-      return;
-    }
-    setIsGrading(true);
-    setGradingResult(null);
-    try {
-      const result = await gradeEssayWithAI(
-        essayContent,
-        question.title,
-        question.gradingCriteria || "一般評分標準",
-        question.preferredAiModel || "預設批改模型"
-      );
-      setGradingResult(result);
-    } catch (error) {
-      console.error(error);
-      alert("模擬批改失敗，請稍後再試。");
-    } finally {
-      setIsGrading(false);
-    }
-  };
-
-  return (
-    <div id="questionbank-simulatemodal" className="fixed inset-0 z-50 flex items-center justify-center bg-text-primary/40 backdrop-blur-md p-4 animate-fade-in">
-      <div className="bg-surface/90 backdrop-blur-2xl rounded-brand shadow-2xl w-full max-w-6xl overflow-hidden flex flex-col max-h-[90vh] border border-surface/50 ring-1 ring-surface/60">
-        <div className="p-6 border-b border-surface/30 bg-surface/40 flex justify-between items-center">
-          <div>
-            <h3 className="text-title font-bold text-text-primary flex items-center gap-2">
-              <Sparkles size={22} className="text-primary" />
-              模擬批改: {question.title}
-            </h3>
-            <p className="text-caption text-text-secondary mt-1">使用預設模型 ({question.preferredAiModel || '預設'}) 進行批改測試</p>
-          </div>
-          <button id="questionbank-simulatemodal-btn-close" onClick={onClose} className="text-text-secondary hover:text-text-primary p-2 hover:bg-black/5 rounded-full transition-colors">
-            <X size={24} />
-          </button>
-        </div>
-        
-        <div className="flex-1 overflow-y-auto p-6 flex flex-col md:flex-row gap-6">
-          {/* Left: Input */}
-          <div className="flex-1 flex flex-col gap-4">
-            <div className="flex-1 flex flex-col">
-              <label className="block text-body text-text-secondary mb-2">模擬學生文章</label>
-              <textarea 
-                id="questionbank-simulatemodal-input-essay"
-                value={essayContent}
-                onChange={(e) => setEssayContent(e.target.value)}
-                placeholder="請輸入一篇模擬文章來測試批改效果..."
-                className="flex-1 w-full min-h-[16rem] p-4 bg-surface border border-border rounded-brand text-body focus:ring-2 focus:ring-primary/10 focus:border-primary outline-none transition-all resize-none"
-              />
-            </div>
-            <button 
-              id="questionbank-simulatemodal-btn-simulate"
-              onClick={handleSimulate}
-              disabled={isGrading || !essayContent.trim()}
-              className="w-full py-3 bg-primary text-on-accent rounded-brand font-bold flex items-center justify-center gap-2 hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isGrading ? <Loader2 size={18} className="animate-spin" /> : <Bot size={18} />}
-              {isGrading ? 'AI 批改中...' : '開始模擬批改'}
-            </button>
-          </div>
-
-          {/* Right: Result */}
-          <div className="flex-1 flex flex-col gap-4 border-t md:border-t-0 md:border-l border-border/50 pt-6 md:pt-0 md:pl-6">
-            <label className="block text-body text-text-secondary mb-2">批改結果預覽</label>
-            {gradingResult ? (
-              <div className="bg-card p-5 rounded-brand border border-border/50 shadow-sm overflow-y-auto h-full space-y-4">
-                <div className="flex items-center justify-between border-b pb-3">
-                  <span className="font-bold text-text-primary">總分</span>
-                  <span className="text-heading font-bold text-primary">{gradingResult.totalScore}</span>
-                </div>
-                {/* 四項評分要素：依需求先隱藏，資料與 AI 回傳都保留（見 lib/features.ts） */}
-                {SHOW_CATEGORY_SCORES && (
-                <div>
-                  <span className="text-body text-text-secondary block mb-2">分項得分</span>
-                  <div className="grid grid-cols-2 gap-2 text-body">
-                    <div className="flex justify-between bg-surface p-2 rounded">
-                      <span>內容</span><span className="font-bold">{gradingResult.categoryScores.content}</span>
-                    </div>
-                    <div className="flex justify-between bg-surface p-2 rounded">
-                      <span>結構</span><span className="font-bold">{gradingResult.categoryScores.structure}</span>
-                    </div>
-                    <div className="flex justify-between bg-surface p-2 rounded">
-                      <span>文法</span><span className="font-bold">{gradingResult.categoryScores.grammar}</span>
-                    </div>
-                    <div className="flex justify-between bg-surface p-2 rounded">
-                      <span>詞彙</span><span className="font-bold">{gradingResult.categoryScores.vocabulary}</span>
-                    </div>
-                  </div>
-                </div>
-                )}
-                <div>
-                  <span className="text-body text-text-secondary block mb-2">總評</span>
-                  <p className="text-body text-text-primary leading-relaxed bg-surface p-3 rounded">{gradingResult.feedback}</p>
-                </div>
-                <div>
-                  <span className="text-body text-text-secondary block mb-2">改進建議</span>
-                  <ul className="list-disc pl-5 text-body text-text-primary space-y-1">
-                    {gradingResult.suggestions.map((s, i) => <li key={i}>{s}</li>)}
-                  </ul>
-                </div>
-              </div>
-            ) : (
-              <div className="flex-1 flex flex-col items-center justify-center text-text-muted bg-surface/30 rounded-brand border border-dashed border-border/50 p-6">
-                <Bot size={48} className="mb-4 opacity-20" />
-                <p className="text-body text-center">輸入文章並點擊「開始模擬批改」<br/>即可在此預覽 AI 批改結果</p>
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </div>
@@ -599,11 +344,8 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
   
   // Modal States
   const [isMoveModalOpen, setIsMoveModalOpen] = useState(false);
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
-  const [isSimulateModalOpen, setIsSimulateModalOpen] = useState(false);
   const [questionToMove, setQuestionToMove] = useState<Question | null>(null);
-  const [questionToSimulate, setQuestionToSimulate] = useState<Question | null>(null);
   /** 正在檢視的題目。null 時不顯示預覽視窗 */
   const [viewingQuestion, setViewingQuestion] = useState<Question | null>(null);
 
@@ -795,27 +537,6 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
       handleLeaveForm();
   };
 
-  const handleImportPersonalQuestions = (ids: string[]) => {
-    const questionsToImport = questions.filter(q => ids.includes(q.id));
-    const currentSharedFolderName = currentPath.length > 0 ? currentPath[currentPath.length - 1].name : '未分類';
-    
-    const newQuestions: Question[] = questionsToImport.map(q => ({
-      ...q,
-      id: `q-imp-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-      type: QuestionType.SHARED,
-      folderId: currentFolderId,
-      folderName: currentSharedFolderName,
-      isArchived: false,
-      title: `${q.title} (來自個人)`
-    }));
-
-    // 逐筆建立。後端沒有批次 endpoint，而一次匯入通常只有幾題 ——
-    // 批次的錯誤處理（一半成功一半失敗）比省下的往返麻煩得多。
-    void Promise.all(newQuestions.map((q) => questionOps.create(q))).then(() => {
-      alert(`成功匯入 ${newQuestions.length} 題至共同題庫！`);
-    });
-  };
-
   useEffect(() => {
     const handleClickOutside = () => setActiveMenuId(null);
     if (activeMenuId) {
@@ -826,9 +547,15 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
 
   // 資料夾卡片上的題目數。算出來的，不是存在 Folder 上的欄位 ——
   // 新增／刪除／搬移／匯入／封存任何一條路徑都不必再自己記帳。
+  /**
+   * 實際要不要列出已封存的題目。封存是「管理題目」的一環 —— 授課教師在共同題庫
+   * 沒有編輯權限，也就沒有「查看已封存」：按鈕不顯示，而且就算在個人題庫打開了
+   * 再切過來，共同題庫的封存題也不會出現。
+   */
+  const includeArchived = showArchived && canEditCurrentBank;
   const folderCounts = useMemo(
-    () => questionCountsByFolder(folders, questions, { includeArchived: showArchived }),
-    [folders, questions, showArchived],
+    () => questionCountsByFolder(folders, questions, { includeArchived: includeArchived }),
+    [folders, questions, includeArchived],
   );
 
   // Handle Search Logic
@@ -842,7 +569,7 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
 
   const visibleQuestions = questions.filter(q => {
     const matchesTab = q.type === activeTab;
-    const matchesArchive = showArchived ? true : !q.isArchived;
+    const matchesArchive = includeArchived ? true : !q.isArchived;
     
     if (searchTerm.trim()) {
         const term = searchTerm.toLowerCase();
@@ -858,7 +585,6 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
   });
 
   const availableFoldersForMove = folders.filter(f => f.type === activeTab);
-  const personalQuestionsForImport = questions.filter(q => q.type === QuestionType.PERSONAL && !q.isArchived);
 
   const handleCopyToPersonal = (q: Question) => {
     const newQuestion: Question = {
@@ -1366,20 +1092,6 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
         onClose={() => setIsNewFolderModalOpen(false)}
         onConfirm={handleCreateFolder}
       />
-      {/*
-        key 讓每次開啟／換題目都重新掛載一個乾淨的 Modal。
-        原本是用 effect 把 essayContent、gradingResult 逐一清掉，
-        漏掉任何一個 state 就會把上一題的內容帶到下一題。
-      */}
-      <SimulateGradingModal
-        key={questionToSimulate?.id ?? 'none'}
-        isOpen={isSimulateModalOpen}
-        onClose={() => {
-          setIsSimulateModalOpen(false);
-          setQuestionToSimulate(null);
-        }}
-        question={questionToSimulate}
-      />
       <MoveModal 
         isOpen={isMoveModalOpen}
         onClose={() => setIsMoveModalOpen(false)}
@@ -1395,13 +1107,6 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
       <QuestionPreviewModal
         question={viewingQuestion}
         onClose={() => setViewingQuestion(null)}
-      />
-
-      <ImportModal 
-        isOpen={isImportModalOpen}
-        onClose={() => setIsImportModalOpen(false)}
-        personalQuestions={personalQuestionsForImport}
-        onImport={handleImportPersonalQuestions}
       />
 
       {/* Header - Aligned with PublishAssignmentWizard */}
@@ -1478,8 +1183,13 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
               )}
            </div>
 
-           {/* Action Buttons */}
-           <div className="flex gap-2.5 shrink-0 w-full md:w-auto">
+           {/*
+             功能鍵區在桌機上**固定寬度**、靠右。以前是 w-auto：共用題庫（老師沒有按鈕）
+             與個人題庫（三顆）寬度不同，整組靠右排的控制列跟著伸縮，
+             「共用／個人」切換鈕就在兩個分頁之間左右跑。寬度取三顆都在時的大小。
+           */}
+           <div className="flex gap-2.5 shrink-0 w-full md:w-[17rem] md:justify-end">
+              {canEditCurrentBank && (
               <button id="questionbank-list-btn-edit" 
                   onClick={() => setShowArchived(!showArchived)}
                   className={`flex-1 md:flex-none p-3 rounded-2xl border transition-all flex items-center justify-center ${
@@ -1491,6 +1201,7 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
               >
                   {showArchived ? <Check size={20} /> : <Filter size={20} />}
               </button>
+              )}
 
               {/* 資料夾也是共用的，老師不該在共同題庫裡建 */}
               {canEditCurrentBank && (
@@ -1519,26 +1230,11 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
               )}
 
               {/*
-                匯入只留給**不能直接編輯共同題庫的人**，也就是一般老師 ——
-                那是他們把自己的題目送上共同題庫的唯一途徑。
-
-                管理人員不需要：他們在這一頁按「新增題目」就直接建在共同題庫裡，
-                再給一條「從個人題庫複製過來」只是同一件事的第二個入口，
-                而且會讓題目多一個「(來自個人)」的後綴，反而更難管理。
-
-                條件寫成 !canEditCurrentBank 而不是 !isAdmin(user)：
-                「誰能編這個題庫」的判斷只有一處（見 canEditCurrentBank），
-                以後改權限規則不會漏掉這顆按鈕。
+                這裡以前有一顆「匯入」，讓授課教師把個人題目送進共同題庫。
+                已拿掉：**授課教師對共同題庫沒有任何編輯權限，也不能匯入**。
+                共同題庫只有聯合報管理人員能動（後端也擋，見 routes/instructor.ts 的
+                denySharedBank）。管理人員要放題目，直接在共同題庫按「新增題目」。
               */}
-              {activeTab === QuestionType.SHARED && !canEditCurrentBank && (
-                  <button 
-                      id="questionbank-list-btn-import"
-                      onClick={() => setIsImportModalOpen(true)}
-                      className="flex-[2] md:flex-none bg-card border border-border-strong text-primary px-5 py-3 rounded-2xl text-body transition-all shadow-sm hover:shadow-md hover:bg-surface flex items-center justify-center gap-2 lg:min-w-[9rem]"
-                  >
-                      <Download size={20} /> <span>匯入</span>
-                  </button>
-              )}
            </div>
         </div>
       </div>
@@ -1595,7 +1291,7 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
                                         key={folder.id}
                                         id={`questionbank-list-folder-${folder.id}`}
                                         onClick={() => navigateToFolder(folder)}
-                                        className="relative bg-card p-2.5 sm:p-5 rounded-brand border border-border-card shadow-paper hover:bg-surface-soft hover:border-border-strong hover:shadow-lift cursor-pointer transition-all duration-300 group flex flex-col items-center text-center py-3 sm:py-8"
+                                        className="relative bg-card p-2.5 sm:p-5 rounded-2xl border border-border-card shadow-paper hover:bg-surface-soft hover:border-border-strong hover:shadow-lift cursor-pointer transition-all duration-300 group flex flex-col items-center text-center py-3 sm:py-8"
                                     >
                                         {/*
                                           刪除資料夾。放在卡片右上角、滑過去才顯現 ——
@@ -1632,10 +1328,14 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
                              <h3 className="text-caption text-text-muted uppercase tracking-widest mb-3 sm:mb-4 pl-1">題目列表</h3>
                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-4 sm:gap-6">
                                 {visibleQuestions.map((q) => (
-                                    <div key={q.id} id={`questionbank-list-question-${q.id}`} className={`bg-card border border-border-card shadow-paper hover:border-border-strong rounded-brand p-3.5 sm:p-7 hover:shadow-lift hover:-translate-y-1 transition-all duration-300 group flex flex-col h-auto min-h-[10rem] sm:min-h-[16rem] relative ${q.isArchived ? 'opacity-70 bg-secondary/5' : ''}`}>
+                                    <div key={q.id} id={`questionbank-list-question-${q.id}`} className={`bg-card border border-border-card shadow-paper hover:border-border-strong rounded-2xl p-3.5 sm:p-7 hover:shadow-lift hover:-translate-y-1 transition-all duration-300 group flex flex-col h-auto min-h-[10rem] sm:min-h-[16rem] relative ${q.isArchived ? 'opacity-70 bg-secondary/5' : ''}`}>
                                         
                                         <div className="flex justify-between items-start mb-2 sm:mb-4 relative">
-                                            <div className="flex items-center gap-1 sm:gap-2">
+                                            {/*
+                                              標籤列可以折行：學段、來源、看圖加起來常常超過卡片寬度，
+                                              不折行的話會把「看圖」擠成一字一行（實測）。每個標籤本身不斷字。
+                                            */}
+                                            <div className="flex flex-wrap items-center gap-1 sm:gap-2 min-w-0">
                                                 <span className={`inline-flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-3 py-0.5 sm:py-1 rounded-lg text-caption font-bold uppercase tracking-wider transition-colors ${q.isArchived ? 'bg-secondary/10 text-text-muted' : 'bg-secondary/5 text-text-muted group-hover:bg-primary/5 group-hover:text-primary'}`}>
                                                     <FileText size={9} className="sm:size-3" />
                                                     {q.gradeLevel}
@@ -1644,8 +1344,13 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
                                                     <span className="inline-flex items-center px-1 sm:px-2 py-0.5 sm:py-1 rounded-md bg-secondary/20 text-text-secondary text-caption">已封存</span>
                                                 )}
                                                 {q.imageUrl && (
-                                                    <span className="inline-flex items-center px-1 sm:px-2 py-0.5 sm:py-1 rounded-md bg-accent/10 text-accent text-caption">
-                                                        <ImageIcon size={9} className="sm:size-3 mr-1" /> 看圖
+                                                    // 只是告訴老師「這題有圖」—— 旁邊就看得到縮圖，不必再寫字
+                                                    <span
+                                                        title="這題有配圖"
+                                                        aria-label="有配圖"
+                                                        className="shrink-0 inline-flex items-center p-1 sm:p-1.5 rounded-md bg-accent/10 text-accent"
+                                                    >
+                                                        <ImageIcon size={10} className="sm:size-3.5" aria-hidden="true" />
                                                     </span>
                                                 )}
                                                 {/* 適用階段與來源。這一輪還沒有篩選列，但標籤要先看得見 */}
@@ -1684,20 +1389,6 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
                                                         >
                                                             <FolderInput size={12} className="sm:size-4" /> 移動至...
                                                         </button>
-                                                        {canEditCurrentBank && (
-                                                            <button 
-                                                                id={`questionbank-list-question-btn-simulate-${q.id}`}
-                                                                onClick={(e) => { 
-                                                                    e.stopPropagation(); 
-                                                                    setQuestionToSimulate(q);
-                                                                    setIsSimulateModalOpen(true);
-                                                                    setActiveMenuId(null); 
-                                                                }}
-                                                                className="w-full text-left px-3 sm:px-4 py-1.5 sm:py-2 text-body font-normal text-text-primary hover:bg-primary/5 hover:text-primary flex items-center gap-2"
-                                                            >
-                                                                <Sparkles size={12} className="sm:size-4" /> 模擬批改
-                                                            </button>
-                                                        )}
                                                         <button 
                                                             id={`questionbank-list-question-btn-archive-${q.id}`}
                                                             onClick={(e) => { e.stopPropagation(); handleArchive(q.id); setActiveMenuId(null); }}

@@ -629,7 +629,15 @@ export const generateMockAssignmentsAndSubmissions = () => {
     for (let i = 0; i < 5; i++) {
       const randomQuestion = MOCK_QUESTIONS[i % MOCK_QUESTIONS.length];
       const assignmentId = `a-${course.id}-${i}`;
-      const status = i < 3 ? "Published" : i === 3 ? "Closed" : "Published";
+      /*
+        全部都是已開放。收不收件只看截止日（見 lib/assignments.ts）：
+          i=0、1、3  截止日已過 → 已截止
+          i=2、4     還沒到     → 收件中
+        第 2 份（i=1）允許遲交，示範「可遲交」與遲交標示；其餘不收遲交。
+      */
+      const DEADLINE_DAYS = [-10, -5, 2, -1, 7];
+      const deadlineDays = DEADLINE_DAYS[i];
+      const status: AssignmentStatus = "Published";
 
       const assignment: Assignment = {
         id: assignmentId,
@@ -637,10 +645,10 @@ export const generateMockAssignmentsAndSubmissions = () => {
         courseId: course.id,
         questionId: randomQuestion.id,
         config: {
-          deadline: getRelativeDate(i === 0 ? -10 : i === 1 ? -5 : i === 2 ? 2 : i === 3 ? -1 : 7),
-          allowLateSubmission: true,
+          deadline: getRelativeDate(deadlineDays),
+          allowLateSubmission: i === 1,
         },
-        status: status as AssignmentStatus,
+        status,
         totalStudents: course.studentCount,
         // 依索引錯開，否則 45 份作業的建立時間全部相同，「最近新增」排序看不出差別
         createdAt: getRelativeDate(-30 + i * 4),

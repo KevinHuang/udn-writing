@@ -11,7 +11,7 @@ import {
   ChevronDown,
   LogOut,
   Settings,
-  Menu, Check } from 'lucide-react';
+  Check } from 'lucide-react';
 import type { IdentityOption, IdentityType } from '../api/auth';
 import { IDENTITY_LABEL } from '../lib/identityLabels';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -29,21 +29,16 @@ interface NavigationProps {
 
 export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdentity, onSwitchIdentity, onOpenSettings, onLogout }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [isMoreOpen, setIsMoreOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
-  const moreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
         setIsProfileOpen(false);
       }
-      if (moreRef.current && !moreRef.current.contains(event.target as Node)) {
-        setIsMoreOpen(false);
-      }
     };
 
-    if (isProfileOpen || isMoreOpen) {
+    if (isProfileOpen) {
       document.addEventListener('mousedown', handleClickOutside);
     } else {
       document.removeEventListener('mousedown', handleClickOutside);
@@ -52,7 +47,7 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isProfileOpen, isMoreOpen]);
+  }, [isProfileOpen]);
 
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -87,9 +82,12 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
       ? pathname === path
       : pathname === path || pathname.startsWith(path + '/');
 
-  // Primary items for bottom nav (max 5)
-  const bottomNavItems = menuItems.slice(0, 4);
-  const moreItems = menuItems.slice(4);
+  /*
+    手機底部導覽直接放全部五項。以前只放四項，第五項「成績管理」收在「更多」裡 ——
+    一個選單只裝一個項目，老師每次都得多按一層，五項本來就放得下。
+    之後項目超過五個時再考慮收納。
+  */
+  const bottomNavItems = menuItems;
 
   return (
     <nav className="sticky top-0 z-40 w-full flex-none transition-all duration-300">
@@ -238,7 +236,7 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
                 key={item.key}
                 id={`nav-bottom-btn-${item.key}`}
                 onClick={() => navigate(item.path)}
-                className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition-all active:scale-90 ${
+                className={`flex-1 min-w-0 flex flex-col items-center gap-1 px-1 py-1.5 rounded-xl transition-all active:scale-90 ${
                   isActive ? 'text-primary' : 'text-text-muted'
                 }`}
               >
@@ -249,47 +247,6 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
               </button>
             );
           })}
-
-          {/* More Button */}
-          <div className="relative" ref={moreRef}>
-            <button
-              id="nav-bottom-btn-more"
-              onClick={() => setIsMoreOpen(!isMoreOpen)}
-              className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition-all active:scale-90 ${
-                isMoreOpen ? 'text-primary' : 'text-text-muted'
-              }`}
-            >
-              <div className={`p-1 rounded-lg transition-colors ${isMoreOpen ? 'bg-primary/10' : ''}`}>
-                <Menu size={20} strokeWidth={isMoreOpen ? 2.5 : 2} />
-              </div>
-              <span className="text-caption tracking-tight">更多</span>
-            </button>
-
-            {/* More Menu Popover */}
-            {isMoreOpen && (
-              <div className="absolute bottom-full right-0 mb-4 w-48 bg-card rounded-2xl shadow-2xl border border-border py-2 animate-fade-in overflow-hidden">
-                {moreItems.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = isActivePath(item.path);
-                  return (
-                    <button id="nav-btn-mobile-menu"
-                      key={item.key}
-                      onClick={() => {
-                        navigate(item.path);
-                        setIsMoreOpen(false);
-                      }}
-                      className={`w-full flex items-center gap-3 px-4 py-3 text-body font-bold transition-colors ${
-                        isActive ? 'bg-primary/5 text-primary' : 'text-text-primary opacity-70 hover:bg-surface'
-                      }`}
-                    >
-                      <Icon size={18} />
-                      <span>{item.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </nav>

@@ -31,9 +31,11 @@ import { CourseMappingModal } from "./CourseMappingModal";
 import { DeleteCourseModal } from "./DeleteCourseModal";
 import { courseFootprint, isOverdue } from "../lib/assignments";
 import { filterCoursesByQuery } from "../lib/courseSearch";
+import { SHOW_AI_MODEL_PICKER } from "../lib/features";
 import {
   groupCoursesBySchool,
   cityCountsOf,
+  cityChipsOf,
   UNASSIGNED_GROUP as UNASSIGNED,
 } from "../lib/courseGroups";
 
@@ -102,7 +104,11 @@ export const CourseList = ({
       (activeTab === "active" ? !c.isArchived : c.isArchived),
   );
 
-  /** 縣市篩選只給管理人員 —— 授課教師班少，多一列反而礙事 */
+  /*
+    縣市篩選、搜尋、依學校分組：所有身分都有。
+    以前只給管理人員，但授課教師也可能跨縣市、跨校授課
+    （實測一位老師有 8 所學校的班），兩頁才一致。
+  */
   const cityCounts = useMemo(() => cityCountsOf(semesterCourses), [semesterCourses]);
 
   const filteredCourses = useMemo(() => {
@@ -122,11 +128,8 @@ export const CourseList = ({
 
   const needsReview = coursesNeedingReview(semesterCourses);
 
-  /** 只列出真的有課程的縣市，避免一整排 0 */
-  const cityChips = [
-    "all",
-    ...Object.keys(cityCounts).filter((k) => k !== "all").sort(),
-  ];
+  /** 只列出真的有課程的縣市；待確認歸屬排最後（規則在 lib/courseGroups.ts） */
+  const cityChips = cityChipsOf(cityCounts);
 
   /** 一張課程卡片。兩種身分共用同一份，差別只在外層怎麼分組 */
   const renderCourseCard = (course: Course) => {
@@ -246,7 +249,8 @@ export const CourseList = ({
                     待確認歸屬
                   </span>
                 )}
-                {course.aiModels && course.aiModels.length > 0 && (
+                {/* 批改模型的選擇目前隱藏（lib/features.ts），只顯示數量沒有意義，跟著開關走 */}
+                {SHOW_AI_MODEL_PICKER && course.aiModels && course.aiModels.length > 0 && (
                   <div className="relative group/tooltip">
                     <span className="bg-surface-soft text-primary px-2 py-1 rounded-lg text-caption flex items-center gap-1 border border-border cursor-help">
                       <Bot size={12} /> {course.aiModels.length} 個助手
@@ -412,8 +416,13 @@ export const CourseList = ({
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-3 w-full md:w-auto">
-          <div className="relative inline-flex items-center gap-2 bg-card/60 backdrop-blur-md px-4 md:px-5 py-2 md:py-2.5 rounded-full border border-card/50 shadow-sm hover:bg-card transition-all cursor-pointer group ring-1 ring-black/5 flex-1 md:flex-none">
+        {/*
+          手機上兩個控制各佔一整行。以前同一行各分一半，按鈕窄到「同步校務系統」
+          被擠成直排，整行跟著變高，圓角的學期選單也被撐成橢圓。
+          平板以上才並排，而且都不伸縮。
+        */}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full md:w-auto">
+          <div className="relative flex items-center gap-2 bg-card/60 backdrop-blur-md px-4 md:px-5 py-2 md:py-2.5 rounded-full border border-card/50 shadow-sm hover:bg-card transition-all cursor-pointer group ring-1 ring-black/5 w-full sm:w-auto">
             <Calendar size={16} className="text-primary md:size-[18px] shrink-0" />
             <span className="text-caption text-text-secondary uppercase tracking-wider whitespace-nowrap shrink-0">
               學期
@@ -423,7 +432,7 @@ export const CourseList = ({
               id="course-select-semester"
               value={currentSemester}
               onChange={(e) => onSemesterChange(e.target.value)}
-              className="text-body text-text-primary bg-transparent outline-none appearance-none cursor-pointer pr-6 md:pr-8 relative z-10"
+              className="flex-1 min-w-0 text-body text-text-primary bg-transparent outline-none appearance-none cursor-pointer pr-6 md:pr-8 relative z-10"
             >
               {semesterOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -440,7 +449,7 @@ export const CourseList = ({
           <button
             id="course-btn-sync"
             onClick={() => setIsSyncModalOpen(true)}
-            className="bg-primary hover:bg-text-primary text-on-accent px-4 py-2 md:px-5 md:py-2.5 rounded-xl text-body shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 hover:scale-[1.02] flex-1 md:flex-none"
+            className="bg-primary hover:bg-text-primary text-on-accent px-4 py-2 md:px-5 md:py-2.5 rounded-xl text-body shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 hover:scale-[1.02] whitespace-nowrap shrink-0 w-full sm:w-auto"
           >
             <RefreshCcw size={14} className="md:size-[16px]" /> 同步校務系統
           </button>
@@ -507,8 +516,7 @@ export const CourseList = ({
         「淡江 國二」是縮小範圍，用 OR 會把所有淡江和所有國二都倒出來。
         比對涵蓋整串課名與解析出的縣市／學校／班級，解析失敗的課程也搜得到。
       */}
-      {isAdmin(user) && (
-        <div className="relative">
+      <div className="relative">
           <Search
             size={16}
             className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
@@ -531,10 +539,9 @@ export const CourseList = ({
               <X size={14} />
             </button>
           )}
-        </div>
-      )}
+      </div>
 
-      {isAdmin(user) && cityChips.length > 2 && (
+      {cityChips.length > 1 && (
         <div className="flex flex-wrap items-center gap-1.5">
           {cityChips.map((chip) => (
             <button
@@ -556,7 +563,7 @@ export const CourseList = ({
         </div>
       )}
 
-      {isAdmin(user) ? (
+      {filteredCourses.length > 0 && (
         <div className="flex flex-col gap-7">
           {schoolGroups.map((group) => {
             const students = group.courses.reduce((n, c) => n + c.studentCount, 0);
@@ -575,10 +582,6 @@ export const CourseList = ({
               </section>
             );
           })}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-          {filteredCourses.map(renderCourseCard)}
         </div>
       )}
 

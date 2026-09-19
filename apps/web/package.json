@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:https": "vite --mode https",
     "build": "vite build",
     "lint": "eslint . && node scripts/check-tokens.mjs && node scripts/check-mockdata.mjs",
     "preview": "vite preview",
@@ -33,6 +34,7 @@
     "@types/react-dom": "^19.2.7",
     "@typescript-eslint/eslint-plugin": "^8.57.0",
     "@typescript-eslint/parser": "^8.57.0",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitejs/plugin-react": "^5.1.4",
     "eslint": "^10.0.3",
     "eslint-plugin-react-hooks": "^7.1.1",

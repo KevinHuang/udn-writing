@@ -21,6 +21,17 @@ function allows(ctx: Context, type: IdentityType, has: boolean): boolean {
   return active.type === type;
 }
 
+/**
+ * 目前是不是以聯合報管理人員的身分在操作。
+ *
+ * 給「同一支路由、身分不同權限不同」的情形用 —— 例如題庫：授課教師與管理人員
+ * 打的是同一組 /instructor/tasks，但只有管理人員能動共同題庫。
+ * 規則與 isSystemAdmin 中介層相同（見 allows）。
+ */
+export function actsAsSystemAdmin(ctx: Context): boolean {
+  return allows(ctx, 'system_admin', !!ctx.session?.userInfo?.isSystemAdmin);
+}
+
 // 簡單的 in-memory session 存儲（實務上應使用 Redis）
 const sessions = new Map<string, SessionUser>();
 

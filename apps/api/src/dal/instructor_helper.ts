@@ -33,8 +33,8 @@ class InstructorHelper {
                 t.pic_position AS task_pic_position,
                 a.id AS assignment_id,
                 a.assigned_at AS start_date,
-                -- 作業的狀態不是一個欄位，是 opened + opened_at 的組合
-                --（推導規則在 @udn/shared 的 assignmentStatusOf()）
+                -- opened＝學生看不看得到（@udn/shared 的 assignmentStatusOf()）；
+                -- 收不收件看 deadline / allow_late_submission。opened_at 是第一次開放的時間
                 a.opened,
                 a.opened_at,
                 a.deadline,

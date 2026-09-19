@@ -1,4 +1,5 @@
 import { db } from './database';
+import { orgOfUser } from './task_helper';
 
 /**
  * 題庫資料夾（migration 001 的 task_folder）。
@@ -29,45 +30,53 @@ class FolderHelper {
         return (await db.default.manyOrNone(sql, [userId])) || [];
     }
 
+    /** 聯合報管理人員看到的資料夾：**全部**共享資料夾（不分組織），加上自己的 */
+    public static async getForSystemAdmin(userId: string) {
+        if (!userId) return [];
+        return (await db.default.manyOrNone(
+            `SELECT * FROM task_folder WHERE ref_user_id = $1 OR shared = true ORDER BY name`, [userId])) || [];
+    }
+
+    /** 是不是共同題庫的資料夾。找不到回 false（交給後續的授權 WHERE 回 404） */
+    public static async isShared(folderId: string): Promise<boolean> {
+        const row = await db.default.oneOrNone(
+            `SELECT shared FROM task_folder WHERE id = $1`, [folderId]);
+        return row?.shared === true;
+    }
+
     public static async create(
         data: { name: string; parentId: string | null; shared: boolean },
         userId: number,
     ) {
         /**
-         * 共享資料夾要掛在組織底下。取這位教師的第一個組織 ——
-         * 正式資料只有一個組織（聯合報），所以這裡不會有歧義；
-         * 真的出現多組織時要改成由呼叫端指定。
+         * 共享資料夾要掛在組織底下（規則同 TaskHelper 的 orgOfUser）：取建立者任教班級的
+         * 組織；不帶班的管理人員退回第一個組織 —— 以前只看任教班級，管理人員建的
+         * 共享資料夾會是 NULL，老師看不到。正式資料只有一個組織（聯合報）。
          */
         const sql = `
-            WITH my_org AS (
-                SELECT crs.ref_org_id AS id
-                FROM uc_instructor AS inst
-                    INNER JOIN course AS crs ON crs.id = inst.ref_course_id
-                WHERE inst.ref_user_id = $4
-                LIMIT 1
-            )
             INSERT INTO task_folder (name, ref_parent_id, shared, ref_user_id, ref_org_id)
-            SELECT $1, $2, $3, $4, CASE WHEN $3 THEN (SELECT id FROM my_org) ELSE NULL END
+            SELECT $1, $2, $3, $4, CASE WHEN $3 THEN ${orgOfUser('$4')} ELSE NULL END
             RETURNING *;
         `;
         return await db.default.oneOrNone(sql, [data.name, data.parentId, data.shared, userId]);
     }
 
-    /** 改名或搬移（僅限擁有者） */
+    /** 改名或搬移：擁有者，或以管理人員身分改任何共享資料夾 */
     public static async update(
         folderId: string,
         data: { name?: string; parentId?: string | null },
         userId: number,
+        asAdmin = false,
     ) {
         const sql = `
             UPDATE task_folder
             SET name = COALESCE($3, name),
                 ref_parent_id = $4,
                 updated_time = NOW()
-            WHERE id = $1 AND ref_user_id = $2
+            WHERE id = $1 AND (ref_user_id = $2 OR ($5 AND shared = true))
             RETURNING *;
         `;
-        return await db.default.oneOrNone(sql, [folderId, userId, data.name ?? null, data.parentId ?? null]);
+        return await db.default.oneOrNone(sql, [folderId, userId, data.name ?? null, data.parentId ?? null, asAdmin]);
     }
 
     /**
@@ -86,11 +95,13 @@ class FolderHelper {
      * 外鍵表達不了這個行為（CASCADE 會刪掉、SET NULL 會退到根而不是上一層），
      * 所以規則在這裡。
      */
-    public static async deleteById(folderId: string, userId: number) {
+    public static async deleteById(folderId: string, userId: number, asAdmin = false) {
         return await db.default.tx(async (t) => {
+            // 擁有者，或以管理人員身分刪任何共享資料夾
             const folder = await t.oneOrNone(
-                `SELECT id, ref_parent_id FROM task_folder WHERE id = $1 AND ref_user_id = $2`,
-                [folderId, userId],
+                `SELECT id, ref_parent_id FROM task_folder
+                  WHERE id = $1 AND (ref_user_id = $2 OR ($3 AND shared = true))`,
+                [folderId, userId, asAdmin],
             );
             if (!folder) return null;
 

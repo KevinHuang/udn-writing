@@ -41,9 +41,14 @@ export async function extractTextFromImage(
   base64Image: string,
   mimeType: string,
   assignmentId?: string,
+  /**
+   * 要留檔的那一張（稿紙掃描的全解析度原稿）。給了就存它、辨識仍用 base64Image；
+   * 沒給就存辨識的那一張。見後端 /service/gemini/ocr_text。
+   */
+  original?: { base64Image: string; mimeType: string },
 ): Promise<OcrResult> {
   const r = await api.post<{ text: string; files?: string[] }>('/service/gemini/ocr_text', {
-    base64Image, mimeType, assignmentId,
+    base64Image, mimeType, assignmentId, original,
   });
   return { text: r.text, files: r.files ?? [] };
 }

@@ -3,7 +3,8 @@ import InstructorHelper from '../dal/instructor_helper';
 import SubmissionHelper from '../dal/submission_helper';
 import GenAIHelper from '../dal/genai_helper';
 import { isAiConfigured, simulateGrading, simulatedDelayMs } from '../dal/simulated_grading';
-import { OAuthMiddleware } from '../middleware/oauth';
+import type { Context } from 'koa';
+import { OAuthMiddleware, actsAsSystemAdmin } from '../middleware/oauth';
 import SubmissionFeedbackHelper from '../dal/submission_feedback_helper';
 import TaskHelper from '../dal/task_helper';
 import StorageHelper from '../dal/storage_helper';
@@ -29,7 +30,17 @@ const router = new Router();
  * 皆符合才會放行至底下的 API 端點。
  */
 router.use(OAuthMiddleware.requireLogin);
-router.use(OAuthMiddleware.isInstructor);
+/*
+  題庫（/tasks、/folders）另外開放給聯合報管理人員 —— 共同題庫只有他們能編輯。
+  ⚠️ 以前整個路由只認授課教師：管理人員明確切換成管理身分之後，題庫 API 一律 403，
+     連讀都讀不到；共同題庫又只准管理人員編輯，結果沒有人能透過畫面編輯共同題庫。
+  其餘路由（班級、作業、批改）維持只給授課教師。
+*/
+const QUESTION_BANK_PATH = /\/instructor\/(tasks|folders)(\/|$)/;
+router.use(async (ctx, next) => {
+    if (QUESTION_BANK_PATH.test(ctx.path) && actsAsSystemAdmin(ctx)) return next();
+    return OAuthMiddleware.isInstructor(ctx, next);
+});
 
 /**
  * @route GET /service/instructor/school-courses?school_year=115&semester=1
@@ -340,7 +351,9 @@ router.post('/submissions/proxy', async (ctx) => {
             return;
         }
 
-        const result = await SubmissionHelper.submit(user_id, assignment_id, content, files, word_count);
+        // 直接給陣列 —— SubmissionHelper.submit 自己會 JSON.stringify，這裡再轉一次就變成 jsonb 字串
+        const result = await SubmissionHelper.submit(
+            user_id, assignment_id, content, Array.isArray(files) ? files : [], word_count);
 
         /*
           與學生端同一道擋：已經批改過的不接受覆寫，否則分數會指向一段
@@ -442,10 +455,32 @@ router.post('/submission_feedback/return', async (ctx) => {
     }
 });
 
+/*
+  ── 共同題庫只有聯合報管理人員能動 ─────────────────────────────
+  授課教師對共同題庫**唯讀**：不能新增、修改、封存、刪除題目與資料夾，
+  也不能把自己的題目改成共用（那等於匯入）。以前 POST /tasks 與 POST /folders
+  直接吃前端送來的 shared，畫面沒有按鈕，打 API 照樣建得進共同題庫。
+  修改／封存／刪除原本已限定「自己建的」，但舊資料裡有老師自己建的共用題，
+  所以一律看目標是不是共用的，不是只看是誰建的。
+*/
+const SHARED_BANK_FORBIDDEN = '共同題庫只有聯合報管理人員可以編輯';
+const denySharedBank = (ctx: Context) => {
+    ctx.status = 403;
+    ctx.body = { error: SHARED_BANK_FORBIDDEN };
+};
+/** 這一題是共用題，而目前不是以管理人員身分操作 → 不准動 */
+const sharedTaskLocked = async (ctx: Context, taskId: string) =>
+    !actsAsSystemAdmin(ctx) && (await TaskHelper.getById(taskId))?.shared === true;
+const sharedFolderLocked = async (ctx: Context, folderId: string) =>
+    !actsAsSystemAdmin(ctx) && (await FolderHelper.isShared(folderId));
+
 router.get('/tasks', async (ctx) => {
     try {
         const userId = ctx.session.userInfo.id;
-        const tasks = await TaskHelper.getByInstructorUserId(userId);
+        // 管理人員看全部共用題；授課教師只看自己組織的
+        const tasks = actsAsSystemAdmin(ctx)
+            ? await TaskHelper.getForSystemAdmin(userId)
+            : await TaskHelper.getByInstructorUserId(userId);
         ctx.body = tasks;
     } catch (error) {
         console.error('Error fetching tasks:', error);
@@ -473,6 +508,8 @@ router.post('/tasks', async (ctx) => {
             pic1Description?: string | null;
             refFolderId?: string | null;
         };
+
+        if (body.shared && !actsAsSystemAdmin(ctx)) { denySharedBank(ctx); return; }
 
         // 處理 pic1：若是 base64 則上傳至 GCS 並由檔名取代
         if (body.pic1) {
@@ -503,12 +540,17 @@ router.put('/tasks/:id', async (ctx) => {
             picPosition: string;
         };
 
+        // 改成共用（＝匯入），或改一題本來就是共用的，都只有管理人員可以
+        if (!actsAsSystemAdmin(ctx) && (body.shared || await sharedTaskLocked(ctx, id))) {
+            denySharedBank(ctx); return;
+        }
+
         // 處理 pic1：若是 base64 則上傳至 GCS 並由檔名取代
         if (body.pic1) {
             body.pic1 = await StorageHelper.uploadImageIfBase64(body.pic1);
         }
 
-        const task = await TaskHelper.update(id, body, userId);
+        const task = await TaskHelper.update(id, body, userId, actsAsSystemAdmin(ctx));
         if (!task) {
             ctx.status = 404;
             ctx.body = { error: 'Task not found or unauthorized' };
@@ -633,7 +675,9 @@ router.put('/assignments/:assignmentId/leaves/:studentId', async (ctx) => {
  */
 router.get('/folders', async (ctx) => {
     try {
-        ctx.body = await FolderHelper.getByInstructorUserId(ctx.session.userInfo.id);
+        ctx.body = actsAsSystemAdmin(ctx)
+            ? await FolderHelper.getForSystemAdmin(ctx.session.userInfo.id)
+            : await FolderHelper.getByInstructorUserId(ctx.session.userInfo.id);
     } catch (error) {
         console.error('Error fetching folders:', error);
         ctx.status = 500; ctx.body = { error: 'Internal Server Error' };
@@ -647,6 +691,7 @@ router.post('/folders', async (ctx) => {
         if (!name?.trim()) {
             ctx.status = 400; ctx.body = { error: 'name is required' }; return;
         }
+        if (shared && !actsAsSystemAdmin(ctx)) { denySharedBank(ctx); return; }
         ctx.body = await FolderHelper.create(
             { name: name.trim(), parentId: parentId ?? null, shared: !!shared },
             ctx.session.userInfo.id,
@@ -661,8 +706,9 @@ router.put('/folders/:id', async (ctx) => {
     try {
         const { name, parentId } = (ctx.request.body ?? {}) as
             { name?: string; parentId?: string | null };
+        if (await sharedFolderLocked(ctx, ctx.params.id)) { denySharedBank(ctx); return; }
         const folder = await FolderHelper.update(
-            ctx.params.id, { name, parentId: parentId ?? null }, ctx.session.userInfo.id);
+            ctx.params.id, { name, parentId: parentId ?? null }, ctx.session.userInfo.id, actsAsSystemAdmin(ctx));
         if (!folder) { ctx.status = 404; ctx.body = { error: 'Not Found' }; return; }
         ctx.body = folder;
     } catch (error) {
@@ -673,7 +719,8 @@ router.put('/folders/:id', async (ctx) => {
 
 router.delete('/folders/:id', async (ctx) => {
     try {
-        const folder = await FolderHelper.deleteById(ctx.params.id, ctx.session.userInfo.id);
+        if (await sharedFolderLocked(ctx, ctx.params.id)) { denySharedBank(ctx); return; }
+        const folder = await FolderHelper.deleteById(ctx.params.id, ctx.session.userInfo.id, actsAsSystemAdmin(ctx));
         if (!folder) { ctx.status = 404; ctx.body = { error: 'Not Found' }; return; }
         ctx.body = folder;
     } catch (error) {
@@ -697,7 +744,8 @@ router.put('/tasks/:id/archived', async (ctx) => {
             ctx.body = { error: 'archived must be a boolean' };
             return;
         }
-        const task = await TaskHelper.setArchived(id, archived, userId);
+        if (await sharedTaskLocked(ctx, id)) { denySharedBank(ctx); return; }
+        const task = await TaskHelper.setArchived(id, archived, userId, actsAsSystemAdmin(ctx));
         if (!task) {
             // 找不到，或不是自己的題目 —— 兩者刻意不區分
             ctx.status = 404;
@@ -716,7 +764,8 @@ router.delete('/tasks/:id', async (ctx) => {
     try {
         const userId = ctx.session.userInfo.id;
         const { id } = ctx.params;
-        const result = await TaskHelper.deleteById(id, userId);
+        if (await sharedTaskLocked(ctx, id)) { denySharedBank(ctx); return; }
+        const result = await TaskHelper.deleteById(id, userId, actsAsSystemAdmin(ctx));
         if (!result) {
             ctx.status = 404;
             ctx.body = { error: 'Task not found or unauthorized' };
@@ -935,6 +984,8 @@ router.post('/courses/:id/assignments', async (ctx) => {
             week_no?: number | null;
             deadline?: string | null;
             allow_late_submission?: boolean;
+            /** 派發精靈的「立即開放」。不帶就是先存著（未開放） */
+            opened?: boolean;
         };
         const assignment = await AssignmentHelper.create(
             {
@@ -943,6 +994,7 @@ router.post('/courses/:id/assignments', async (ctx) => {
                 week_no: body.week_no ?? null,
                 deadline: body.deadline ?? null,
                 allow_late_submission: body.allow_late_submission ?? false,
+                opened: body.opened === true,
             },
             userId
         );
@@ -1028,6 +1080,12 @@ router.put('/assignments/:assignmentId/task', async (ctx) => {
         if (!assignment) {
             ctx.status = 404;
             ctx.body = { error: 'Assignment not found' };
+            return;
+        }
+        if (assignment === 'not_swappable') {
+            // 規則同前端 lib/assignments.ts 的 canSwapQuestion / swapBlockedReason
+            ctx.status = 409;
+            ctx.body = { error: '這份作業還在收件（或允許遲交），可能有學生正在寫，不能換題。請先立即截止並取消允許遲交，或改回未開放。' };
             return;
         }
         ctx.body = assignment;

@@ -2,11 +2,29 @@ import path from 'path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import basicSsl from '@vitejs/plugin-basic-ssl';
 
-export default defineConfig(() => {
+export default defineConfig(({ mode }) => {
+    /*
+      用手機測稿紙掃描時走這個模式：`npm run dev:https -w @udn/web`。
+
+      瀏覽器只讓「安全來源」開相機 —— 電腦上的 localhost 算，但手機連的是
+      http://192.168.x.x，不算，`navigator.mediaDevices` 直接不存在，
+      即時取景與自動快門都用不了（掃描視窗會偵測到，把「開啟相機掃描」變灰）。
+      這裡用自簽憑證另起一個 https 的 3443 埠，手機點過一次「繼續前往」就能用。
+
+      另開 3443、不動 3000：兩個可以同時跑，電腦上的開發不會被憑證警告卡住。
+      proxy 設定兩個模式共用，API 照樣同源。
+
+      ⚠️ 登入在手機上還走不通：OAuth 的 redirect_uri 與 CLIENT_HOME_PAGE 都指向
+         localhost（見根目錄 .env），手機上的 localhost 是手機自己。要在手機上
+         登入，得在 1Campus 註冊一組指向這台電腦 IP 的 redirect_uri。
+    */
+    const useHttps = mode === 'https';
+
     return {
       server: {
-        port: 3000,
+        port: useHttps ? 3443 : 3000,
         // Vite 預設在 port 被佔用時**安靜地換一個**。那在這個專案會壞掉：
         // OAuth 的 CLIENT_HOME_PAGE 寫死指向 :3000，後端也在 :3001 ——
         // 換 port 之後 proxy 失效、登入導回不到，而畫面上看起來只是
@@ -36,6 +54,7 @@ export default defineConfig(() => {
       plugins: [
         react(),
         tailwindcss(),
+        ...(useHttps ? [basicSsl()] : []),
       ],
       /*
         這裡曾經有一段 define，把 GEMINI_API_KEY 字面替換進前端 bundle ——

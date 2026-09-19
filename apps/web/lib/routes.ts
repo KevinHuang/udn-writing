@@ -23,7 +23,7 @@ export type SemesterFilter = 'PAST' | 'CURRENT' | 'ALL';
  * 「我正在看的這個篩選結果」貼給別人。
  */
 export const queryKeys = {
-  /** 學期範圍：PAST / CURRENT / ALL */
+  /** 學生成績紀錄的學期代碼（例如 115-1） */
   semesterFilter: 'semester',
   /** 批改清單選中的作業 */
   assignment: 'assignment',
@@ -71,7 +71,8 @@ export const routes = {
     withQuery('/student/assignments', { [queryKeys.focus]: opts?.focusId }),
   studentEditor: (assignmentId: string) => `/student/assignments/${assignmentId}`,
   /** semester：學期範圍篩選；focusId：要展開哪一份成績 */
-  studentGrades: (opts?: { semester?: SemesterFilter; focusId?: string }) =>
+  /** semester 是學期代碼（例如 115-1）。不帶就是目前學期（或 focusId 那一份的學期） */
+  studentGrades: (opts?: { semester?: string; focusId?: string }) =>
     withQuery('/student/grades', {
       [queryKeys.semesterFilter]: opts?.semester,
       [queryKeys.focus]: opts?.focusId,

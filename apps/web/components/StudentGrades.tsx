@@ -4,8 +4,9 @@ import { routes } from '../lib/routes';
 import React, { useState, useRef } from 'react';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun } from 'docx';
 import { 
-  Award, 
-  ChevronRight, 
+  Award,
+  ChevronRight,
+  ChevronDown,
   FileText,
   Calendar,
   MessageSquare,
@@ -32,8 +33,12 @@ interface StudentGradesProps {
   onBack?: () => void;
   canGoBack?: boolean;
   selectedSubmissionId?: string;
-  semesterFilter?: 'PAST' | 'CURRENT' | 'ALL';
+  /** 網址指定的學期（例如 115-1）。沒帶就依 selectedSubmissionId 或目前學期決定 */
+  semester?: string;
+  /** 目前學期。學期下拉預設就停在這一個 */
   currentSemester?: string;
+  /** 學期下拉的選項（後端 semesters 表） */
+  semesterOptions: { value: string; label: string }[];
 }
 
 /**
@@ -61,8 +66,9 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
   onBack,
   canGoBack,
   selectedSubmissionId,
-  semesterFilter = 'ALL',
-  currentSemester
+  semester,
+  currentSemester,
+  semesterOptions,
 }) => {
   const navigate = useNavigate();
   const chartInk = readChartInk();
@@ -85,54 +91,41 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
     }
   }
 
+  /** 某份繳交屬於哪個學期。查不到課程就是 undefined */
+  const semesterOf = (s: Submission): string | undefined => {
+    const assignment = assignments.find(a => a.id === s.assignmentId);
+    return courses.find(c => c.id === assignment?.courseId)?.semester;
+  };
+
+  /**
+   * 學期。改成下拉選單（與教師端一致），預設停在目前學期。
+   *
+   * 原本是「全部／本學期／過往學期」三顆鈕 —— 學生講不出「過往」指的是哪一個學期。
+   *
+   * 學期放在網址（?semester=115-1），不另存 state：重新整理不會跳走，
+   * 也能把網址貼給別人。從作業清單點某一份成績進來（只帶 focus）時，
+   * 落在**那一份所屬的學期** —— 否則過去學期的成績點進來會是一片空白。
+   */
+  const focusedSubmission = selectedSubmissionId
+    ? submissions.find(s => s.id === selectedSubmissionId)
+    : undefined;
+  const pickedSemester =
+    semester
+    ?? (focusedSubmission && semesterOf(focusedSubmission))
+    ?? currentSemester
+    ?? '';
+
   const gradedSubmissions = submissions
     .filter(s => {
       if (s.status !== 'Published' || !s.result) return false;
-      
-      if (semesterFilter === 'PAST' && currentSemester) {
-        const assignment = assignments.find(a => a.id === s.assignmentId);
-        const course = courses.find(c => c.id === assignment?.courseId);
-        return course && course.semester !== currentSemester;
-      }
-      
-      if (semesterFilter === 'CURRENT' && currentSemester) {
-        const assignment = assignments.find(a => a.id === s.assignmentId);
-        const course = courses.find(c => c.id === assignment?.courseId);
-        return course && course.semester === currentSemester;
-      }
-      
-      return true;
+      // 只留選定學期的成績。查不到課程的那幾筆不顯示 —— 寧可少一筆，也不要掛錯學期
+      return semesterOf(s) === pickedSemester;
     })
     .sort((a, b) => {
       const dateA = new Date(a.publishedAt || a.submittedAt).getTime();
       const dateB = new Date(b.publishedAt || b.submittedAt).getTime();
       return dateB - dateA;
     });
-
-  /*
-    學習成就卡的數字。
-
-    ⚠️ 這裡原本有三個**寫死的假數字**：「本月進步 +5.2%」、「完成率 92%」，
-    以及三個固定的強項標籤（結構嚴謹／詞彙豐富／觀點獨特）。它們被當成
-    這位學生自己的紀錄呈現 —— 實測一位只有 1 筆成績的學生照樣看到
-    「本月進步 +5.2%」。編不出來的數字寧可不顯示，不要捏造。
-
-    現在只留算得出來的：最高分、平均分、完成率。
-    「強項分析」整張卡拿掉 —— 它要靠四項評分要素，而那是關著的
-    （lib/features.ts 的 SHOW_CATEGORY_SCORES），資料一路都是 0。
-  */
-  const scores = gradedSubmissions.map((s) => s.result?.totalScore ?? 0);
-  const highestScore = scores.length ? Math.max(...scores) : null;
-  const averageScore = scores.length
-    ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1)
-    : null;
-  /** 完成率＝有繳交紀錄的作業 ÷ 看得到的作業。沒有作業時不顯示，不要變成 0% */
-  const completionRate = assignments.length
-    ? Math.round(
-        (assignments.filter((a) => submissions.some((s) => s.assignmentId === a.id)).length /
-          assignments.length) * 100,
-      )
-    : null;
 
 
   const currentSubmission = gradedSubmissions.find(s => s.id === currentSubmissionId) || gradedSubmissions[0];
@@ -482,49 +475,37 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
             <h1 className="text-display font-bold text-text-primary tracking-tight">成績紀錄</h1>
           </div>
           
-          {/* Semester Filter */}
-          <div className="flex bg-card border border-border/50 p-1 rounded-xl shadow-sm self-stretch md:self-center overflow-x-auto no-scrollbar">
-            <button
-              id="studentgrades-filter-all"
-              onClick={() => navigate(routes.studentGrades({ semester: 'ALL' }))}
-              className={`tap-target flex-1 md:flex-none px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-body font-bold transition-all whitespace-nowrap ${
-                semesterFilter === 'ALL' 
-                  ? 'bg-primary text-on-accent shadow-md shadow-primary/20' 
-                  : 'text-text-secondary hover:text-text-primary hover:bg-surface'
-              }`}
+          {/* 學期：與教師端一樣用下拉，預設目前學期。換學期就換網址（replace，不塞歷史） */}
+          <label className="relative inline-flex items-center gap-2 bg-card border border-border rounded-xl px-3 sm:px-4 py-2 shadow-sm self-stretch md:self-center">
+            <Calendar size={16} className="text-primary shrink-0" />
+            <span className="text-caption text-text-secondary uppercase tracking-wider whitespace-nowrap shrink-0">
+              學期
+            </span>
+            <span className="h-4 w-px bg-border shrink-0" aria-hidden="true"></span>
+            <select
+              id="studentgrades-select-semester"
+              value={pickedSemester}
+              onChange={(e) => navigate(routes.studentGrades({ semester: e.target.value }), { replace: true })}
+              className="flex-1 min-w-0 appearance-none bg-transparent text-body text-text-primary outline-none cursor-pointer pr-6 truncate"
             >
-              全部學期
-            </button>
-            <button
-              id="studentgrades-filter-current"
-              onClick={() => navigate(routes.studentGrades({ semester: 'CURRENT' }))}
-              className={`tap-target flex-1 md:flex-none px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-body font-bold transition-all whitespace-nowrap ${
-                semesterFilter === 'CURRENT' 
-                  ? 'bg-primary text-on-accent shadow-md shadow-primary/20' 
-                  : 'text-text-secondary hover:text-text-primary hover:bg-surface'
-              }`}
-            >
-              本學期
-            </button>
-            <button
-              id="studentgrades-filter-past"
-              onClick={() => navigate(routes.studentGrades({ semester: 'PAST' }))}
-              className={`flex-1 md:flex-none px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-body font-bold transition-all whitespace-nowrap ${
-                semesterFilter === 'PAST' 
-                  ? 'bg-primary text-on-accent shadow-md shadow-primary/20' 
-                  : 'text-text-secondary hover:text-text-primary hover:bg-surface'
-              }`}
-            >
-              過往學期
-            </button>
-          </div>
+              {/* 後端清單還沒回來時先放目前學期，免得 select 對不到值 */}
+              {(semesterOptions.length ? semesterOptions : [{ value: pickedSemester, label: semesterLabel(pickedSemester) }])
+                .map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+            </select>
+            <ChevronDown size={14} className="text-text-secondary absolute right-3 pointer-events-none" />
+          </label>
         </div>
         <p className="tap-target text-body text-text-secondary font-normal ml-0 sm:ml-12">追蹤你的寫作進度與成長曲線</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-8">
-        {/* Stats & Records */}
-        <div className="lg:col-span-2 space-y-4 sm:space-y-8">
+      {/*
+        單欄。右側原本的「學習成就」卡（平均、最高分、完成率）拿掉了 ——
+        學期改成單選之後它只是把這張表再算一次，完成率還是跨學期算的，兩邊對不起來。
+      */}
+      <div>
+        <div>
           <div className="bg-surface/60 backdrop-blur-xl p-4 sm:p-8 rounded-2xl sm:rounded-3xl shadow-sm border border-card/20 hover:shadow-md transition-all duration-300">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 sm:mb-8">
               <div className="flex items-center gap-2 text-secondary font-bold">
@@ -590,7 +571,7 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
                 })
               ) : (
                 <div className="bg-card/50 border-2 border-dashed border-border/50 rounded-2xl p-8 text-center">
-                  <p className="text-text-secondary text-body font-normal">目前尚無已評分之成績紀錄</p>
+                  <p className="text-text-secondary text-body font-normal">這個學期還沒有已發還的成績</p>
                 </div>
               )}
             </div>
@@ -656,7 +637,7 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
                   ) : (
                     <tr>
                       <td colSpan={4} className="px-4 sm:px-8 py-8 sm:py-12 text-center text-text-secondary text-body font-normal">
-                        目前尚無已評分之成績紀錄
+                        這個學期還沒有已發還的成績
                       </td>
                     </tr>
                   )}
@@ -664,36 +645,6 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
               </table>
             </div>
           </div>
-        </div>
-
-        {/* Learning Summary */}
-        <div className="space-y-4 sm:space-y-6">
-          <div className="bg-primary p-6 sm:p-8 rounded-2xl sm:rounded-3xl shadow-sm text-on-accent relative overflow-hidden hover:shadow-md transition-all duration-500 cursor-default">
-            <div className="relative z-10">
-              <h3 id="studentgrades-achievement-title" className="text-title font-bold opacity-90 mb-2 tracking-tight">學習成就</h3>
-              <p className="text-display font-bold mb-6">
-                {averageScore !== null ? `平均 ${averageScore} 級分` : '尚無已發還的成績'}
-              </p>
-              <div className="space-y-3 sm:space-y-4">
-                {highestScore !== null && (
-                  <div className="flex justify-between items-center">
-                    <span className="text-body opacity-90">最高分</span>
-                    <span className="text-title font-bold">{highestScore}</span>
-                  </div>
-                )}
-                {completionRate !== null && (
-                  <div className="flex justify-between items-center">
-                    <span className="text-body opacity-90">完成率</span>
-                    <span className="text-title font-bold">{completionRate}%</span>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="absolute -right-8 -bottom-8 opacity-10 transform rotate-12">
-              <Award size={140} className="sm:size-[160px]" />
-            </div>
-          </div>
-
         </div>
       </div>
     </div>

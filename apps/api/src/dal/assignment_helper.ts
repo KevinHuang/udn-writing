@@ -53,8 +53,8 @@ class AssignmentHelper {
                     c.id as course_id,
                     c.school_year,
                     c.semester,
-                    -- 狀態由這兩欄推導（@udn/shared 的 assignmentStatusOf）：
-                    -- opened → 進行中；!opened 但有 opened_at → 已關閉
+                    -- opened → 學生看得到（@udn/shared 的 assignmentStatusOf）。
+                    -- 收不收件看 deadline / allow_late_submission，不是狀態
                     a.opened,
                     a.opened_at,
                     a.deadline,
@@ -100,17 +100,17 @@ class AssignmentHelper {
                     ) fb ON (sub.id = fb.ref_submission_id)   
                 WHERE
                     /*
-                      **已關閉的作業也要回傳。**
+                      **開過又改回未開放的作業也要回傳。**
 
-                      以前只收 opened = true，所以老師一按「結束收件」，
-                      那份作業就從學生端整個消失 —— 連他已經繳交的作文與
-                      拿到的成績一起不見（實測確認過）。而刪除作業的對話框
-                      明明寫著「如果只是要停止收件，請改用結束收件 ——
-                      學生仍然看得到自己的成績，只是不能再繳交」。
+                      以前只收 opened = true，所以老師一收回，那份作業就從
+                      學生端整個消失 —— 連他已經拿到的成績一起不見（實測確認過）。
+                      改回未開放的確認視窗對老師的承諾是「已發還的成績仍留在
+                      學生的成績紀錄裡」。
 
-                      opened_at IS NOT NULL 代表「曾經開放過」，也就是
-                      已關閉；從未開放的草稿仍然看不到。
-                      不能再繳交由前端擋（見 StudentEssayEditor 的 isLocked）。
+                      opened_at IS NOT NULL 代表「曾經開放過」；從未開放的
+                      草稿仍然看不到。前端把 opened = false 的一律當成未開放：
+                      不列在作業清單與待辦，只在成績紀錄裡出現。
+                      能不能繳交由 /student/submit 擋（opened 與截止日）。
                     */
                     a.opened = true OR a.opened_at IS NOT NULL
                 ORDER BY 
@@ -167,17 +167,13 @@ class AssignmentHelper {
     }
 
     /**
-     * 開關作業（Draft ⇄ Published）。
+     * 開關作業（Draft ⇄ Published）：學生看不看得到。收不收件看截止日。
      *
      * ⚠️ **`opened_at` 只在「開啟」時寫，而且只寫第一次。**
-     *    先前不論開或關都 `opened_at = NOW()` —— 那會毀掉前端三種狀態的區分：
-     *
-     *      opened = true                        → Published（進行中）
-     *      opened = false, opened_at IS NULL    → Draft（從未開放，學生看不到）
-     *      opened = false, opened_at IS NOT NULL→ Closed（開過又收回，學生看得到成績）
-     *
-     *    關閉時把 opened_at 蓋成現在，等於宣告「它剛剛才第一次開放」，
-     *    Draft 與 Closed 從此分不出來。COALESCE 保留第一次開放的時間。
+     *    它的意思是「曾經對學生開放過」—— 開過又改回未開放的作業，學生的
+     *    成績紀錄裡仍要看得到已發還的成績（見 getAssignments 的 WHERE）。
+     *    關閉時把 opened_at 蓋掉（或寫成 NULL）就分不出「從沒開過」與
+     *    「開過又收回」。COALESCE 保留第一次開放的時間。
      *
      * ⚠️ 授權進 WHERE：先前只比對 id，任何教師都能開關別人班的作業。
      *    錯誤訊息寫著 unauthorized，但 SQL 裡沒有任何 authorization。
@@ -205,6 +201,9 @@ class AssignmentHelper {
      *
      * sort_order 自動接在該班最後面。前端的 lib/assignmentOrder.ts 也是
      * 這個規則 —— 在唯一的建立入口補上，不管誰呼叫都不會漏。
+     *
+     * `opened` 預設 false（先存著）；派發精靈選「立即開放」時帶 true，
+     * 這時 opened_at 一併寫入，和 updateStatus 第一次開啟的規則一致。
      */
     public static async create(data: {
         ref_course_id: string;
@@ -212,14 +211,15 @@ class AssignmentHelper {
         week_no?: number | null;
         deadline?: string | null;
         allow_late_submission?: boolean;
+        opened?: boolean;
     }, userId: string) {
         const sql = `
             INSERT INTO assignment (
-                ref_course_id, ref_task_id, ref_user_id, week_no, opened, assigned_at,
+                ref_course_id, ref_task_id, ref_user_id, week_no, opened, opened_at, assigned_at,
                 deadline, allow_late_submission, sort_order
             )
             SELECT
-                $1, $2, $3, $4, false, NOW(), $5, $6,
+                $1, $2, $3, $4, $7, CASE WHEN $7 THEN NOW() END, NOW(), $5, $6,
                 COALESCE((SELECT MAX(sort_order) + 1 FROM assignment WHERE ref_course_id = $1), 0)
             WHERE EXISTS (
                 SELECT 1 FROM uc_instructor WHERE ref_course_id = $1 AND ref_user_id = $3
@@ -228,7 +228,7 @@ class AssignmentHelper {
         `;
         return await db.default.oneOrNone(sql, [
             data.ref_course_id, data.ref_task_id, userId, data.week_no ?? null,
-            data.deadline ?? null, data.allow_late_submission ?? false,
+            data.deadline ?? null, data.allow_late_submission ?? false, data.opened === true,
         ]) || null;
     }
 
@@ -326,18 +326,31 @@ class AssignmentHelper {
      *
      * 資料庫沒有外鍵，連鎖清理要自己寫全，而且要在同一個交易裡：
      * 刪到一半失敗會留下沒有繳交紀錄卻還有批改的孤兒。
+     *
+     * **只在確定沒有人正在寫的時候可以換**（與前端 lib/assignments.ts 的
+     * canSwapQuestion 同一條規則）：未開放，或已截止且不收遲交。
+     * 收件中換掉等於把學生寫到一半的東西抽走 —— 以前只有前端擋，
+     * 直接打 API 照樣換得掉。不符合時回 'not_swappable'（路由回 409）。
+     *
+     * @returns null＝不是你的作業；'not_swappable'＝現在不能換；否則是更新後的作業
      */
     public static async updateTask(assignmentId: string, ref_task_id: string, userId: string) {
         return await db.default.tx(async (tx) => {
             const owned = await tx.oneOrNone(
-                `SELECT id FROM assignment
+                `SELECT id,
+                        (opened = false
+                         OR (deadline IS NOT NULL AND deadline < NOW()
+                             AND allow_late_submission IS NOT TRUE)) AS swappable
+                   FROM assignment
                   WHERE id = $1
                     AND ref_course_id IN (
                           SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $2
-                    )`,
+                    )
+                  FOR UPDATE`,
                 [assignmentId, userId]);
             // ⚠️ 授權進 WHERE —— 先前只比對 id，任何教師都能換掉別人班作業的題目
             if (!owned) return null;
+            if (!owned.swappable) return 'not_swappable' as const;
 
             const subIds = `SELECT id FROM submission WHERE ref_assignment_id = $1`;
             await tx.none(`DELETE FROM submission_mark WHERE ref_submission_id IN (${subIds})`, [assignmentId]);

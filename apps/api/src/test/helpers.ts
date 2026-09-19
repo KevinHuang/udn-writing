@@ -136,7 +136,8 @@ export async function seedTask(userId: string, title = '測試題目'): Promise<
 export async function seedAssignment(courseId: string, taskId: string, assignerId: string): Promise<string> {
   const row = await db.default.one(
     // opened=true 的作業在真實資料裡一定有 opened_at（第一次開放的時間）——
-    // 少了它，Draft 與 Closed 的區分測起來會失真
+    // 少了它，「從沒開過」與「開過又收回」的區分測起來會失真。
+    // 沒有截止日＝收件中
     `INSERT INTO assignment (ref_course_id, ref_task_id, ref_user_id, opened, opened_at)
      VALUES ($1, $2, $3, true, now()) RETURNING id::text`,
     [courseId, taskId, assignerId]

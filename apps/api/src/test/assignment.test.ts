@@ -3,7 +3,8 @@
  *
  * 這一支蓋的三件事都曾經是壞的：
  *   1. 四支查詢收了 user_id 卻沒放進 WHERE —— 任何教師都能讀寫別人班的作業
- *   2. opened_at 在「關閉」時也被寫成 NOW() —— Draft 與 Closed 從此分不出來
+ *   2. opened_at 在「關閉」時也被寫成 NOW() —— 分不出「從沒開過」與「開過又收回」
+ *      （後者學生的成績紀錄裡仍要看得到已發還的成績）
  *   3. 刪作業沒有清底下的繳交與批改 —— 留下孤兒資料
  */
 import { test, before, after, beforeEach, describe } from 'node:test';
@@ -98,8 +99,8 @@ describe('授權：不能碰別人班的作業', () => {
   });
 });
 
-describe('狀態：Draft / Published / Closed 分得出來', () => {
-  test('關閉時不會覆蓋 opened_at —— 否則 Draft 與 Closed 混在一起', async () => {
+describe('開關：opened_at 記的是第一次開放的時間', () => {
+  test('改回未開放時不會覆蓋 opened_at —— 否則分不出「從沒開過」與「開過又收回」', async () => {
     const s = await twoCourses();
     // 先收回成未開放，而且從來沒開過的話 opened_at 應該還是 null
     await rawDb.none(`UPDATE assignment SET opened=false, opened_at=NULL WHERE id=$1`, [s.myAssignment]);
@@ -143,6 +144,19 @@ describe('截止日與排序', () => {
       { method: 'POST', ...json({ ref_task_id: s.task }) })).json();
     assert.equal(without.deadline, null, '預設不設截止日 —— 這是實際的操作習慣');
     assert.equal(without.allow_late_submission, false);
+  });
+
+  test('預設先存著（未開放）；帶 opened=true 就是立即開放，並記下開放時間', async () => {
+    const s = await twoCourses();
+    const draft = await (await req(srv, `/service/instructor/courses/${s.mine}/assignments`, s.cookie,
+      { method: 'POST', ...json({ ref_task_id: s.task }) })).json();
+    assert.equal(draft.opened, false);
+    assert.equal(draft.opened_at, null, '從沒開過就不該有開放時間');
+
+    const open = await (await req(srv, `/service/instructor/courses/${s.mine}/assignments`, s.cookie,
+      { method: 'POST', ...json({ ref_task_id: s.task, opened: true }) })).json();
+    assert.equal(open.opened, true);
+    assert.ok(open.opened_at, '立即開放要和手動開啟一樣記下第一次開放的時間');
   });
 
   test('新作業自動接在該班最後面', async () => {
@@ -239,8 +253,17 @@ describe('更換題目', () => {
       body: JSON.stringify({ ref_task_id: taskId }),
     });
 
+  /** 設定作業的開放與截止。seedAssignment 建的是「已開放、沒有截止日」＝收件中 */
+  const setState = (id: string, state: { opened: boolean; deadline: string | null; allowLate: boolean }) =>
+    rawDb.none(
+      `UPDATE assignment SET opened = $2, deadline = $3::timestamptz, allow_late_submission = $4 WHERE id = $1`,
+      [id, state.opened, state.deadline, state.allowLate]);
+  const PAST = new Date(Date.now() - 86_400_000).toISOString();
+
   test('題目換掉，底下的繳交、批改、作品標記一併清乾淨', async () => {
     const s = await twoCourses();
+    // 換題只在沒人正在寫時可以做 —— 先改回未開放
+    await setState(s.myAssignment, { opened: false, deadline: null, allowLate: false });
     const student = await seedUser('stu@test.edu.tw', '學生');
     await seedLearner(s.mine, student.id);
     const sub = await seedSubmission(s.myAssignment, student.id);
@@ -270,6 +293,7 @@ describe('更換題目', () => {
 
   test('請假註記留著 —— 那是作業層級的，與題目無關', async () => {
     const s = await twoCourses();
+    await setState(s.myAssignment, { opened: false, deadline: null, allowLate: false });
     const student = await seedUser('stu@test.edu.tw', '學生');
     await seedLearner(s.mine, student.id);
     await rawDb.none(
@@ -294,5 +318,41 @@ describe('更換題目', () => {
 
     const { count } = await rawDb.one('SELECT count(*)::int FROM submission WHERE id=$1', [sub]);
     assert.equal(count, 1, '擋下來就不該刪到對方的資料');
+  });
+
+  /*
+    換題的條件與前端 lib/assignments.ts 的 canSwapQuestion 相同：
+    未開放，或已截止且不收遲交。以前只有前端擋，直接打 API 照樣換得掉 ——
+    收件中換掉等於把學生寫到一半的東西抽走。
+  */
+  test('收件中不能換 → 409，題目與繳交原封不動', async () => {
+    const s = await twoCourses();
+    const student = await seedUser('stu@test.edu.tw', '學生');
+    await seedLearner(s.mine, student.id);
+    const sub = await seedSubmission(s.myAssignment, student.id);
+
+    const res = await swap(s.cookie, s.myAssignment, await seedTask(s.me.id, '新題目'));
+    assert.equal(res.status, 409);
+
+    const a = await rawDb.one('SELECT ref_task_id FROM assignment WHERE id=$1', [s.myAssignment]);
+    assert.equal(String(a.ref_task_id), String(s.task), '題目不該被換掉');
+    assert.ok(await rawDb.oneOrNone('SELECT 1 FROM submission WHERE id=$1', [sub]), '繳交不該被刪');
+  });
+
+  test('已截止但允許遲交 → 409（可能還有學生正在寫）', async () => {
+    const s = await twoCourses();
+    await setState(s.myAssignment, { opened: true, deadline: PAST, allowLate: true });
+    const res = await swap(s.cookie, s.myAssignment, await seedTask(s.me.id, '新題目'));
+    assert.equal(res.status, 409);
+  });
+
+  test('已截止且不收遲交 → 可以換', async () => {
+    const s = await twoCourses();
+    await setState(s.myAssignment, { opened: true, deadline: PAST, allowLate: false });
+    const newTask = await seedTask(s.me.id, '新題目');
+    const res = await swap(s.cookie, s.myAssignment, newTask);
+    assert.equal(res.status, 200);
+    const a = await rawDb.one('SELECT ref_task_id FROM assignment WHERE id=$1', [s.myAssignment]);
+    assert.equal(String(a.ref_task_id), String(newTask));
   });
 });

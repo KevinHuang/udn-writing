@@ -544,6 +544,8 @@ function useAppStateValue() {
           questionId: a.questionId,
           deadline: a.config?.deadline,
           allowLateSubmission: a.config?.allowLateSubmission,
+          // 派發精靈選「立即開放」時進來的就已經是 Published（見 openAssignment）
+          opened: a.status === 'Published',
         });
       }
 
@@ -553,8 +555,8 @@ function useAppStateValue() {
         if (!prev) continue;
 
         if (prev.status !== next.status) {
-          // 三態只有 Draft ⇄ Published 是老師按得到的；Closed 是
-          // 「開過又收回」的結果，所以這裡只需要送 opened 布林
+          // 狀態只有 Draft ⇄ Published（學生看不看得到）。
+          // 收不收件看截止日，走下面的 config，不是這裡
           await setAssignmentOpened(next.id, next.status === 'Published');
         }
         if (prev.config?.deadline !== next.config?.deadline
@@ -615,7 +617,6 @@ function useAppStateValue() {
   );
   const [isGradedStatsOpen, setIsGradedStatsOpen] = useState(false);
   const [semesterFilter, setSemesterFilter] = useState<SemesterFilter>("ALL");
-  const [hideOverdueAssignments, setHideOverdueAssignments] = useState(false);
   const [selectedAiModel, setSelectedAiModel] = useState<string | null>(null);
   /** 代繳交視窗是否開著 */
   const [isProxySubmitOpen, setIsProxySubmitOpen] = useState(false);
@@ -735,16 +736,23 @@ function useAppStateValue() {
   const handleProxySubmit = async (
     selectedAssignmentId: string,
     studentId: string,
-    _studentName: string,
+    studentName: string,
     content: string,
+    /** 原稿在 GCS 的路徑。辨識時後端已經存好，這裡跟著存進 pic_files */
+    picFiles: string[] = [],
   ) => {
     try {
-      await proxySubmit(selectedAssignmentId, studentId, content);
+      await proxySubmit(selectedAssignmentId, studentId, content, picFiles);
       await reloadSubmissions();
       await ensureSubmissions(selectedAssignmentId);
-      setIsProxySubmitOpen(false);
+      /*
+        不關視窗 —— 按鈕寫的是「存檔並換下一位」，老師通常一次登錄一疊紙本。
+        以前每存一位就把視窗關掉，下一位要重新打開一次。
+      */
     } catch (e) {
       console.error('代繳交失敗:', e);
+      // 視窗已經清掉這一位的內容了，不講的話老師打的字就這樣不見
+      alert(`${studentName} 的作文沒有存進去：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -864,22 +872,36 @@ function useAppStateValue() {
   /**
    * 更換作業的題目。
    *
-   * 只在作業已關閉時開放（canSwapQuestion 會擋）。舊的繳交紀錄一律清除 ——
-   * 那些作文是照舊題目寫的，留著會被掛到新題目底下，包括已批改的。
-   * 這是不可逆的，所以走二次確認並明確說出會刪幾筆。
+   * 只在未開放、或已截止且不收遲交時開放（canSwapQuestion 會擋，後端也會回 409）。
+   * 舊的繳交紀錄一律清除 —— 那些作文是照舊題目寫的，留著會被掛到新題目底下，
+   * 包括已批改的。這是不可逆的，所以選好題目後再確認一次，並明確說出會刪幾筆。
    */
-  /**
-   * 換題。只有作業已關閉時前端才讓按（見 lib/assignments.ts 的 swapQuestion）——
-   * 換題會把既有的繳交作廢，開放中換掉等於把學生寫到一半的東西抽走。
-   */
-  const handleSwapQuestion = async (assignment: Assignment, question: Question) => {
-    try {
-      await swapAssignmentQuestion(assignment.id, question.id);
-      await reloadAssignments();
-      setSwappingAssignment(null);
-    } catch (e) {
-      console.error('換題失敗:', e);
-    }
+  const handleSwapQuestion = (assignment: Assignment, question: Question) => {
+    const affected = submissions.filter((sub) => sub.assignmentId === assignment.id).length;
+
+    setConfirmDialog({
+      isOpen: true,
+      title: "更換題目",
+      message:
+        `將「${assignment.title}」換成「${question.title}」。` +
+        (affected > 0
+          ? `\n\n這個班已經有 ${affected} 筆繳交紀錄（含已批改的），換題後會全部刪除，無法復原。`
+          : "\n\n目前沒有繳交紀錄。"),
+      onConfirm: async () => {
+        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        try {
+          await swapAssignmentQuestion(assignment.id, question.id);
+          // 換題等於整份作業重來：本地的繳交與標記一併拿掉，不等下次重載
+          setSubmissions((prev) => prev.filter((sub) => sub.assignmentId !== assignment.id));
+          await reloadAssignments();
+          setSwappingAssignment(null);
+        } catch (e) {
+          console.error('換題失敗:', e);
+          // 後端擋下（例如這段時間學生又能交了）要讓老師知道，不能默默沒反應
+          alert(`換題失敗：${e instanceof Error ? e.message : String(e)}`);
+        }
+      },
+    });
   };
 
 
@@ -953,8 +975,6 @@ function useAppStateValue() {
     setIsGradedStatsOpen,
     semesterFilter,
     setSemesterFilter,
-    hideOverdueAssignments,
-    setHideOverdueAssignments,
     selectedAiModel,
     setSelectedAiModel,
     isProxySubmitOpen,

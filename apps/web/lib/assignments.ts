@@ -4,16 +4,15 @@
  * 這裡的函式都沒有副作用、不依賴 React，可以直接在 console 驗證。
  * 比照 lib/folders.ts、lib/concern.ts、lib/statusStyles.ts 的做法。
  *
- * ── 三種狀態的語意 ──────────────────────────────────────────
- *   Draft      未開放。學生完全看不到，老師可以先把題目與截止日準備好
- *              （＝「預定計畫模式」）
- *   Published  進行中。學生看得到、可以繳交
- *   Closed     已關閉。學生仍可看到成績，但不能再繳交；
- *              也只有在這個狀態下才允許更換題目
+ * ── 作業的三個階段（assignmentPhase）──────────────────────────
+ *   未開放  status = Draft。學生完全看不到，老師可以先準備好
+ *   收件中  status = Published，沒有截止日或還沒到
+ *   已截止  status = Published，截止時間已過。學生看得到成績，
+ *           不能再交 —— 除非這份作業允許遲交
  *
- * 學生端的可見性判斷早就存在（StudentAssignments 排除 Draft、
- * StudentDashboard 只顯示 Published/Closed），所以「作業開關」
- * 就是在 Draft ⇄ Published 之間切換，不需要額外欄位。
+ * **收不收件只看截止日。** 「結束收件」就是把截止日設成現在，
+ * 「重新開放」就是把截止日往後改。資料裡只存「看不看得到」與截止日，
+ * 階段一律用 assignmentPhase() 算，不要在畫面裡自己判斷。
  */
 
 import { Assignment, Submission } from '../types';
@@ -71,16 +70,48 @@ export function isOverdue(assignment: Assignment, now: Date = new Date()): boole
   return d !== null && d < now;
 }
 
-/**
- * 作業在課程工作台裡的分組。
- * 「進行中」只算已開放且未過期的，這與 AssignmentsModal 原本的判斷一致。
- */
-export type AssignmentBucket = 'active' | 'draft' | 'closed';
+/** 作業的階段。徽章、篩選、學生端都用這一份 */
+export type AssignmentPhase = 'draft' | 'open' | 'ended';
 
-export function bucketOf(assignment: Assignment, now: Date = new Date()): AssignmentBucket {
+export const PHASE_LABEL: Record<AssignmentPhase, string> = {
+  draft: '未開放',
+  open: '收件中',
+  ended: '已截止',
+};
+
+export function assignmentPhase(assignment: Assignment, now: Date = new Date()): AssignmentPhase {
   if (assignment.status === 'Draft') return 'draft';
-  if (assignment.status === 'Closed') return 'closed';
-  return isOverdue(assignment, now) ? 'closed' : 'active';
+  return isOverdue(assignment, now) ? 'ended' : 'open';
+}
+
+/** 截止之後是否仍收件 */
+export function allowsLate(assignment: Assignment): boolean {
+  return assignment.config.allowLateSubmission === true;
+}
+
+/**
+ * 學生現在能不能繳交（含儲存草稿、掃描）。
+ * 老師代繳交**不受這個限制** —— 紙本本來就是老師收的。
+ */
+export function canStudentSubmit(assignment: Assignment, now: Date = new Date()): boolean {
+  const phase = assignmentPhase(assignment, now);
+  if (phase === 'draft') return false;
+  if (phase === 'open') return true;
+  return allowsLate(assignment);
+}
+
+/**
+ * 這份作品是不是遲交的：繳交時間晚於截止時間。
+ * 用算的不存 —— 老師事後改截止日，遲交與否要跟著變。
+ */
+export function isLateSubmission(
+  submission: Pick<Submission, 'submittedAt'>,
+  assignment: Assignment,
+): boolean {
+  const d = deadlineOf(assignment);
+  if (!d || !submission.submittedAt) return false;
+  const t = new Date(submission.submittedAt);
+  return !Number.isNaN(t.getTime()) && t > d;
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -118,7 +149,7 @@ export function firstWorthGrading(
     )[0];
   }
 
-  return list.find((a) => a.status === 'Published') ?? list[0];
+  return list.find((a) => assignmentPhase(a) === 'open') ?? list[0];
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -164,19 +195,21 @@ export function submissionStats(
    ══════════════════════════════════════════════════════════════ */
 
 /**
- * 作業開關：Draft ⇄ Published。
+ * 作業開關：Draft ⇄ Published（學生看不看得到）。
  * 第一次開放時記錄 publishedAt，之後再關再開不會覆蓋原始開放時間。
  */
 export function toggleVisibility(assignment: Assignment): Assignment {
-  if (assignment.status === 'Draft') {
-    return {
-      ...assignment,
-      status: 'Published',
-      publishedAt: assignment.publishedAt || new Date().toISOString(),
-    };
-  }
-  // Published 或 Closed 都收回成未開放
+  if (assignment.status === 'Draft') return openAssignment(assignment);
   return { ...assignment, status: 'Draft' };
+}
+
+/** 對學生開放 */
+export function openAssignment(assignment: Assignment): Assignment {
+  return {
+    ...assignment,
+    status: 'Published',
+    publishedAt: assignment.publishedAt || new Date().toISOString(),
+  };
 }
 
 /** 是否已對學生開放 */
@@ -184,27 +217,58 @@ export function isVisibleToStudents(assignment: Assignment): boolean {
   return assignment.status !== 'Draft';
 }
 
-/** 關閉作業：學生看得到成績但不能再繳交 */
-export function closeAssignment(assignment: Assignment): Assignment {
-  return { ...assignment, status: 'Closed' };
+/**
+ * 修改截止設定。
+ * @param deadline 空字串＝不設截止日；否則是 datetime-local 字串（YYYY-MM-DDTHH:mm）
+ */
+export function setDeadline(
+  assignment: Assignment,
+  deadline: string,
+  allowLate: boolean,
+): Assignment {
+  return {
+    ...assignment,
+    config: { ...assignment.config, deadline, allowLateSubmission: allowLate },
+  };
 }
 
-/** 重新開放 */
-export function reopenAssignment(assignment: Assignment): Assignment {
-  return { ...assignment, status: 'Published' };
+/** 現在時間的 datetime-local 字串（到分鐘） */
+export function localDateTimeString(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 /**
- * 是否允許更換題目。
+ * 立即截止：截止日設成現在。＝以前的「結束收件」。
  *
- * 未開放：學生根本沒看過這份作業，換題沒有任何風險。
- * 已關閉：老師已經明確宣告不收件了，換題前還會再確認一次。
- *
- * 已開放與已逾期不允許 —— 換題會清掉該作業所有的繳交紀錄，
- * 而這兩種狀態下可能還有學生正在寫（逾期作業若允許遲交仍收得到）。
+ * 往前挪一分鐘 —— datetime-local 只到分鐘，設成「這一分鐘」的話，
+ * 這一分鐘剩下的秒數內作業仍然算收件中，老師按了卻看不到變化。
  */
-export function canSwapQuestion(assignment: Assignment): boolean {
-  return assignment.status === 'Closed' || assignment.status === 'Draft';
+export function endNow(assignment: Assignment, now: Date = new Date()): Assignment {
+  const past = new Date(now.getTime() - 60_000);
+  return setDeadline(assignment, localDateTimeString(past), allowsLate(assignment));
+}
+
+/**
+ * 是否允許更換題目。換題會清掉這份作業所有的繳交紀錄，
+ * 所以只在「確定沒有人正在寫」的時候開放：
+ *
+ *   未開放             學生根本沒看過，沒有風險
+ *   已截止且不收遲交    收件已經結束
+ *
+ * 收件中、或已截止但允許遲交，都可能還有學生正在寫，不允許。
+ */
+export function canSwapQuestion(assignment: Assignment, now: Date = new Date()): boolean {
+  const phase = assignmentPhase(assignment, now);
+  return phase === 'draft' || (phase === 'ended' && !allowsLate(assignment));
+}
+
+/** 不能換題時給老師看的原因 */
+export function swapBlockedReason(assignment: Assignment, now: Date = new Date()): string {
+  if (canSwapQuestion(assignment, now)) return '';
+  return assignmentPhase(assignment, now) === 'open'
+    ? '收件中不能換題。請先把截止日設為現在（立即截止），或把作業改回未開放。'
+    : '這份作業允許遲交，可能還有學生正在寫。請先取消「允許遲交」。';
 }
 
 /**

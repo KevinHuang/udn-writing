@@ -69,7 +69,15 @@ const MAX_IMAGE_BASE64 = 11 * 1024 * 1024;
 
 /** 取出並檢查 { base64Image, mimeType }。不合法就回 400 並回傳 null */
 function readImageBody(ctx: Context): { base64Image: string; mimeType: string } | null {
-  const { base64Image, mimeType } = ctx.request.body as { base64Image?: string; mimeType?: string };
+  return readImage(ctx, ctx.request.body as { base64Image?: string; mimeType?: string });
+}
+
+/** 檢查一組 { base64Image, mimeType }。請求本體與 ocr_text 的 original 共用同一套規則 */
+function readImage(
+  ctx: Context,
+  source: { base64Image?: string; mimeType?: string } | undefined,
+): { base64Image: string; mimeType: string } | null {
+  const { base64Image, mimeType } = source ?? {};
   if (!base64Image || !mimeType) {
     Util.returnError(ctx, 400, 'Missing base64Image or mimeType.');
     return null;
@@ -100,11 +108,22 @@ function readImageBody(ctx: Context): { base64Image: string; mimeType: string } 
  * 回傳的 `files` 是**相對路徑**，要顯示得接上
  * `https://storage.googleapis.com/writing-classroom/`（bucket 公開讀取，
  * 與舊前端同一套）。
+ *
+ * **`original`（選填）是要留檔的那一張。** 稿紙掃描一頁產生兩份影像：
+ * 縮到長邊 2000px 的送辨識（夠 AI 讀、傳得快），全解析度的留給老師對照。
+ * 給了 original 就存它、辨識仍用 base64Image；沒給就照舊存辨識的那一張。
+ * 兩張在同一個請求裡，不會出現「辨識成功、原稿沒存到」的半套狀態。
  */
 router.post('/ocr_text', OAuthMiddleware.requireLogin, async (ctx: Context) => {
   const img = readImageBody(ctx);
   if (!img) return;
-  const { assignmentId } = ctx.request.body as { assignmentId?: string };
+  const { assignmentId, original } = ctx.request.body as {
+    assignmentId?: string;
+    original?: { base64Image?: string; mimeType?: string };
+  };
+  // 原稿的格式與大小也要先檢查 —— 不要辨識完（已經花了 AI 額度）才發現存不了
+  const keep = original ? readImage(ctx, original) : img;
+  if (!keep) return;
 
   try {
     const result = await new GenAIHelper().OCR([img.base64Image], img.mimeType);
@@ -122,7 +141,7 @@ router.post('/ocr_text', OAuthMiddleware.requireLogin, async (ctx: Context) => {
         前端送過來的是裸的 base64（fileToBase64 的輸出）。
       */
       const fileName = await StorageHelper.uploadImageIfBase64(
-        `data:${img.mimeType};base64,${img.base64Image}`, bucketFolder, prefix);
+        `data:${keep.mimeType};base64,${keep.base64Image}`, bucketFolder, prefix);
       if (fileName) files.push(`${bucketFolder}/${fileName}`);
     }
 

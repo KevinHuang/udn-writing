@@ -1,5 +1,37 @@
 import { api } from './client';
+import { STORAGE_BASE } from './ai';
 import { QuestionType, type Question, type TargetGrade, type QuestionSource } from '@udn/shared';
+
+/**
+ * 題目配圖在 GCS 的位置。後端 StorageHelper.uploadImageIfBase64 預設存在 `img/` 底下，
+ * `task.pic1` **只存檔名**（例如 `e1818328-….png`）。
+ */
+const QUESTION_IMAGE_BASE = `${STORAGE_BASE}img/`;
+
+/**
+ * `task.pic1` → 可以直接放進 `<img src>` 的網址。
+ *
+ * ⚠️ 以前直接把 pic1 當網址用 —— 只有檔名，瀏覽器去 localhost 找，
+ *    題庫與學生端的題目配圖全部破圖（實測：「我最喜歡的一本書」的卡片只剩替代文字）。
+ * 已經是完整網址、data URI（剛選好還沒上傳的）或帶路徑的，照原樣。
+ */
+export function questionImageUrl(pic1?: string | null): string | undefined {
+  if (!pic1) return undefined;
+  if (/^(https?:|data:|blob:)/.test(pic1)) return pic1;
+  return pic1.includes('/') ? STORAGE_BASE + pic1 : QUESTION_IMAGE_BASE + pic1;
+}
+
+/**
+ * 反過來：送回後端前把我們自己組出來的網址還原成檔名。
+ * 不還原的話，存一次檔 pic1 就從「檔名」變成「整串網址」，資料格式開始混雜。
+ * data URI 照送 —— 後端會把它上傳並換成檔名。
+ */
+function toStoredPic1(imageUrl?: string): string {
+  if (!imageUrl) return '';
+  if (imageUrl.startsWith(QUESTION_IMAGE_BASE)) return imageUrl.slice(QUESTION_IMAGE_BASE.length);
+  if (imageUrl.startsWith(STORAGE_BASE)) return imageUrl.slice(STORAGE_BASE.length);
+  return imageUrl;
+}
 
 interface RawTask {
   id: string;
@@ -78,7 +110,7 @@ function toQuestion(r: RawTask): Question {
     preferredAiModel: r.preferred_ai_model ?? undefined,
     aiImageDescription: r.pic1_description ?? undefined,
     teacherNotes: r.note ?? undefined,
-    imageUrl: r.pic1 || undefined,
+    imageUrl: questionImageUrl(r.pic1),
     imagePosition: r.pic_position === 'before' ? 'before' : 'after',
     targetGrades: (r.level ?? []).map((v) => LEVEL_TO_GRADE[v]).filter(Boolean),
     sources: (r.source ?? []).map((v) => SOURCE_TO_CODE[v]).filter(Boolean),
@@ -99,7 +131,7 @@ function toTaskPayload(q: Partial<Question>) {
     title: q.title,
     description: q.content,
     note: q.teacherNotes ?? '',
-    pic1: q.imageUrl ?? '',
+    pic1: toStoredPic1(q.imageUrl),
     pic_position: q.imagePosition ?? 'after',
     level: (q.targetGrades ?? []).map((g) => GRADE_TO_LEVEL[g]),
     source: (q.sources ?? []).map((s) => CODE_TO_SOURCE[s]).filter(Boolean),

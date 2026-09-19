@@ -3,6 +3,7 @@ import { ArrowLeft, Bot, Users, Hash } from 'lucide-react';
 import { Assignment, Course, Question, Submission } from '../types';
 import { CourseAssignmentList } from './CourseAssignmentList';
 import { semesterLabel } from '../lib/semester';
+import { SHOW_AI_MODEL_PICKER } from '../lib/features';
 
 interface CourseDetailProps {
   course: Course;
@@ -71,7 +72,8 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
             <span className="inline-flex items-center gap-1 bg-surface-soft text-text-secondary px-2.5 py-1 rounded-lg text-caption border border-border whitespace-nowrap">
               {semesterLabel(course.semester)}
             </span>
-            {models.length > 0 && (
+            {/* 批改模型的選擇目前隱藏（lib/features.ts），標籤跟著開關走 */}
+            {SHOW_AI_MODEL_PICKER && models.length > 0 && (
               <span
                 className="inline-flex items-center gap-1 bg-primary/10 text-primary px-2.5 py-1 rounded-lg text-caption border border-primary/20 whitespace-nowrap"
                 title={models.join('、')}

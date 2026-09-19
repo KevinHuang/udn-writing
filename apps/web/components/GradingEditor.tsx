@@ -120,6 +120,13 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
    */
   const draftImages = submission.picFiles ?? [];
   const hasDraft = draftImages.length > 0;
+  /**
+   * 原稿一次看一頁。以前是全部往下堆，一張 A3 稿紙就佔滿整個畫面，
+   * 第二頁要捲很久才看得到，也不知道總共幾頁。
+   * 夾在範圍內：換到頁數比較少的另一份繳交時，不會停在不存在的頁碼。
+   */
+  const [draftIndex, setDraftIndex] = useState(0);
+  const draftPage = Math.min(draftIndex, Math.max(0, draftImages.length - 1));
 
 
 
@@ -231,7 +238,11 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
             
             <button 
                 id="gradingeditor-btn-viewdraft"
-                onClick={() => hasDraft && setShowHandwritten(true)}
+                onClick={() => {
+                    if (!hasDraft) return;
+                    setDraftIndex(0);   // 每次打開都從第 1 頁看起
+                    setShowHandwritten(true);
+                }}
                 disabled={!hasDraft}
                 className={`shrink-0 whitespace-nowrap flex items-center gap-1 md:gap-2 px-2 md:px-3 py-2 md:py-2.5 rounded-xl text-body font-bold transition-all border group ${
                     hasDraft
@@ -636,19 +647,41 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                   ⚠️ 這裡以前寫死一張 Unsplash 的示範照片，跟學生完全無關。
                      現在顯示 submission.pic_files 裡真正的原稿（可能多頁）。
                 */}
-                <div className="overflow-auto max-h-full rounded-lg shadow-2xl space-y-2">
-                    {draftImages.map((path, i) => (
-                      <img
-                        key={path}
-                        src={imageUrlOf(path)}
-                        alt={`手寫原稿第 ${i + 1} 頁`}
+                <div className="overflow-auto max-h-full rounded-lg shadow-2xl">
+                    <img
+                        key={draftImages[draftPage]}
+                        src={imageUrlOf(draftImages[draftPage])}
+                        alt={`手寫原稿第 ${draftPage + 1} 頁`}
                         className="max-h-[85vh] max-w-full object-contain"
-                      />
-                    ))}
+                    />
                 </div>
-                <p className="text-on-solid mt-4 font-normal bg-black/50 px-4 py-2 rounded-full backdrop-blur-md">
-                  學生手寫原稿{draftImages.length > 1 ? `（${draftImages.length} 頁）` : ''}
-                </p>
+                <div className="mt-4 flex items-center gap-3 bg-black/50 px-4 py-2 rounded-full backdrop-blur-md">
+                    {draftImages.length > 1 && (
+                        <button
+                            id="gradingeditor-modal-btn-prevdraft"
+                            onClick={() => setDraftIndex(Math.max(0, draftPage - 1))}
+                            disabled={draftPage === 0}
+                            aria-label="上一頁原稿"
+                            className="tap-target p-1 text-on-solid disabled:opacity-30"
+                        >
+                            <ChevronLeft size={18} />
+                        </button>
+                    )}
+                    <span className="text-on-solid font-normal tabular-nums whitespace-nowrap">
+                        學生手寫原稿 {draftPage + 1} / {draftImages.length}
+                    </span>
+                    {draftImages.length > 1 && (
+                        <button
+                            id="gradingeditor-modal-btn-nextdraft"
+                            onClick={() => setDraftIndex(Math.min(draftImages.length - 1, draftPage + 1))}
+                            disabled={draftPage >= draftImages.length - 1}
+                            aria-label="下一頁原稿"
+                            className="tap-target p-1 text-on-solid disabled:opacity-30"
+                        >
+                            <ChevronRight size={18} />
+                        </button>
+                    )}
+                </div>
             </div>
         </div>
       )}

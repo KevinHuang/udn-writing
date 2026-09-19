@@ -4,6 +4,7 @@ import {
   Check,
   FileText,
   Loader2,
+  ScanLine,
   Trash2,
   Upload,
   UserCheck,
@@ -20,13 +21,20 @@ import { seatText } from '../lib/gradingQueue';
 import { checkImageFile } from '../lib/questionMeta';
 import { fileToBase64 } from '../lib/fileToBase64';
 import { extractTextFromImage } from '../api/ai';
+import { blobToBase64 } from '../lib/scan/image';
+import { DocumentScannerModal, type ScannedPage } from './scan/DocumentScannerModal';
 
 interface ProxySubmitModalProps {
   assignment: Assignment;
   /** App.tsx 已經把名冊與繳交狀態合併好了，這裡不重算 */
   rosterSubmissions: Submission[];
   onClose: () => void;
-  onProxySubmit: (studentId: string, studentName: string, content: string) => void;
+  /**
+   * 登錄一位學生的紙本作文。
+   * picFiles 是這一位的原稿在 GCS 的相對路徑（辨識時已由後端存好），
+   * 要跟著存進 submission.pic_files，老師批改時才看得到原稿。
+   */
+  onProxySubmit: (studentId: string, studentName: string, content: string, picFiles: string[]) => void;
 }
 
 /**
@@ -51,6 +59,15 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
   const [fileIssues, setFileIssues] = useState<string[]>([]);
   /** 這次開窗已經登錄了幾位。給老師一個進度感 */
   const [doneCount, setDoneCount] = useState(0);
+  /** 掃描視窗開著沒有 */
+  const [scannerOpen, setScannerOpen] = useState(false);
+  /**
+   * 這一位的原稿路徑（掃描與直接拍照都算）。
+   *
+   * ⚠️ 以前辨識回來的 files 被丟掉了（`const { text } = ...`）——
+   *    照片明明存進了 GCS，代繳交的作品在批改頁卻永遠打不開原稿。
+   */
+  const [picFiles, setPicFiles] = useState<string[]>([]);
 
   /** 還沒交的人。草稿也算 —— 學生寫了沒送出，紙本一樣要登錄 */
   const pendingStudents = useMemo(
@@ -67,6 +84,37 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
     setActiveStudentId(studentId);
     setContent('');
     setFileIssues([]);
+    setPicFiles([]);
+  };
+
+  /**
+   * 掃好一頁：辨識出來的文字接在內容後面，全解析度原稿由後端存進 GCS。
+   * 這一張已經拉正、去陰影過，辨識率比直接拍照好很多。
+   */
+  const handleScannedPage = async (page: ScannedPage) => {
+    setIsOcrLoading(true);
+    setOcrProgress({ current: 1, total: 1 });
+    try {
+      const [ocrBase64, fullBase64] = await Promise.all([
+        blobToBase64(page.ocrBlob),
+        blobToBase64(page.fullBlob),
+      ]);
+      const ocr = await extractTextFromImage(ocrBase64, page.ocrBlob.type, assignment.id, {
+        base64Image: fullBase64,
+        mimeType: page.fullBlob.type,
+      });
+      if (ocr.files.length) setPicFiles((prev) => [...prev, ...ocr.files]);
+      if (ocr.text) {
+        setContent((prev) => (prev ? prev + '\n\n' + ocr.text : ocr.text));
+      } else {
+        setFileIssues(['這一張沒有辨識出文字。可以重掃，或直接在下方打字。']);
+      }
+    } catch {
+      setFileIssues(['辨識失敗，請稍後再試，或直接在下方打字。']);
+    } finally {
+      setIsOcrLoading(false);
+      setOcrProgress({ current: 0, total: 0 });
+    }
   };
 
   const processImages = async (files: FileList | null) => {
@@ -96,8 +144,9 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
         const file = usable[i];
         try {
           const base64 = await fileToBase64(file);
-          // 教師代繳交同樣要留檔 —— 回傳的是 { text, files }，不是字串
-          const { text } = await extractTextFromImage(base64, file.type, assignment.id);
+          // 教師代繳交同樣要留檔 —— 回傳的 files 要收下來，存檔時一起送出
+          const { text, files } = await extractTextFromImage(base64, file.type, assignment.id);
+          if (files.length) setPicFiles((prev) => [...prev, ...files]);
           if (text) combined += (combined ? '\n\n' : '') + text;
           else issues.push(`${file.name}：辨識不到文字`);
         } catch {
@@ -122,11 +171,12 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
 
   const save = () => {
     if (!active || !content.trim()) return;
-    onProxySubmit(active.studentId, active.studentName, content.trim());
+    onProxySubmit(active.studentId, active.studentName, content.trim(), picFiles);
     setDoneCount((n) => n + 1);
     setActiveStudentId(null);
     setContent('');
     setFileIssues([]);
+    setPicFiles([]);
   };
 
   return (
@@ -215,12 +265,21 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
 
                 {/* 上傳。相機與選檔分開兩顆，手機上 capture 才會直接開相機 */}
                 <div className="flex flex-wrap gap-2">
+                  <button
+                    id="proxysubmit-btn-scan"
+                    type="button"
+                    onClick={() => setScannerOpen(true)}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-secondary text-on-accent text-body hover:opacity-90 transition-opacity whitespace-nowrap"
+                  >
+                    <ScanLine size={16} className="shrink-0" />
+                    掃描稿紙
+                  </button>
                   <label
                     id="proxysubmit-btn-camera"
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-secondary text-on-accent text-body cursor-pointer hover:opacity-90 transition-opacity"
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-card border border-border-strong text-text-primary text-body cursor-pointer hover:bg-surface-soft transition-colors whitespace-nowrap"
                   >
                     <Camera size={16} className="shrink-0" />
-                    拍照辨識
+                    直接拍照
                     <input
                       type="file"
                       accept="image/jpeg,image/png,image/webp"
@@ -261,6 +320,13 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                     </button>
                   )}
                 </div>
+
+                {picFiles.length > 0 && (
+                  <p className="flex items-center gap-1.5 text-caption text-success-700">
+                    <ScanLine size={13} className="shrink-0" />
+                    已留存 {picFiles.length} 張原稿，存檔後老師批改時看得到
+                  </p>
+                )}
 
                 {isOcrLoading && (
                   <div className="flex items-center gap-2 text-body text-primary">
@@ -326,6 +392,16 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
           </button>
         </div>
       </div>
+
+      {scannerOpen && (
+        <DocumentScannerModal
+          subtitle={active ? `${seatText(active.seatNo)} ${active.studentName}` : undefined}
+          pageCount={picFiles.length}
+          allowSystemCamera={false}
+          onClose={() => setScannerOpen(false)}
+          onPage={handleScannedPage}
+        />
+      )}
     </div>
   );
 };

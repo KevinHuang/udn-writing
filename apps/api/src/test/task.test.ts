@@ -9,7 +9,7 @@
 import { test, before, after, beforeEach, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  resetDb, rawDb, seedUser, seedSchool, seedCourse, seedInstructor,
+  resetDb, rawDb, seedUser, seedSchool, seedCourse, seedInstructor, seedSystemAdmin, seedOrg,
   startFakeIdp, startServer, login, req, type TestServer,
 } from './helpers';
 
@@ -186,5 +186,155 @@ describe('題庫資料夾', () => {
       `INSERT INTO task_folder (name, ref_user_id, shared) VALUES ('別人的', $1, false) RETURNING id::text`, [other.id]);
     const { cookie } = await asTeacher();
     assert.equal((await req(srv, `/service/instructor/folders/${theirs.id}`, cookie, { method: 'DELETE' })).status, 404);
+  });
+});
+
+/**
+ * 共同題庫只有聯合報管理人員能動。
+ *
+ * 授課教師對共同題庫**唯讀**：不能新增、修改、封存、刪除題目與資料夾，
+ * 也不能把自己的題目改成共用 —— 那等於把個人題目匯入共同題庫。
+ * 以前 POST /tasks、POST /folders 直接吃前端送來的 shared，畫面沒按鈕，
+ * 打 API 照樣建得進去。
+ */
+describe('共同題庫的權限', () => {
+  const base = { title: '共用題', description: '題說', note: '', pic1: '', picPosition: 'after', level: [], source: [] };
+  const post = (cookie: string, path: string, body: unknown) =>
+    req(srv, path, cookie, { method: 'POST', ...json(body) });
+  const put = (cookie: string, path: string, body: unknown) =>
+    req(srv, path, cookie, { method: 'PUT', ...json(body) });
+  const setIdentity = (cookie: string, type: string) => post(cookie, '/auth/identity', { type });
+  const countShared = async (table: string) =>
+    (await rawDb.one(`SELECT count(*)::int AS n FROM ${table} WHERE shared = true`)).n;
+
+  /** 舊資料裡老師自己建的共用題與共用資料夾（直接寫資料庫造出來） */
+  const seedLegacyShared = async (userId: string) => ({
+    task: (await rawDb.one(
+      `INSERT INTO task (title, description, ref_user_id, shared) VALUES ('舊共用題', '題說', $1, true) RETURNING id::text`,
+      [userId])).id as string,
+    folder: (await rawDb.one(
+      `INSERT INTO task_folder (name, shared, ref_user_id) VALUES ('舊共用夾', true, $1) RETURNING id::text`,
+      [userId])).id as string,
+  });
+
+  test('授課教師不能在共同題庫新增題目或資料夾 → 403，什麼都沒寫進去', async () => {
+    const { cookie } = await asTeacher();
+    assert.equal((await post(cookie, '/service/instructor/tasks', { ...base, shared: true })).status, 403);
+    assert.equal((await post(cookie, '/service/instructor/folders', { name: '共用夾', shared: true })).status, 403);
+    assert.equal(await countShared('task'), 0);
+    assert.equal(await countShared('task_folder'), 0);
+  });
+
+  test('授課教師不能把自己的題目改成共用（＝匯入）→ 403', async () => {
+    const { cookie } = await asTeacher();
+    const mine = await (await post(cookie, '/service/instructor/tasks', { ...base, shared: false })).json();
+    const res = await put(cookie, `/service/instructor/tasks/${mine.id}`, { ...base, shared: true });
+    assert.equal(res.status, 403);
+    assert.equal(await countShared('task'), 0, '題目仍然是個人的');
+  });
+
+  test('舊資料裡自己建的共用題：修改、封存、刪除都 → 403', async () => {
+    const { user, cookie } = await asTeacher();
+    const { task } = await seedLegacyShared(user.id);
+    assert.equal((await put(cookie, `/service/instructor/tasks/${task}`, { ...base, shared: true })).status, 403);
+    assert.equal((await put(cookie, `/service/instructor/tasks/${task}/archived`, { archived: true })).status, 403);
+    assert.equal((await req(srv, `/service/instructor/tasks/${task}`, cookie, { method: 'DELETE' })).status, 403);
+    const row = await rawDb.one(`SELECT title, is_archived FROM task WHERE id = $1`, [task]);
+    assert.equal(row.title, '舊共用題');
+    assert.equal(row.is_archived, false);
+  });
+
+  test('共同題庫的資料夾：改名、刪除都 → 403', async () => {
+    const { user, cookie } = await asTeacher();
+    const { folder } = await seedLegacyShared(user.id);
+    assert.equal((await put(cookie, `/service/instructor/folders/${folder}`, { name: '改名' })).status, 403);
+    assert.equal((await req(srv, `/service/instructor/folders/${folder}`, cookie, { method: 'DELETE' })).status, 403);
+    assert.equal((await rawDb.one(`SELECT name FROM task_folder WHERE id = $1`, [folder])).name, '舊共用夾');
+  });
+
+  test('個人題庫照常可以新增、修改、封存、刪除', async () => {
+    const { cookie } = await asTeacher();
+    const mine = await (await post(cookie, '/service/instructor/tasks', { ...base, shared: false })).json();
+    assert.equal((await put(cookie, `/service/instructor/tasks/${mine.id}`, { ...base, title: '改過', shared: false })).status, 200);
+    assert.equal((await put(cookie, `/service/instructor/tasks/${mine.id}/archived`, { archived: true })).status, 200);
+    assert.equal((await req(srv, `/service/instructor/tasks/${mine.id}`, cookie, { method: 'DELETE' })).status, 200);
+  });
+
+  /** 別人建的題目，直接寫資料庫造 */
+  const seedTaskOf = async (userId: string, shared: boolean, orgId: string | null, title: string) =>
+    (await rawDb.one(
+      `INSERT INTO task (title, description, ref_user_id, shared, ref_org_id) VALUES ($1, '題說', $2, $3, $4) RETURNING id::text`,
+      [title, userId, shared, orgId])).id as string;
+  const listTitles = async (cookie: string) =>
+    ((await (await req(srv, '/service/instructor/tasks', cookie)).json()) as { title: string }[]).map((t) => t.title);
+
+  test('聯合報管理人員可以在共同題庫新增題目與資料夾，不帶班也掛得上組織', async () => {
+    // 不帶班的管理人員：以前整個 /instructor 只認授課教師，題庫 API 一律 403
+    await seedUser(ACCOUNT, '管理員');
+    await seedSystemAdmin(ACCOUNT);
+    const org = await seedOrg();
+    const cookie = await login(srv);
+    await setIdentity(cookie, 'system_admin');
+
+    const task = await (await post(cookie, '/service/instructor/tasks', { ...base, shared: true })).json();
+    const folder = await (await post(cookie, '/service/instructor/folders', { name: '共用夾', shared: true })).json();
+    // 共用的一定要有組織，授課教師才看得到（以前 task 完全沒寫 ref_org_id）
+    assert.equal(String(task.ref_org_id), org);
+    assert.equal(String(folder.ref_org_id), org);
+  });
+
+  test('管理人員建的共用題，授課教師看得到', async () => {
+    await seedSystemAdmin(ACCOUNT);
+    const { cookie } = await asTeacher();                 // 同一個帳號也帶班
+    await setIdentity(cookie, 'system_admin');
+    assert.equal((await post(cookie, '/service/instructor/tasks', { ...base, title: '管理員出的題', shared: true })).status, 200);
+
+    await setIdentity(cookie, 'instructor');
+    assert.ok((await listTitles(cookie)).includes('管理員出的題'), '切回教師身分要看得到');
+  });
+
+  test('管理人員看得到全部共用題（不分組織）；授課教師只看得到自己組織的', async () => {
+    await seedSystemAdmin(ACCOUNT);
+    const { cookie } = await asTeacher();
+    const other = await seedUser('other@test.edu.tw', '別校老師');
+    await seedTaskOf(other.id, true, await seedOrg('別的組織'), '別組織的共用題');
+    await seedTaskOf(other.id, false, null, '別人的個人題');
+
+    await setIdentity(cookie, 'system_admin');
+    const asAdmin = await listTitles(cookie);
+    assert.ok(asAdmin.includes('別組織的共用題'));
+    assert.ok(!asAdmin.includes('別人的個人題'), '別人的個人題不是共同題庫的一部分');
+
+    await setIdentity(cookie, 'instructor');
+    assert.ok(!(await listTitles(cookie)).includes('別組織的共用題'));
+  });
+
+  test('管理人員可以改、封存、刪別人的共用題；動不了別人的個人題，也不能把共用題改成個人題', async () => {
+    await seedUser(ACCOUNT, '管理員');
+    await seedSystemAdmin(ACCOUNT);
+    const other = await seedUser('other@test.edu.tw', '別人');
+    const shared = await seedTaskOf(other.id, true, await seedOrg(), '別人的共用題');
+    const personal = await seedTaskOf(other.id, false, null, '別人的個人題');
+    const cookie = await login(srv);
+    await setIdentity(cookie, 'system_admin');
+
+    // 送 shared: false 也不會讓它變成「掛在別人名下的個人題」
+    assert.equal((await put(cookie, `/service/instructor/tasks/${shared}`, { ...base, title: '管理員改過', shared: false })).status, 200);
+    const row = await rawDb.one(`SELECT title, shared FROM task WHERE id = $1`, [shared]);
+    assert.equal(row.title, '管理員改過');
+    assert.equal(row.shared, true);
+
+    assert.equal((await put(cookie, `/service/instructor/tasks/${shared}/archived`, { archived: true })).status, 200);
+    assert.equal((await put(cookie, `/service/instructor/tasks/${personal}`, { ...base, shared: false })).status, 404);
+    assert.equal((await req(srv, `/service/instructor/tasks/${personal}`, cookie, { method: 'DELETE' })).status, 404);
+    assert.equal((await req(srv, `/service/instructor/tasks/${shared}`, cookie, { method: 'DELETE' })).status, 200);
+  });
+
+
+  test('有管理資格、但切回授課教師身分時一樣不能動共同題庫', async () => {
+    await seedSystemAdmin(ACCOUNT);
+    const { cookie } = await asTeacher();
+    await setIdentity(cookie, 'instructor');
+    assert.equal((await post(cookie, '/service/instructor/tasks', { ...base, shared: true })).status, 403);
   });
 });

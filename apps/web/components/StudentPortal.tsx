@@ -17,7 +17,7 @@ import {
   ArrowLeft
 } from 'lucide-react';
 import { BrandMark } from './BrandMark';
-import { deadlineOf } from '../lib/assignments';
+import { deadlineOf, assignmentPhase, canStudentSubmit } from '../lib/assignments';
 
 /**
  * 學生端的版面。
@@ -78,15 +78,14 @@ export const StudentPortal: React.FC = () => {
         return; // Already submitted
       }
 
-      // 沒設截止日就不會逾期，也就不該發逾期通知
       const deadline = deadlineOf(assignment);
-      const isOverdue = deadline !== null && now > deadline;
 
-      if (isOverdue && assignment.config.allowLateSubmission) {
+      // 只提醒「過了截止但還能補交」的：不收遲交的，提醒了也做不到
+      if (assignmentPhase(assignment, now) === 'ended' && canStudentSubmit(assignment, now)) {
         notifs.push({
           id: `notif-overdue-${assignment.id}`,
-          title: '作業已逾期',
-          message: `您的作業「${assignment.title}」已於 ${(deadline as Date).toLocaleDateString()} 截止。`,
+          title: '作業已截止，仍可遲交',
+          message: `「${assignment.title}」已於 ${(deadline as Date).toLocaleDateString()} 截止，老師允許遲交，現在繳交會標示為遲交。`,
           time: (deadline as Date).toLocaleString(),
           assignmentId: assignment.id,
           isOverdue: true

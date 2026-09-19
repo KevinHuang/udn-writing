@@ -1,38 +1,25 @@
 import React, { useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  Clock, CheckCircle, ChevronRight, ArrowRight, ArrowLeft, Bot, ChevronDown, CheckSquare, Wand2, Loader2, Send, RotateCcw, SendHorizontal,
-  Check, Camera, AlertTriangle, Image as ImageIcon,
+  ChevronRight, ArrowLeft, Bot, ChevronDown, Wand2, Loader2, Send, RotateCcw,
+  Check, Camera, Image as ImageIcon,
 } from "lucide-react";
 import { StatusBadge } from "../components/StatusBadge";
 import { SubmissionStampRow } from "../components/SubmissionStamp";
 import { ProxySubmitModal } from "../components/ProxySubmitModal";
+import { GradingHub } from "../components/GradingHub";
 import { useAppState } from "../state/appStateContext";
 import { useGoBack } from "../lib/useGoBack";
 import { routes, queryKeys } from "../lib/routes";
 import { canMark, hasMark } from "../lib/submissionMarks";
 import { rosterOf, seatText } from "../lib/gradingQueue";
 import {
-  assignmentsForCourse, isOverdue as isAssignmentOverdue, hasDeadline, deadlineLabel,
-  firstWorthGrading,
+  assignmentsForCourse, firstWorthGrading, isLateSubmission,
 } from "../lib/assignments";
 import { orderedAssignments, orderNumbers } from "../lib/assignmentOrder";
 import { levelStyle, MAX_LEVEL } from "../lib/scoring";
 import { SHOW_AI_MODEL_PICKER } from "../lib/features";
 
-
-/**
- * 日期時間，沒有值或解析不出來就回「—」。
- *
- * `new Date(undefined || '')` 得到的是 Invalid Date，而它的
- * toLocaleDateString() 回傳字串 "Invalid Date" —— 會原樣印在畫面上。
- */
-function formatDateTime(value?: string): string {
-  if (!value) return '—';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return '—';
-  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-}
 
 export const GradingListPage: React.FC = () => {
   const navigate = useNavigate();
@@ -42,19 +29,19 @@ export const GradingListPage: React.FC = () => {
     assignments,
     courses,
     currentSemester,
+    setCurrentSemester,
+    semesterOptions,
     currentlyGradingId,
     handleBatchGrade,
     handleBatchPublish,
     handleBatchReset,
     handleClearSubmission,
     handleProxySubmit,
-    hideOverdueAssignments,
     isBatchGrading,
     isProxySubmitOpen,
     myCourses,
     selectedAiModel,
     selectedSubmissionIds,
-    setHideOverdueAssignments,
     setIsProxySubmitOpen,
     setSelectedAiModel,
     setSelectedSubmissionIds,
@@ -245,7 +232,7 @@ export const GradingListPage: React.FC = () => {
                 </label>
 
                 <label className="flex flex-col gap-1">
-                  <span className="text-caption text-text-secondary">選擇任務</span>
+                  <span className="text-caption text-text-secondary">選擇作業</span>
                   <div className="relative">
                     <select
                       id="gradinglist-select-assignment"
@@ -409,8 +396,8 @@ export const GradingListPage: React.FC = () => {
                 assignment={assignment}
                 rosterSubmissions={sortedSubmissions}
                 onClose={() => setIsProxySubmitOpen(false)}
-                onProxySubmit={(studentId, content, picFiles) =>
-                  handleProxySubmit(selectedAssignmentId, studentId, content, picFiles)
+                onProxySubmit={(studentId, studentName, content, picFiles) =>
+                  handleProxySubmit(selectedAssignmentId, studentId, studentName, content, picFiles)
                 }
               />
             )}
@@ -539,6 +526,12 @@ export const GradingListPage: React.FC = () => {
                         {s.submittedAt
                           ? `繳交於 ${new Date(s.submittedAt).toLocaleDateString()}`
                           : "尚未繳交"}
+                        {/* 遲交用算的不存（lib/assignments.ts）—— 老師事後改截止日，標示跟著變 */}
+                        {assignment &&
+                          s.status !== "Unsubmitted" &&
+                          s.status !== "Draft" &&
+                          isLateSubmission(s, assignment) &&
+                          "・遲交"}
                       </span>
                       {/*
                         章自己會 stopPropagation（見 SubmissionStamp），
@@ -703,6 +696,14 @@ export const GradingListPage: React.FC = () => {
                             {s.status === "Unsubmitted" || s.status === "Draft" || !s.submittedAt
                               ? "-"
                               : `${new Date(s.submittedAt).toLocaleDateString()} ${new Date(s.submittedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
+                            {assignment &&
+                              s.status !== "Unsubmitted" &&
+                              s.status !== "Draft" &&
+                              isLateSubmission(s, assignment) && (
+                                <span className="ml-1.5 px-1.5 py-0.5 rounded bg-warning-100 text-warning-700 border border-warning-200">
+                                  遲交
+                                </span>
+                              )}
                           </td>
                           {/*
                             不能蓋的列照樣把兩顆章畫出來（disabled）。
@@ -817,206 +818,22 @@ export const GradingListPage: React.FC = () => {
         );
       }
 
-      const activeAssignments = assignments
-        .filter((a) => {
-          const course = courses.find((c) => c.id === a.courseId);
-          const isOverdue = isAssignmentOverdue(a);
-          if (hideOverdueAssignments && isOverdue) return false;
-          return course?.semester === currentSemester && a.status !== "Draft";
-        })
-        .map((a) => {
-          const pendingCount = submissions.filter(
-            (s) => s.assignmentId === a.id && s.status === "Pending",
-          ).length;
-          const gradedCount = submissions.filter(
-            (s) => s.assignmentId === a.id && s.status === "Graded",
-          ).length;
-          const publishedCount = submissions.filter(
-            (s) => s.assignmentId === a.id && s.status === "Published",
-          ).length;
-          const course = courses.find((c) => c.id === a.courseId);
-          const isOverdue = isAssignmentOverdue(a);
-
-          return {
-            ...a,
-            courseName: course?.name,
-            pendingCount,
-            gradedCount,
-            publishedCount,
-            totalCount: pendingCount + gradedCount + publishedCount,
-            isOverdue,
-          };
-        })
-        // Sort: Has pending -> Overdue -> Date
-        .sort((a, b) => {
-          if (a.pendingCount > 0 && b.pendingCount === 0) return -1;
-          if (a.pendingCount === 0 && b.pendingCount > 0) return 1;
-          return (
-            new Date(b.createdAt || "").getTime() -
-            new Date(a.createdAt || "").getTime()
-          );
-        });
-
+      /*
+        作業牆 → 批改入口（GradingHub）：待批改在上、依縣市學校分組的班級在下。
+        以前是本學期所有作業混成一整片卡片，班級一多就找不到。
+        「隱藏截止」由入口頁的「收件中／已截止」篩選取代。
+      */
       return (
-        <div className="max-w-7xl mx-auto space-y-6">
-          <div className="flex items-center gap-3 md:gap-4 mb-4 md:mb-6">
-            <button id="grading-btn-back"
-              onClick={goBack}
-              className="p-2 -ml-2 rounded-full hover:bg-card/50 text-text-secondary transition-colors"
-            >
-              <ArrowLeft size={24} />
-            </button>
-            <div>
-              <h2 className="text-display font-bold text-text-primary tracking-tight">
-                批改作業
-              </h2>
-              <p className="text-text-secondary font-normal text-ui">選擇一份作業開始批改</p>
-            </div>
-            <div className="ml-auto flex items-center gap-2">
-              <button id="grading-btn-hide-overdue"
-                onClick={() =>
-                  setHideOverdueAssignments(!hideOverdueAssignments)
-                }
-                className={`flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2 rounded-xl text-body font-bold transition-all ${
-                  hideOverdueAssignments
-                    ? "bg-primary text-on-accent shadow-md"
-                    : "bg-card text-text-secondary border border-border hover:bg-surface-soft"
-                }`}
-              >
-                {hideOverdueAssignments ? (
-                  <CheckCircle size={14} className="text-accent md:size-[16px]" />
-                ) : (
-                  <Clock size={14} className="md:size-[16px]" />
-                )}
-                {hideOverdueAssignments ? "已隱藏截止" : "隱藏截止"}
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {activeAssignments.map((assignment) => (
-              <div
-                key={assignment.id}
-                onClick={() => {
-                  // 「回到這一頁時應該落在作業牆，而不是某一份作業」——
-                  // 先前要手動 push 一筆 viewHistory 才做得到。
-                  // 現在作業牆就是 /grading，選定某份是 /grading?assignment=…，
-                  // 返回鍵自然會退回作業牆，不需要任何額外處理。
-                  navigate(routes.gradingList({ assignmentId: assignment.id }));
-                }}
-                className={`relative bg-card p-4 rounded-xl border transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg cursor-pointer group flex flex-col h-full ${
-                  assignment.isOverdue
-                    ? "border-danger-200 shadow-card"
-                    : "border-border shadow-card hover:border-primary/30"
-                }`}
-              >
-                {/* Overdue Badge */}
-                {assignment.isOverdue && (
-                  <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-danger-600 text-on-accent text-caption px-2.5 py-0.5 rounded-full shadow-sm flex items-center gap-1 z-10">
-                    <AlertTriangle size={12} /> 已過截止
-                  </div>
-                )}
-
-                <div className="flex justify-between items-start gap-2 mb-2.5">
-                  {/*
-                    課程名稱可壓縮並截斷。原本它和右邊的徽章都是 whitespace-nowrap，
-                    名稱一長就把徽章往外推 —— 實測「桃園市東門國小彈性學習：閱讀與寫作」
-                    在 375px 把徽章推到螢幕外 11px。要讓步的是描述文字，不是狀態徽章。
-                  */}
-                  <span
-                    title={assignment.courseName}
-                    className="min-w-0 truncate bg-surface-soft text-text-secondary text-caption px-2.5 py-1 rounded-md border border-border"
-                  >
-                    {assignment.courseName}
-                  </span>
-                  {/*
-                    手機不顯示：下方統計列本來就有「待批改: N」，這裡是重複資訊，
-                    而窄卡片上它正是把版面擠爆的那一個。
-                  */}
-                  {assignment.pendingCount > 0 && (
-                    <span className="hidden sm:flex shrink-0 bg-secondary/10 text-secondary text-caption px-2.5 py-1 rounded-full border border-secondary/20 items-center gap-1 whitespace-nowrap">
-                      <div className="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse"></div>
-                      {assignment.pendingCount} 份待批改
-                    </span>
-                  )}
-                </div>
-
-                <h3 className="text-title font-bold text-text-primary mb-3 leading-snug group-hover:text-primary transition-colors">
-                  {assignment.title}
-                </h3>
-
-                <div className="space-y-1 mb-3 mt-auto">
-                  <div className="flex items-center gap-1.5 text-caption text-text-secondary font-normal">
-                    <SendHorizontal size={14} className="text-text-muted" />
-                    <span>派發時間：</span>
-                    {/*
-                      ⚠️ **不要寫 `new Date(x || '')`。** `new Date('')` 是
-                         Invalid Date，而 toLocaleDateString() 會把它印成字串
-                         「Invalid Date」直接顯示在畫面上 —— 實測時三張卡片
-                         都是這樣（createdAt 沒接上，見 api/assignments.ts
-                         的 start_date）。沒有值就顯示破折號。
-                    */}
-                    <span className="font-mono text-text-primary/80">
-                      {formatDateTime(assignment.createdAt)}
-                    </span>
-                  </div>
-                  <div
-                    className={`flex items-center gap-1.5 text-caption font-normal ${assignment.isOverdue ? "text-danger-600" : "text-text-secondary"}`}
-                  >
-                    <Clock
-                      size={14}
-                      className={
-                        assignment.isOverdue ? "text-danger-600" : "text-text-muted"
-                      }
-                    />
-                    <span>截止時間：</span>
-                    <span className="font-mono">
-                      {/* 沒設截止日時顯示「無截止日」，不要印出 Invalid Date */}
-                      {hasDeadline(assignment)
-                        ? deadlineLabel(assignment, { withTime: true })
-                        : deadlineLabel(assignment)}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="pt-3 border-t border-border">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-baseline gap-1 text-caption text-text-secondary">
-                      <span>
-                        總計: {assignment.totalCount}/{assignment.totalStudents}
-                      </span>
-                    </div>
-                    <div
-                      className={`w-7 h-7 shrink-0 rounded-full flex items-center justify-center transition-colors ${assignment.pendingCount > 0 ? "bg-secondary/10 text-secondary group-hover:bg-secondary group-hover:text-on-accent" : "bg-surface-soft text-text-secondary group-hover:bg-primary group-hover:text-on-accent"}`}
-                    >
-                      <ArrowRight size={16} />
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-caption px-2 py-0.5 rounded bg-secondary/10 text-secondary whitespace-nowrap">
-                      待批改: {assignment.pendingCount}
-                    </span>
-                    <span className="text-caption px-2 py-0.5 rounded bg-primary/10 text-primary whitespace-nowrap">
-                      已批改: {assignment.gradedCount}
-                    </span>
-                    <span className="text-caption px-2 py-0.5 rounded bg-accent/10 text-accent whitespace-nowrap">
-                      已發還: {assignment.publishedCount}
-                    </span>
-                    <span className="text-caption px-2 py-0.5 rounded bg-surface-soft text-text-secondary whitespace-nowrap">
-                      未繳交: {assignment.totalStudents - assignment.totalCount}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))}
-
-            {activeAssignments.length === 0 && (
-              <div className="col-span-full py-20 text-center text-text-muted bg-card/40 rounded-xl border border-dashed border-border-strong">
-                <CheckSquare size={48} className="mx-auto mb-3 opacity-30" />
-                <p className="font-normal">目前沒有進行中的作業</p>
-              </div>
-            )}
-          </div>
-        </div>
+        <GradingHub
+          courses={myCourses}
+          assignments={assignments}
+          submissions={submissions}
+          currentSemester={currentSemester}
+          onSemesterChange={setCurrentSemester}
+          semesterOptions={semesterOptions}
+          // 選定某份是 /grading?assignment=…，返回鍵自然會退回入口頁
+          onOpenAssignment={(id) => navigate(routes.gradingList({ assignmentId: id }))}
+          onBack={goBack}
+        />
       );
 };

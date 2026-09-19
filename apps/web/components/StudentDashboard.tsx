@@ -15,7 +15,12 @@ import {
   Calendar,
 } from 'lucide-react';
 import { Assignment, Submission, Question, Course } from '../types';
-import { deadlineOf, NO_DEADLINE_LABEL } from '../lib/assignments';
+import {
+  deadlineOf,
+  NO_DEADLINE_LABEL,
+  assignmentPhase,
+  canStudentSubmit,
+} from '../lib/assignments';
 
 interface StudentDashboardProps {
   studentName: string;
@@ -81,11 +86,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       const isInProgress = subStatus === 'Unsubmitted' || subStatus === 'Draft';
       
       /*
-        ⚠️ **已關閉的不算進行中。** 這裡以前收 Closed，所以老師按下「結束收件」
-           之後，那份作業還會掛在學生的「進行中作業」裡、按鈕寫著「開始寫作」
-           —— 但他其實已經不能繳交了。
+        ⚠️ **只列還能交的。** 已截止又不收遲交的作業掛在「進行中」、
+           按鈕寫著「開始寫作」，但學生其實已經不能繳交了。
+           能不能交一律問 canStudentSubmit()，不要自己比 status 或時間。
       */
-      return a.status === 'Published' && isInProgress;
+      return canStudentSubmit(a) && isInProgress;
     })
     .sort((a, b) => {
       // 沒有截止日的排最後 —— 它不在時間軸上，不是「很晚才到期」
@@ -153,7 +158,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       <div className="grid grid-cols-3 gap-2 sm:gap-6">
         <div 
           id="studentdashboard-card-stats-history"
-          onClick={() => navigate(routes.studentGrades({ semester: 'ALL' }))}
+          onClick={() => navigate(routes.studentGrades())}
           className="bg-card p-2.5 sm:p-4 md:p-6 rounded-2xl border-t-2 border-primary shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group flex flex-col sm:block"
         >
           <p className="text-text-secondary text-title font-bold font-serif mb-1.5 sm:mb-0 text-center sm:text-left whitespace-nowrap tracking-tighter sm:tracking-normal">
@@ -176,7 +181,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
         <div 
           id="studentdashboard-card-stats-semester"
-          onClick={() => navigate(routes.studentGrades({ semester: 'CURRENT' }))}
+          onClick={() => navigate(routes.studentGrades())}
           className="bg-card p-2.5 sm:p-4 md:p-6 rounded-2xl border-t-2 border-success-600 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group flex flex-col sm:block"
         >
           <p className="text-text-secondary text-title font-bold font-serif mb-1.5 sm:mb-0 text-center sm:text-left whitespace-nowrap tracking-tighter sm:tracking-normal">
@@ -244,8 +249,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 const isDraft = submission && submission.status === 'Draft';
                 const isPending = submission && submission.status === 'Pending';
                 const deadline = deadlineOf(assignment);
-                // 沒設截止日就永遠不是「已逾期」
-                const isOverdue = !isDraft && !isPending && deadline !== null && deadline < new Date();
+                /*
+                  這裡只會出現還能交的作業（見 inProgressAssignments），
+                  所以過了截止的一定是「可遲交」，不是「已截止」。
+                */
+                const isOverdue = !isPending && assignmentPhase(assignment) === 'ended';
 
                 return (
                   <div 
@@ -256,7 +264,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   >
                     <div className="flex items-center gap-3 sm:gap-4">
                       <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center border transition-colors shrink-0 ${
-                        isDraft ? 'bg-amber-50 text-amber-600 border-amber-100' : isPending ? 'bg-primary/10 text-primary border-primary/20' : isOverdue ? 'bg-danger-50 text-danger-600 border-danger-100' : 'bg-primary/10 text-primary border-primary/20'
+                        isDraft ? 'bg-amber-50 text-amber-600 border-amber-100' : isPending ? 'bg-primary/10 text-primary border-primary/20' : isOverdue ? 'bg-warning-100 text-warning-700 border-warning-200' : 'bg-primary/10 text-primary border-primary/20'
                       }`}>
                         {isDraft ? <Save size={18} className="sm:size-6" /> : isPending ? <CheckCircle2 size={18} className="sm:size-6" /> : <FileText size={18} className="sm:size-6" />}
                       </div>
@@ -291,9 +299,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <div className="flex items-center gap-4 mt-3 sm:mt-0 sm:absolute sm:right-5 sm:top-1/2 sm:-translate-y-1/2">
                       <div className="text-right hidden sm:block">
                         <p className={`text-ui font-bold uppercase tracking-wider flex items-center justify-end gap-1.5 ${
-                          isDraft || isPending ? 'text-primary' : isOverdue ? 'text-danger-600' : 'text-primary'
+                          isDraft || isPending ? 'text-primary' : isOverdue ? 'text-warning-700' : 'text-primary'
                         }`}>
-                          {isPending ? '已繳交' : isOverdue && !isDraft ? '已逾期' : '進行中'}
+                          {isPending ? '已繳交' : isOverdue ? '可遲交' : '進行中'}
                         </p>
                       </div>
                       

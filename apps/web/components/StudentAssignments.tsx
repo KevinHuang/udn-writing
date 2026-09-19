@@ -13,7 +13,13 @@ import {
   Save,
 } from 'lucide-react';
 import { Assignment, Submission } from '../types';
-import { deadlineOf, NO_DEADLINE_LABEL } from '../lib/assignments';
+import {
+  deadlineOf,
+  NO_DEADLINE_LABEL,
+  assignmentPhase,
+  canStudentSubmit,
+  isLateSubmission,
+} from '../lib/assignments';
 
 interface StudentAssignmentsProps {
   assignments: Assignment[];
@@ -43,8 +49,8 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
 
   const filteredAssignments = assignments
     .filter(a => {
-      // Only show Published or Closed assignments to students
-      if (a.status === 'Draft') return false;
+      // 未開放的作業學生看不到；收件中與已截止都要列出（已截止才看得到成績）
+      if (assignmentPhase(a) === 'draft') return false;
 
       const submission = submissions.find(s => s.assignmentId === a.id);
       const subStatus = submission?.status || 'Unsubmitted';
@@ -84,7 +90,7 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
             )}
             <h1 className="text-display font-serif font-bold text-text-primary tracking-tight">我的作業</h1>
           </div>
-          <p className="text-caption sm:text-text-primary font-normal ml-0 sm:ml-12 opacity-80">本學期所有班級的寫作任務</p>
+          <p className="text-caption sm:text-text-primary font-normal ml-0 sm:ml-12 opacity-80">本學期所有班級的作業</p>
         </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
@@ -149,15 +155,20 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                  用 isUnderReview 一起涵蓋兩種狀態。
             */
             const isPending = submission && submission.status === 'Pending';
-            /** 已結束收件。學生仍看得到（要能查自己的成績），但不能再寫 */
-            const isClosed = assignment.status === 'Closed';
             const isGraded = submission && submission.status === 'Graded';
             const isUnderReview = isPending || isGraded;
-            const isSubmitted = isUnderReview;
-            
+
             const deadline = deadlineOf(assignment);
-            // 沒有截止日就永遠不是「已逾期」
-            const isOverdue = !isReturned && !isSubmitted && !isDraft && deadline !== null && deadline < new Date();
+            const handedIn = isReturned || isUnderReview;
+            /*
+              還沒交的作業在截止後分兩種：
+                不收遲交 → 已截止（不能再交，寫作頁是唯讀的）
+                收遲交   → 可遲交（還能交，但會被標示）
+              規則收在 lib/assignments.ts，這裡不自己比時間。
+            */
+            const isOverdue = !handedIn && !canStudentSubmit(assignment);
+            const lateOpen = !handedIn && !isOverdue && assignmentPhase(assignment) === 'ended';
+            const handedInLate = handedIn && !!submission && isLateSubmission(submission, assignment);
 
             return (
               <div 
@@ -205,6 +216,11 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                             批閱中
                           </span>
                         )}
+                        {handedInLate && (
+                          <span className="px-2 py-0.5 bg-warning-100 text-warning-700 text-body rounded-full border border-warning-200 whitespace-nowrap">
+                            遲交
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4">
@@ -233,12 +249,12 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                       isReturned ? 'text-success-600' : 
                       isDraft ? 'text-amber-600' : 
                       isUnderReview ? 'text-info-600' :
-                      isOverdue ? 'text-danger-600' : 
+                      isOverdue ? 'text-danger-600' :
+                      lateOpen ? 'text-warning-700' :
                       'text-primary'
                     }`}>
                       {isReturned ? '已完成' : isUnderReview ? '批閱中'
-                        : isClosed ? '已結束'
-                        : isOverdue && !isDraft ? '已逾期' : '進行中'}
+                        : isOverdue ? '已截止' : lateOpen ? '可遲交' : '進行中'}
                     </p>
                     {isReturned && submission.result && (
                       <p className="text-ui text-text-primary font-bold mt-0.5">{submission.result.totalScore} 分</p>
@@ -256,8 +272,8 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                       }
                     }}
                     className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl text-ui font-bold flex items-center justify-center gap-2 transition-all active:scale-95 ${
-                      isReturned || isUnderReview || isClosed
-                        ? 'bg-card text-text-primary hover:bg-surface border border-border/50 shadow-sm' 
+                      isReturned || isUnderReview || isOverdue
+                        ? 'bg-card text-text-primary hover:bg-surface border border-border/50 shadow-sm'
                         : isDraft
                         ? 'bg-amber-500 text-on-accent hover:bg-amber-600 shadow-sm shadow-amber-500/20'
                         : 'bg-primary text-on-accent hover:bg-primary/90 shadow-sm shadow-primary/20'
@@ -267,9 +283,9 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                       <>查看回饋 <ChevronRight size={16} className="sm:size-[18px]" /></>
                     ) : isUnderReview ? (
                       <>已繳交 <CheckCircle2 size={16} className="sm:size-[18px]" /></>
-                    ) : isClosed ? (
-                      // 已結束收件就不要再叫他去寫
-                      <>已結束收件</>
+                    ) : isOverdue ? (
+                      // 已截止就不要再叫他去寫，但題目（與他寫到一半的草稿）還是看得到
+                      <>查看題目 <ChevronRight size={16} className="sm:size-[18px]" /></>
                     ) : isDraft ? (
                       <><Save size={16} className="sm:size-[18px]" /> 繼續寫作</>
                     ) : (

@@ -11,27 +11,26 @@ import type { AssignmentStatus, SubmissionStatus } from './types.js';
  */
 
 /**
- * 作業的狀態。
+ * 作業的狀態：學生**看不看得到**。
  *
- * 資料庫沒有 status 欄位，只有 `opened` 與 `opened_at` 兩個欄位，
- * 三種狀態是它們的組合：
+ * | opened | 狀態 | 意思 |
+ * |---|---|---|
+ * | true | `Published` | 學生看得到 |
+ * | false | `Draft` | 未開放。學生的作業清單與待辦都不會出現 |
  *
- * | opened | opened_at | 狀態 | 意思 |
- * |---|---|---|---|
- * | true | 任何 | `Published` | 進行中。學生看得到、可以繳交 |
- * | false | `null` | `Draft` | **從未開放**。學生完全看不到 |
- * | false | 有值 | `Closed` | **開過又收回**。學生看得到成績，不能再繳交 |
+ * **收不收件不是狀態，看截止日。** 以前有第三種 `Closed`（opened=false 但
+ * opened_at 有值，意思是「開過又收回、不收件」），它和開關、截止日三者交疊：
+ * 已逾期與已關閉長得不同卻篩在一起、截止日改不了、兩種不收件都擋不住繳交。
+ * 現在「結束收件」就是把截止日設成現在，「重新開放」就是把截止日往後改，
+ * 階段（未開放／收件中／已截止）由前端 `lib/assignments.ts` 的
+ * `assignmentPhase()` 算，後端 `/student/submit` 擋同一條規則。
+ * **不要把 Closed 加回來。**
  *
- * 關鍵在第二與第三列的差別 —— 兩者的 `opened` 都是 false，
- * 分辨它們的唯一依據就是「有沒有開放過」。所以**關閉時絕對不能**
- * 覆蓋 `opened_at`（後端的 `AssignmentHelper.updateStatus` 用 COALESCE 保護）。
+ * `opened_at` 仍然記「第一次開放的時間」：開過又改回未開放的作業，
+ * 學生的成績紀錄裡還看得到已發還的成績（見 `AssignmentHelper.getAssignments`）。
  */
-export function assignmentStatusOf(row: {
-  opened: boolean | null;
-  opened_at: string | Date | null;
-}): AssignmentStatus {
-  if (row.opened) return 'Published';
-  return row.opened_at ? 'Closed' : 'Draft';
+export function assignmentStatusOf(row: { opened: boolean | null }): AssignmentStatus {
+  return row.opened ? 'Published' : 'Draft';
 }
 
 

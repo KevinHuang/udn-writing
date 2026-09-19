@@ -5,7 +5,7 @@
   "scripts": {
     "test": "tsx --env-file=../../.env --import ./src/test/setup.ts --test --test-concurrency=1 src/test/*.test.ts",
     "start": "node dist/index.js",
-    "dev": "nodemon --watch src --ext ts --exec 'tsx --env-file=../../.env src/index.ts'",
+    "dev": "nodemon --watch src --ext ts --exec \"tsx --env-file=../../.env src/index.ts\"",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "gcloud-build-test": " gcloud config set project writing-classroom-672f8 && gcloud builds submit --tag asia-east1-docker.pkg.dev/writing-classroom-672f8/writing-classroom-repo/server",
     "gcloud-deploy-test": " gcloud config set project writing-classroom-672f8 && gcloud run deploy writing-classroom-server  --image asia-east1-docker.pkg.dev/writing-classroom-672f8/writing-classroom-repo/server --platform managed --region asia-east1 --allow-unauthenticated",

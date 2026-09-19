@@ -1,32 +1,36 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
+  ArrowDownWideNarrow,
+  ArrowUpNarrowWide,
   Clock,
   EyeOff,
   Eye,
   Lock,
   Plus,
-  RefreshCcw,
   ChevronRight,
   ChevronUp,
   ChevronDown,
   GripVertical,
+  MoreHorizontal,
+  Pencil,
   Repeat,
   Trash2,
 } from 'lucide-react';
 import { Assignment, Question, Submission } from '../types';
 import { QuestionPreviewModal } from './QuestionPreviewModal';
 import { ConfirmDialog } from './ConfirmDialog';
+import { DeadlineEditor } from './DeadlineEditor';
 import {
-  bucketOf,
+  assignmentPhase,
+  allowsLate,
   submissionStats,
   toggleVisibility,
-  closeAssignment,
-  reopenAssignment,
   canSwapQuestion,
-  isOverdue,
+  swapBlockedReason,
   hasDeadline,
   NO_DEADLINE_LABEL,
-  type AssignmentBucket,
+  PHASE_LABEL,
+  type AssignmentPhase,
 } from '../lib/assignments';
 import {
   orderedAssignments,
@@ -55,14 +59,31 @@ interface CourseAssignmentListProps {
   onRequestSwapQuestion: (assignment: Assignment) => void;
 }
 
-type Filter = 'all' | AssignmentBucket;
+type Filter = 'all' | AssignmentPhase;
 
+// 篩選的名字就是徽章的名字 —— 以前「已關閉」篩選裡混著「已逾期」徽章，老師對不起來
 const FILTERS: { key: Filter; label: string }[] = [
   { key: 'all', label: '全部' },
-  { key: 'active', label: '進行中' },
-  { key: 'draft', label: '未開放' },
-  { key: 'closed', label: '已關閉' },
+  { key: 'draft', label: PHASE_LABEL.draft },
+  { key: 'open', label: PHASE_LABEL.open },
+  { key: 'ended', label: PHASE_LABEL.ended },
 ];
+
+type SortDir = 'asc' | 'desc';
+
+/**
+ * 檢視方向的偏好。故意不放在 `udn-writing:` 前綴底下 ——
+ * 那是示範資料，「重置為初始資料」會清掉，也會讓重置鍵以為有資料要清。
+ */
+const SORT_KEY = 'udn-writing-pref:assignment-sort';
+
+function readSortDir(): SortDir {
+  try {
+    return localStorage.getItem(SORT_KEY) === 'desc' ? 'desc' : 'asc';
+  } catch {
+    return 'asc';
+  }
+}
 
 const fmt = (iso: string) => {
   const d = new Date(iso);
@@ -72,37 +93,116 @@ const fmt = (iso: string) => {
     .padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
 };
 
-/** 每一列的狀態徽章。四種狀態各有自己的顏料色，一眼可辨 */
-function StatusChip({ assignment }: { assignment: Assignment }) {
-  if (assignment.status === 'Draft') {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-caption whitespace-nowrap bg-ink-100 text-ink-600 border border-ink-200">
-        <EyeOff size={11} className="shrink-0" />
-        未開放
-      </span>
-    );
-  }
-  if (assignment.status === 'Closed') {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-caption whitespace-nowrap bg-mauve-100 text-mauve-700 border border-mauve-200">
-        <Lock size={11} className="shrink-0" />
-        已關閉
-      </span>
-    );
-  }
-  if (isOverdue(assignment)) {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-caption whitespace-nowrap bg-warning-100 text-warning-700 border border-warning-200">
-        <Clock size={11} className="shrink-0" />
-        已逾期
-      </span>
-    );
-  }
+/** 三個階段的徽章外觀。各有自己的顏料色，一眼可辨 */
+const PHASE_CHIP: Record<AssignmentPhase, { cls: string; Icon: typeof Eye }> = {
+  draft: { cls: 'bg-ink-100 text-ink-600 border-ink-200 hover:bg-ink-200', Icon: EyeOff },
+  open: { cls: 'bg-success-100 text-success-700 border-success-200 hover:bg-success-200', Icon: Eye },
+  ended: { cls: 'bg-mauve-100 text-mauve-700 border-mauve-200 hover:bg-mauve-200', Icon: Lock },
+};
+
+/**
+ * 狀態徽章，同時也是開放開關。
+ *
+ * 以前右上角另有一顆「學生看得到／看不到」，和這個徽章講的是同一件事，
+ * 而且那顆寫的是「現在的狀態」不是「按下去會怎樣」，老師看不懂。
+ * 現在徽章本身可以點，選單裡的字寫的是動作。
+ */
+function StatusMenu({
+  assignment,
+  open,
+  onOpenChange,
+  onPublish,
+  onUnpublish,
+}: {
+  assignment: Assignment;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onPublish: () => void;
+  onUnpublish: () => void;
+}) {
+  const phase = assignmentPhase(assignment);
+  const { cls, Icon } = PHASE_CHIP[phase];
+
+  // Esc 關閉。選單開著才掛監聽
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onOpenChange(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onOpenChange]);
+
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-caption whitespace-nowrap bg-success-100 text-success-700 border border-success-200">
-      <Eye size={11} className="shrink-0" />
-      已開放
-    </span>
+    <>
+      <span className="relative">
+        <button
+          id={`course-assignment-status-${assignment.id}`}
+          onClick={() => onOpenChange(!open)}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          title={phase === 'draft' ? '點一下可以開放給學生' : '點一下可以改回未開放'}
+          className={`inline-flex items-center gap-1 pl-2 pr-1.5 py-0.5 rounded text-caption whitespace-nowrap border transition-colors ${cls}`}
+        >
+          <Icon size={11} className="shrink-0" />
+          {PHASE_LABEL[phase]}
+          <ChevronDown size={12} aria-hidden="true" className={`shrink-0 opacity-70 transition-transform ${open ? 'rotate-180' : ''}`} />
+        </button>
+        {open && (
+          <>
+            {/* 點選單外面就關掉 */}
+            <span className="fixed inset-0 z-30" onClick={() => onOpenChange(false)} />
+            <span
+              role="menu"
+              className="absolute left-0 top-full mt-1 z-40 block w-64 bg-surface border border-border rounded-xl shadow-lift p-1.5"
+            >
+              {phase === 'draft' ? (
+                <button
+                  id={`course-assignment-publish-${assignment.id}`}
+                  role="menuitem"
+                  onClick={() => {
+                    onOpenChange(false);
+                    onPublish();
+                  }}
+                  className="w-full text-left flex items-start gap-2 px-3 py-2 rounded-lg text-body text-text-primary hover:bg-surface-soft"
+                >
+                  <Eye size={14} className="shrink-0 mt-1 text-success-700" />
+                  <span className="min-w-0">
+                    開放給學生
+                    <span className="block text-caption text-text-muted leading-snug">
+                      學生會在作業列表看到這份作業，並可以繳交。
+                    </span>
+                  </span>
+                </button>
+              ) : (
+                <button
+                  id={`course-assignment-unpublish-${assignment.id}`}
+                  role="menuitem"
+                  onClick={() => {
+                    onOpenChange(false);
+                    onUnpublish();
+                  }}
+                  className="w-full text-left flex items-start gap-2 px-3 py-2 rounded-lg text-body text-text-primary hover:bg-surface-soft"
+                >
+                  <EyeOff size={14} className="shrink-0 mt-1 text-ink-600" />
+                  <span className="min-w-0">
+                    改回未開放
+                    <span className="block text-caption text-text-muted leading-snug">
+                      學生的作業列表與待辦不再出現這份作業。
+                    </span>
+                  </span>
+                </button>
+              )}
+            </span>
+          </>
+        )}
+      </span>
+      {phase === 'ended' && allowsLate(assignment) && (
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-caption whitespace-nowrap bg-warning-100 text-warning-700 border border-warning-200">
+          可遲交
+        </span>
+      )}
+    </>
   );
 }
 
@@ -124,6 +224,16 @@ export const CourseAssignmentList: React.FC<CourseAssignmentListProps> = ({
   onRequestSwapQuestion,
 }) => {
   const [filter, setFilter] = useState<Filter>('all');
+  /** 檢視方向。只是個人的看法偏好，記在這台瀏覽器 */
+  const [sortDir, setSortDirState] = useState<SortDir>(readSortDir);
+  const setSortDir = (d: SortDir) => {
+    setSortDirState(d);
+    try {
+      localStorage.setItem(SORT_KEY, d);
+    } catch {
+      // 存不進去就算了，這次開著的頁面照樣有效
+    }
+  };
   /** 正在被拖曳的作業 id */
   const [dragId, setDragId] = useState<string | null>(null);
   /** 游標正懸在哪一列上。只用來畫落點提示 */
@@ -144,6 +254,12 @@ export const CourseAssignmentList: React.FC<CourseAssignmentListProps> = ({
   const [previewQuestion, setPreviewQuestion] = useState<Question | null>(null);
   /** 待二次確認刪除的作業 */
   const [deletingAssignment, setDeletingAssignment] = useState<Assignment | null>(null);
+  /** 正在改截止設定的作業 */
+  const [editingDeadline, setEditingDeadline] = useState<Assignment | null>(null);
+  /** 待確認「改回未開放」的作業（已經有人交了才會問） */
+  const [hidingAssignment, setHidingAssignment] = useState<Assignment | null>(null);
+  /** 哪一個選單開著：`status:{id}`（狀態徽章）或 `more:{id}`（⋯）。同一時間只開一個 */
+  const [menuFor, setMenuFor] = useState<string | null>(null);
 
   /**
    * 刪除作業的警語。
@@ -165,8 +281,26 @@ export const CourseAssignmentList: React.FC<CourseAssignmentListProps> = ({
     return `確定要刪除「${a.title}」嗎？\n\n`
       + `這份作業已經有 ${st.submitted} 份繳交（${done.join('、')}）。`
       + `刪除後這些作文與批改結果會一併消失，學生端也看不到了，而且無法復原。\n\n`
-      + `如果只是要停止收件，請改用「結束收件」——`
+      + `如果只是要停止收件，請改用截止設定裡的「立即截止」——`
       + `學生仍然看得到自己的成績，只是不能再繳交。`;
+  };
+
+  /** 關掉開關前的警語。學生會連自己的成績都看不到 */
+  const hideMessage = (a: Assignment): string => {
+    const st = submissionStats(a, submissions);
+    return `「${a.title}」已經有 ${st.submitted} 份繳交。\n\n`
+      + `改回未開放之後，學生的作業列表與首頁待辦都不會再出現這份作業，也不能再繳交。`
+      + `已發還的成績仍留在學生的成績紀錄裡。作文與批改結果不會被刪除，之後再打開就回來了。\n\n`
+      + `如果只是要停止收件，請改用截止設定裡的「立即截止」。`;
+  };
+
+  /** 按開關。從看得到切成看不到、而且已經有人交時，先確認 */
+  const onToggle = (a: Assignment) => {
+    if (a.status !== 'Draft' && submissionStats(a, submissions).submitted > 0) {
+      setHidingAssignment(a);
+      return;
+    }
+    applyUpdate(toggleVisibility(a));
   };
 
   /*
@@ -189,15 +323,21 @@ export const CourseAssignmentList: React.FC<CourseAssignmentListProps> = ({
   const canReorder = fullOrder.length > 1;
 
   const counts = useMemo(() => {
-    const c = { all: fullOrder.length, active: 0, draft: 0, closed: 0 };
+    const c = { all: fullOrder.length, draft: 0, open: 0, ended: 0 };
     fullOrder.forEach((a) => {
-      c[bucketOf(a)] += 1;
+      c[assignmentPhase(a)] += 1;
     });
     return c;
   }, [fullOrder]);
 
-  const rows =
-    filter === 'all' ? fullOrder : fullOrder.filter((a) => bucketOf(a) === filter);
+  const filtered =
+    filter === 'all' ? fullOrder : fullOrder.filter((a) => assignmentPhase(a) === filter);
+  /*
+    升冪／降冪只改「由上往下怎麼排」，不改順序本身 —— 號碼永遠是課程裡的編號，
+    成績管理與批改頁也一律照 1、2、3。
+    上下鍵與拖曳都以畫面上看到的位置為準（見 nudge），所以兩種方向下都照常可用。
+  */
+  const rows = sortDir === 'desc' ? [...filtered].reverse() : filtered;
 
   const applyUpdate = (next: Assignment) =>
     onAssignmentOperation([], [next], []);
@@ -267,6 +407,29 @@ export const CourseAssignmentList: React.FC<CourseAssignmentListProps> = ({
 
       {/* 晶片只收窄看到的範圍，不改順序 —— 順序只有老師排的那一種 */}
       <div className="flex flex-wrap items-center gap-1.5 mb-4">
+        {/*
+          升冪／降冪：一顆鈕，按一下換方向（和購物網站的價格排序一樣）。
+          新作業排在最後，作業多了之後要看最新的，切成降冪就在最上面。
+          按鈕上寫的是「現在」的排法。
+        */}
+        <button
+          id="course-assignments-sort-toggle"
+          onClick={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}
+          aria-label={
+            sortDir === 'asc'
+              ? '編號由小到大排列，按一下改成由大到小'
+              : '編號由大到小排列，按一下改成由小到大'
+          }
+          title={sortDir === 'asc' ? '按一下改成由大到小（最新的在上面）' : '按一下改成由小到大（第 1 份在上面）'}
+          className="order-last ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-caption text-text-secondary border border-border whitespace-nowrap hover:bg-surface-soft hover:text-text-primary transition-colors"
+        >
+          {sortDir === 'asc' ? (
+            <ArrowUpNarrowWide size={14} className="shrink-0" aria-hidden="true" />
+          ) : (
+            <ArrowDownWideNarrow size={14} className="shrink-0" aria-hidden="true" />
+          )}
+          編號 {sortDir === 'asc' ? '小→大' : '大→小'}
+        </button>
         {FILTERS.map((f) => (
           <button
             key={f.key}
@@ -294,7 +457,6 @@ export const CourseAssignmentList: React.FC<CourseAssignmentListProps> = ({
         <ul className="space-y-2.5">
           {rows.map((a) => {
             const stats = submissionStats(a, submissions);
-            const visible = a.status !== 'Draft';
             const isDragging = dragId === a.id;
             const isDropTarget = canReorder && overId === a.id && dragId !== a.id;
             return (
@@ -384,8 +546,8 @@ export const CourseAssignmentList: React.FC<CourseAssignmentListProps> = ({
                             id={`course-assignment-up-${a.id}`}
                             onClick={() => nudge(a, -1)}
                             disabled={!hasNeighbour(a, -1)}
-                            title="往前一位"
-                            aria-label={`把「${a.title}」往前移一位`}
+                            title="往上移一格"
+                            aria-label={`把「${a.title}」往上移一格`}
                             className="px-1.5 py-1 rounded text-text-muted hover:text-primary hover:bg-surface-soft disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
                           >
                             <ChevronUp size={13} />
@@ -394,8 +556,8 @@ export const CourseAssignmentList: React.FC<CourseAssignmentListProps> = ({
                             id={`course-assignment-down-${a.id}`}
                             onClick={() => nudge(a, 1)}
                             disabled={!hasNeighbour(a, 1)}
-                            title="往後一位"
-                            aria-label={`把「${a.title}」往後移一位`}
+                            title="往下移一格"
+                            aria-label={`把「${a.title}」往下移一格`}
                             className="px-1.5 py-1 rounded text-text-muted hover:text-primary hover:bg-surface-soft disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
                           >
                             <ChevronDown size={13} />
@@ -403,7 +565,13 @@ export const CourseAssignmentList: React.FC<CourseAssignmentListProps> = ({
                         </span>
                       )}
 
-                      <StatusChip assignment={a} />
+                      <StatusMenu
+                        assignment={a}
+                        open={menuFor === `status:${a.id}`}
+                        onOpenChange={(o) => setMenuFor(o ? `status:${a.id}` : null)}
+                        onPublish={() => applyUpdate(toggleVisibility(a))}
+                        onUnpublish={() => onToggle(a)}
+                      />
                     </div>
                     {/*
                       標題原本也是連到批改，和右下角的「前往批改」重複。
@@ -435,26 +603,22 @@ export const CourseAssignmentList: React.FC<CourseAssignmentListProps> = ({
                         className="shrink-0 text-text-muted group-hover:text-primary transition-colors"
                       />
                     </button>
-                    <span className="mt-1 flex items-center gap-1.5 text-caption text-text-secondary whitespace-nowrap">
+                    {/*
+                      截止設定的入口。收不收件只看這個時間，
+                      以前的「結束收件」「重新開放」都在這裡做。
+                    */}
+                    <button
+                      id={`course-assignment-deadline-${a.id}`}
+                      onClick={() => setEditingDeadline(a)}
+                      title="修改截止設定"
+                      className="group mt-1 inline-flex items-center gap-1.5 text-caption text-text-secondary hover:text-primary whitespace-nowrap transition-colors"
+                    >
                       <Clock size={11} className="shrink-0" />
                       {hasDeadline(a) ? `截止 ${fmt(a.config.deadline as string)}` : NO_DEADLINE_LABEL}
-                    </span>
+                      <Pencil size={11} aria-hidden="true" className="shrink-0 text-text-muted group-hover:text-primary" />
+                    </button>
                   </div>
-
-                  {/* 作業開關：Draft ⇄ Published */}
-                  <button
-                    id={`course-assignment-toggle-${a.id}`}
-                    onClick={() => applyUpdate(toggleVisibility(a))}
-                    title={visible ? '按一下對學生隱藏' : '按一下對學生開放'}
-                    className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-caption whitespace-nowrap border transition-colors ${
-                      visible
-                        ? 'bg-success-100 text-success-700 border-success-200 hover:bg-success-200'
-                        : 'bg-ink-100 text-ink-600 border-ink-200 hover:bg-ink-200'
-                    }`}
-                  >
-                    {visible ? <Eye size={13} /> : <EyeOff size={13} />}
-                    {visible ? '學生看得到' : '學生看不到'}
-                  </button>
+                  {/* 開放開關已經併進狀態徽章（見 StatusMenu），這裡不再另放一顆 */}
                 </div>
 
                 {/* 繳交進度 */}
@@ -478,62 +642,74 @@ export const CourseAssignmentList: React.FC<CourseAssignmentListProps> = ({
                 </div>
 
                 {/*
-                  動作列依狀態給不同的選項。
-                  未開放的作業不該出現「結束收件」—— 它根本沒開過。
+                  動作列只留最常用的「前往批改」。
+                  更換題目與刪除都不常用、按錯代價又最大，收進「⋯」。
                 */}
-                <div className="mt-3 pt-3 border-t border-border flex flex-wrap items-center gap-3">
-                  {a.status === 'Closed' && (
+                <div className="mt-3 pt-3 border-t border-border flex items-center gap-3">
+                  <div className="relative">
                     <button
-                      id={`course-assignment-reopen-${a.id}`}
-                      onClick={() => applyUpdate(reopenAssignment(a))}
-                      className="inline-flex items-center gap-1 text-caption text-text-secondary hover:text-primary whitespace-nowrap"
+                      id={`course-assignment-more-${a.id}`}
+                      onClick={() => setMenuFor(menuFor === `more:${a.id}` ? null : `more:${a.id}`)}
+                      title="更多動作"
+                      aria-haspopup="menu"
+                      aria-expanded={menuFor === `more:${a.id}`}
+                      className="tap-target inline-flex items-center justify-center p-1 rounded-lg text-text-secondary hover:bg-surface-soft hover:text-text-primary transition-colors"
                     >
-                      <RefreshCcw size={12} className="shrink-0" />
-                      重新開放
+                      <MoreHorizontal size={16} />
                     </button>
-                  )}
-
-                  {a.status === 'Published' && (
-                    <button
-                      id={`course-assignment-close-${a.id}`}
-                      onClick={() => applyUpdate(closeAssignment(a))}
-                      title="關閉後學生仍看得到成績，但不能再繳交"
-                      className="inline-flex items-center gap-1 text-caption text-text-secondary hover:text-danger-700 whitespace-nowrap"
-                    >
-                      <Lock size={12} className="shrink-0" />
-                      結束收件
-                    </button>
-                  )}
-
-                  {/* 換題的條件收在 lib/assignments.ts，這裡不要自己判斷狀態 */}
-                  {canSwapQuestion(a) && (
-                    <button
-                      id={`course-assignment-swap-${a.id}`}
-                      onClick={() => onRequestSwapQuestion(a)}
-                      title={
-                        a.status === 'Draft'
-                          ? '學生還看不到這份作業，可以直接換題'
-                          : '換題會刪除這份作業所有的繳交紀錄'
-                      }
-                      className="inline-flex items-center gap-1 text-caption text-danger-700 hover:underline whitespace-nowrap"
-                    >
-                      <Repeat size={12} className="shrink-0" />
-                      更換題目
-                    </button>
-                  )}
-                  {/*
-                    刪除。已經有繳交時，警語會把「會失去幾份、其中幾份批改過」
-                    講出來，並提示可以改用「結束收件」—— 老師才知道代價。
-                  */}
-                  <button
-                    id={`course-assignment-delete-${a.id}`}
-                    onClick={() => setDeletingAssignment(a)}
-                    title="刪除這份作業"
-                    className="tap-target inline-flex items-center gap-1 text-caption text-danger-700 hover:underline whitespace-nowrap"
-                  >
-                    <Trash2 size={12} className="shrink-0" />
-                    刪除
-                  </button>
+                    {menuFor === `more:${a.id}` && (
+                      <>
+                        {/* 點選單外面就關掉 */}
+                        <div className="fixed inset-0 z-30" onClick={() => setMenuFor(null)} />
+                        <div
+                          role="menu"
+                          className="absolute left-0 bottom-full mb-1 z-40 w-64 bg-surface border border-border rounded-xl shadow-lift p-1.5"
+                        >
+                          {/* 換題的條件收在 lib/assignments.ts，這裡不要自己判斷狀態 */}
+                          <button
+                            id={`course-assignment-swap-${a.id}`}
+                            role="menuitem"
+                            disabled={!canSwapQuestion(a)}
+                            onClick={() => {
+                              setMenuFor(null);
+                              onRequestSwapQuestion(a);
+                            }}
+                            className="w-full text-left flex items-start gap-2 px-3 py-2 rounded-lg text-body text-text-primary hover:bg-surface-soft disabled:hover:bg-transparent disabled:cursor-not-allowed"
+                          >
+                            <Repeat size={14} className="shrink-0 mt-1 text-danger-700" />
+                            <span className="min-w-0">
+                              <span className={canSwapQuestion(a) ? 'text-danger-700' : 'text-text-muted'}>
+                                更換題目
+                              </span>
+                              <span className="block text-caption text-text-muted leading-snug">
+                                {canSwapQuestion(a)
+                                  ? a.status === 'Draft'
+                                    ? '學生還看不到，可以直接換。'
+                                    : '會刪除這份作業所有的繳交紀錄。'
+                                  : swapBlockedReason(a)}
+                              </span>
+                            </span>
+                          </button>
+                          {/*
+                            刪除。已經有繳交時，警語會把「會失去幾份、其中幾份批改過」
+                            講出來，並提示可以改用「立即截止」—— 老師才知道代價。
+                          */}
+                          <button
+                            id={`course-assignment-delete-${a.id}`}
+                            role="menuitem"
+                            onClick={() => {
+                              setMenuFor(null);
+                              setDeletingAssignment(a);
+                            }}
+                            className="w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg text-body text-danger-700 hover:bg-surface-soft"
+                          >
+                            <Trash2 size={14} className="shrink-0" />
+                            刪除作業
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                   <button
                     id={`course-assignment-grade-${a.id}`}
                     onClick={() => onSelectAssignment(a.id)}
@@ -571,6 +747,30 @@ export const CourseAssignmentList: React.FC<CourseAssignmentListProps> = ({
             setDeletingAssignment(null);
           }}
           onCancel={() => setDeletingAssignment(null)}
+        />
+      )}
+
+      {editingDeadline && (
+        <DeadlineEditor
+          assignment={editingDeadline}
+          onSave={(next) => {
+            applyUpdate(next);
+            setEditingDeadline(null);
+          }}
+          onCancel={() => setEditingDeadline(null)}
+        />
+      )}
+
+      {hidingAssignment && (
+        <ConfirmDialog
+          title="改回未開放"
+          message={hideMessage(hidingAssignment)}
+          confirmLabel="改回未開放"
+          onConfirm={() => {
+            applyUpdate(toggleVisibility(hidingAssignment));
+            setHidingAssignment(null);
+          }}
+          onCancel={() => setHidingAssignment(null)}
         />
       )}
     </section>

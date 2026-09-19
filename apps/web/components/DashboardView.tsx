@@ -3,15 +3,12 @@ import { routes } from '../lib/routes';
 import { useGoBack } from '../lib/useGoBack';
 import React, { useMemo } from "react";
 import {
-  Calendar,
   Clock,
   CheckCircle,
   AlertCircle,
   ChevronRight,
   TrendingUp,
-  ArrowLeft,
   Archive,
-  ChevronDown,
   FileCheck,
   Edit,
   Heart,
@@ -27,10 +24,13 @@ import { type LeaveMarks } from "../lib/leave";
 import { CURRENT_SEMESTER, seatLabel } from "../mockData";
 
 import { getGreeting } from "../lib/constants";
+import { PageHeader, PAGE_CONTAINER } from "./PageHeader";
+import { SemesterSelect } from "./SemesterSelect";
 
 export const DashboardView = ({
   currentSemester,
   semesterOptions,
+  todaySemester,
   onSemesterChange,
   allCourses,
   assignments,
@@ -42,6 +42,8 @@ export const DashboardView = ({
 }: {
   currentSemester: string;
   semesterOptions: { value: string; label: string }[];
+  /** 今天落在的學期，選單上標「本學期」。currentSemester 是老師選的那一個 */
+  todaySemester?: string;
   onSemesterChange: (s: string) => void;
   allCourses: Course[];
   assignments: Assignment[];
@@ -133,63 +135,29 @@ export const DashboardView = ({
     .slice(0, 10);
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8 pb-10">
-      <div className="flex flex-col md:flex-row md:justify-between md:items-end gap-4">
-        <div>
-          <div className="flex items-center gap-3">
-            {canGoBack && (
-              <button
-                id="dashboard-btn-back"
-                onClick={goBack}
-                className="p-2 -ml-2 rounded-full hover:bg-card/50 text-text-secondary transition-colors"
-              >
-                <ArrowLeft size={24} />
-              </button>
-            )}
-            <h2 className="text-display font-serif font-bold text-text-primary tracking-tight">
-              {getGreeting()}，{teacherName} 👋
-            </h2>
-          </div>
-          <p className="text-text-secondary mt-2 font-normal text-title ml-0 md:ml-12 font-serif">
-            這是您今天的教學概況與待辦事項。
-          </p>
-        </div>
-
-        <div className="relative inline-flex items-center gap-2 bg-card/80 backdrop-blur-md px-4 md:px-5 py-2 md:py-2.5 rounded-full border border-card shadow-sm hover:bg-card hover:shadow-lg transition-all duration-300 cursor-pointer group active:scale-95">
-          <Calendar
-            size={16}
-            className="text-primary group-hover:scale-110 transition-transform md:size-[18px] shrink-0"
-          />
-          <span className="text-caption text-text-secondary uppercase tracking-wider whitespace-nowrap shrink-0">
-            學期
-          </span>
-          <span className="h-4 w-px bg-border mx-1 md:mx-2"></span>
-
-          <select
+    <div className={`${PAGE_CONTAINER} space-y-8 pb-10`}>
+      <PageHeader
+        title={<>{getGreeting()}，{teacherName} 👋</>}
+        subtitle="這是您今天的教學概況與待辦事項。"
+        onBack={canGoBack ? goBack : undefined}
+        backId="dashboard-btn-back"
+        actions={
+          <SemesterSelect
             id="dashboard-select-semester"
             value={currentSemester}
-            onChange={(e) => onSemesterChange(e.target.value)}
-            className="text-body text-text-primary bg-transparent outline-none appearance-none cursor-pointer pr-6 md:pr-8 relative z-10"
-          >
-            {semesterOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-          <ChevronDown
-            size={14}
-            className="text-text-secondary absolute right-4 pointer-events-none group-hover:text-primary transition-colors"
+            options={semesterOptions}
+            current={todaySemester}
+            onChange={onSemesterChange}
           />
-        </div>
-      </div>
+        }
+      />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
         {/* Card 1: Graded */}
         <div
           id="dashboard-card-graded"
           onClick={onShowGradedStats}
-          className="bg-card p-4 md:p-5 rounded-2xl border-t-2 border-primary shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group"
+          className="bg-card p-4 md:p-5 rounded-2xl border-t-[6px] border-brand-blue shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group"
         >
           <div className="mb-3">
               <p className="text-text-secondary text-body font-serif mb-2">
@@ -225,7 +193,7 @@ export const DashboardView = ({
         {/* Card 2: Pending */}
         <div
           id="dashboard-card-pending"
-          className="bg-card p-4 md:p-5 rounded-2xl border-t-2 border-secondary shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group"
+          className="bg-card p-4 md:p-5 rounded-2xl border-t-[6px] border-brand-blue shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group"
           onClick={() => navigate(routes.gradingList())}
         >
           <div className="mb-3">
@@ -252,7 +220,7 @@ export const DashboardView = ({
         {/* Card 3: Due Soon */}
         <div
           id="dashboard-card-upcoming"
-          className="bg-card p-4 md:p-5 rounded-2xl border-t-2 border-border shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group"
+          className="bg-card p-4 md:p-5 rounded-2xl border-t-[6px] border-brand-blue shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group"
           onClick={() => navigate(routes.courses())}
         >
           <div className="mb-3">
@@ -313,7 +281,7 @@ export const DashboardView = ({
         {/* Card 4: Concern List */}
         <div
           id="dashboard-card-concern"
-          className="bg-card p-4 md:p-5 rounded-2xl border-t-2 border-danger-500 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group"
+          className="bg-card p-4 md:p-5 rounded-2xl border-t-[6px] border-danger-500 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group"
           onClick={() => navigate(routes.concern())}
         >
           <div className="mb-3">

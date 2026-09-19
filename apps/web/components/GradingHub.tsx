@@ -1,7 +1,5 @@
 import React, { useMemo, useState } from 'react';
 import {
-  ArrowLeft,
-  Calendar,
   ChevronDown,
   ChevronRight,
   ClipboardCheck,
@@ -28,6 +26,8 @@ import {
   type AssignmentPhase,
 } from '../lib/assignments';
 import { orderedAssignments, orderNumbers } from '../lib/assignmentOrder';
+import { PageHeader, PAGE_CONTAINER } from './PageHeader';
+import { SemesterSelect } from './SemesterSelect';
 
 interface GradingHubProps {
   /** 這位使用者看得到的班級（已依身分過濾，見 lib/access.ts） */
@@ -38,6 +38,8 @@ interface GradingHubProps {
   onSemesterChange: (semester: string) => void;
   /** 學期下拉的選項（後端 semesters 表，不是 mockData 的寫死清單） */
   semesterOptions: { value: string; label: string }[];
+  /** 今天落在的學期，選單上標「本學期」。currentSemester 是老師選的那一個 */
+  todaySemester?: string;
   /** 進入某份作業的批改清單 */
   onOpenAssignment: (assignmentId: string) => void;
   onBack: () => void;
@@ -82,6 +84,7 @@ export const GradingHub: React.FC<GradingHubProps> = ({
   currentSemester,
   onSemesterChange,
   semesterOptions,
+  todaySemester,
   onOpenAssignment,
   onBack,
 }) => {
@@ -200,39 +203,23 @@ export const GradingHub: React.FC<GradingHubProps> = ({
   );
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6 pb-12">
-      {/* 頁首 */}
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          id="grading-btn-back"
-          onClick={onBack}
-          title="返回"
-          className="p-2 -ml-2 rounded-full hover:bg-card/50 text-text-secondary transition-colors"
-        >
-          <ArrowLeft size={24} />
-        </button>
-        <div className="min-w-0">
-          <h2 className="text-display font-bold text-text-primary tracking-tight">批改作業</h2>
-          <p className="text-text-secondary text-ui">先處理待批改，或從下方依學校找到班級</p>
-        </div>
-        <label className="ml-auto flex items-center gap-2 bg-card/60 border border-border rounded-full px-4 py-2 cursor-pointer w-full sm:w-auto">
-          <Calendar size={16} className="text-primary shrink-0" />
-          <span className="text-caption text-text-secondary whitespace-nowrap">學期</span>
-          <select
+    <div className={`${PAGE_CONTAINER} space-y-6 pb-12`}>
+      <PageHeader
+        title="批改作業"
+        subtitle="先處理待批改，或從下方依學校找到班級"
+        onBack={onBack}
+        backId="grading-btn-back"
+        actions={
+          <SemesterSelect
             id="grading-hub-select-semester"
             value={currentSemester}
-            onChange={(e) => onSemesterChange(e.target.value)}
-            className="flex-1 min-w-0 bg-transparent outline-none appearance-none cursor-pointer text-body text-text-primary pr-5"
-          >
-            {semesterOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-          <ChevronDown size={14} className="text-text-secondary -ml-5 pointer-events-none shrink-0" />
-        </label>
-      </div>
+            options={semesterOptions}
+            current={todaySemester}
+            onChange={onSemesterChange}
+            className="w-full sm:w-auto"
+          />
+        }
+      />
 
       {/* 待批改 */}
       <section id="grading-hub-pending">

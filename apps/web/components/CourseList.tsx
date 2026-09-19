@@ -1,15 +1,12 @@
 import React, { useMemo, useState } from "react";
 import {
-  Calendar,
   Clock,
   AlertCircle,
   MoreHorizontal,
   ChevronRight,
   ArrowRight,
-  ArrowLeft,
   Archive,
   Bot,
-  ChevronDown,
   RefreshCcw,
   Edit,
   Users,
@@ -42,6 +39,8 @@ import {
 import { SyncSchoolModal } from "./SyncSchoolModal";
 
 import { EditCourseModal } from "./EditCourseModal";
+import { PageHeader, PAGE_CONTAINER } from "./PageHeader";
+import { SemesterSelect } from "./SemesterSelect";
 
 export const CourseList = ({
   courses,
@@ -50,6 +49,7 @@ export const CourseList = ({
   onSelectCourse,
   currentSemester,
   semesterOptions,
+  todaySemester,
   onSemesterChange,
   onBack,
   canGoBack,
@@ -65,6 +65,8 @@ export const CourseList = ({
   onSelectCourse: (c: Course) => void;
   currentSemester: string;
   semesterOptions: { value: string; label: string }[];
+  /** 今天落在的學期，選單上標「本學期」。currentSemester 是老師選的那一個 */
+  todaySemester?: string;
   onSemesterChange: (s: string) => void;
   onBack: () => void;
   canGoBack: boolean;
@@ -372,7 +374,7 @@ export const CourseList = ({
   };
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 pb-12">
+    <div className={`${PAGE_CONTAINER} space-y-6 pb-12`}>
       {editingCourse && (
         <EditCourseModal
           course={editingCourse}
@@ -395,26 +397,13 @@ export const CourseList = ({
           }}
         />
       )}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-8">
-        <div>
-          <div className="flex items-center gap-3">
-            {canGoBack && (
-              <button
-                id="course-btn-back"
-                onClick={onBack}
-                className="p-2 -ml-2 rounded-full hover:bg-card/50 text-text-secondary transition-colors"
-              >
-                <ArrowLeft size={24} />
-              </button>
-            )}
-            <h2 className="text-display font-bold text-text-primary tracking-tight">
-              課程管理
-            </h2>
-          </div>
-          <p className="text-text-secondary mt-2 font-normal text-ui ml-0 md:ml-12">
-            管理您的授課班級與學生名單，追蹤作業進度
-          </p>
-        </div>
+      <PageHeader
+        title="課程管理"
+        subtitle="管理您的授課班級與學生名單，追蹤作業進度"
+        onBack={canGoBack ? onBack : undefined}
+        backId="course-btn-back"
+        className="mb-8"
+        actions={<>
 
         {/*
           手機上兩個控制各佔一整行。以前同一行各分一半，按鈕窄到「同步校務系統」
@@ -422,29 +411,14 @@ export const CourseList = ({
           平板以上才並排，而且都不伸縮。
         */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full md:w-auto">
-          <div className="relative flex items-center gap-2 bg-card/60 backdrop-blur-md px-4 md:px-5 py-2 md:py-2.5 rounded-full border border-card/50 shadow-sm hover:bg-card transition-all cursor-pointer group ring-1 ring-black/5 w-full sm:w-auto">
-            <Calendar size={16} className="text-primary md:size-[18px] shrink-0" />
-            <span className="text-caption text-text-secondary uppercase tracking-wider whitespace-nowrap shrink-0">
-              學期
-            </span>
-            <span className="h-4 w-px bg-border mx-1 md:mx-2"></span>
-            <select
-              id="course-select-semester"
-              value={currentSemester}
-              onChange={(e) => onSemesterChange(e.target.value)}
-              className="flex-1 min-w-0 text-body text-text-primary bg-transparent outline-none appearance-none cursor-pointer pr-6 md:pr-8 relative z-10"
-            >
-              {semesterOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown
-              size={12}
-              className="text-text-secondary absolute right-4 pointer-events-none md:size-[14px]"
-            />
-          </div>
+          <SemesterSelect
+            id="course-select-semester"
+            value={currentSemester}
+            options={semesterOptions}
+            current={todaySemester}
+            onChange={onSemesterChange}
+            className="w-full sm:w-auto"
+          />
 
           <button
             id="course-btn-sync"
@@ -454,7 +428,8 @@ export const CourseList = ({
             <RefreshCcw size={14} className="md:size-[16px]" /> 同步校務系統
           </button>
         </div>
-      </div>
+        </>}
+      />
 
       <div className="flex border-b border-border mb-6 overflow-x-auto scrollbar-hide">
         <button id="dashboard-tab-active-courses"

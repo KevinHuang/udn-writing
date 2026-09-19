@@ -1,13 +1,14 @@
 import React, { useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  ChevronRight, ArrowLeft, Bot, ChevronDown, Wand2, Loader2, Send, RotateCcw,
+  ChevronRight, Bot, ChevronDown, Wand2, Loader2, Send, RotateCcw,
   Check, Camera, Image as ImageIcon,
 } from "lucide-react";
 import { StatusBadge } from "../components/StatusBadge";
 import { SubmissionStampRow } from "../components/SubmissionStamp";
 import { ProxySubmitModal } from "../components/ProxySubmitModal";
 import { GradingHub } from "../components/GradingHub";
+import { PageHeader, PAGE_CONTAINER } from "../components/PageHeader";
 import { useAppState } from "../state/appStateContext";
 import { useGoBack } from "../lib/useGoBack";
 import { routes, queryKeys } from "../lib/routes";
@@ -30,7 +31,7 @@ export const GradingListPage: React.FC = () => {
     courses,
     currentSemester,
     setCurrentSemester,
-    semesterOptions,
+    semesterOptions, todaySemester,
     currentlyGradingId,
     handleBatchGrade,
     handleBatchPublish,
@@ -179,25 +180,18 @@ export const GradingListPage: React.FC = () => {
         const hasDraft = (id: string) => id.charCodeAt(id.length - 1) % 2 === 0;
 
         return (
-          <div className="max-w-7xl mx-auto space-y-6">
-            <div className="flex flex-wrap items-center gap-3 md:gap-4 mb-4 md:mb-6">
-              <button id="gradinglist-btn-back"
-                onClick={goBack}
-                className="tap-target w-9 h-9 md:w-10 md:h-10 flex items-center justify-center rounded-full bg-card/50 border border-card/60 text-ink-500 hover:bg-card hover:text-ink-900 transition-all shadow-sm"
-              >
-                <ArrowLeft size={18} className="md:size-[20px]" />
-              </button>
-              <div>
-                <h2 className="text-display font-bold text-text-primary tracking-tight">
-                  批改作業
-                </h2>
-              </div>
-
-              {/*
-                原本副標寫「正在批改：某某作業」，現在下拉本身就顯示那個名字，
-                留著只是同一句話講兩次，拿掉。
-              */}
-              <div className="ml-auto flex flex-wrap items-end gap-3">
+          <div className={`${PAGE_CONTAINER} space-y-6`}>
+            {/*
+              原本副標寫「正在批改：某某作業」，現在下拉本身就顯示那個名字，
+              留著只是同一句話講兩次，拿掉。
+            */}
+            <PageHeader
+              title="批改作業"
+              onBack={goBack}
+              backId="gradinglist-btn-back"
+              className="mb-4 md:mb-6"
+              actions={
+              <div className="flex flex-wrap items-end gap-3">
                 <label className="flex flex-col gap-1">
                   <span className="text-caption text-text-secondary">切換班級</span>
                   <div className="relative">
@@ -253,7 +247,8 @@ export const GradingListPage: React.FC = () => {
                   </div>
                 </label>
               </div>
-            </div>
+              }
+            />
 
             {/* AI 模型設定。依需求隱藏，機制保留 —— 見 lib/features.ts */}
             {SHOW_AI_MODEL_PICKER && availableModels.length > 0 && (
@@ -831,6 +826,7 @@ export const GradingListPage: React.FC = () => {
           currentSemester={currentSemester}
           onSemesterChange={setCurrentSemester}
           semesterOptions={semesterOptions}
+          todaySemester={todaySemester}
           // 選定某份是 /grading?assignment=…，返回鍵自然會退回入口頁
           onOpenAssignment={(id) => navigate(routes.gradingList({ assignmentId: id }))}
           onBack={goBack}

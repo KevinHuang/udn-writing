@@ -42,3 +42,30 @@ export const toSemester = (schoolYear: number, term: number): Semester => ({
   schoolYear,
   term,
 });
+
+/** 學期的先後：115-1 < 115-2 < 116-1 */
+export const compareSemester = (a: Semester, b: Semester): number =>
+  a.schoolYear - b.schoolYear || a.term - b.term;
+
+/**
+ * 學期下拉要列哪些：**到目前學期為止**，新的在前。
+ *
+ * `semesters` 表預先建到好幾年後（實測到 119-1），全部列出來的話，
+ * 老師和學生打開下拉，最上面是四年後、一門課都沒有的學期，
+ * 目前學期反而要往下找。還沒到的學期沒有東西可看，不列。
+ *
+ * 同一個學期只留一個 —— 表裡有重複列（118-2 有兩列，見 findings），
+ * 重複的選項會讓 React 的 key 撞在一起。
+ *
+ * 後端沒給目前學期時（理論上不會）不過濾，寧可多列也不要整個選單是空的。
+ */
+export function selectableSemesters(
+  options: Semester[],
+  current: Semester | null,
+): Semester[] {
+  const seen = new Set<string>();
+  return options
+    .filter((s) => !current || compareSemester(s, current) <= 0)
+    .filter((s) => (seen.has(s.value) ? false : (seen.add(s.value), true)))
+    .sort((a, b) => compareSemester(b, a));
+}

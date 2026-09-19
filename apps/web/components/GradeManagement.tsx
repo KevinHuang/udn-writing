@@ -31,6 +31,8 @@ import { isOnLeave, type LeaveMarks } from '../lib/leave';
 import { isOverdue as isAssignmentOverdue } from '../lib/assignments';
 import { orderedAssignments, orderNumbers } from '../lib/assignmentOrder';
 import { CoursePickerModal } from './CoursePickerModal';
+import { PageHeader, PAGE_CONTAINER } from './PageHeader';
+import { SemesterSelect } from './SemesterSelect';
 
 interface GradeManagementProps {
   courses: Course[];
@@ -39,6 +41,8 @@ interface GradeManagementProps {
   currentSemester: string;
   onSemesterChange: (s: string) => void;
   semesterOptions: { value: string; label: string }[];
+  /** 今天落在的學期，選單上標「本學期」。currentSemester 是老師選的那一個 */
+  todaySemester?: string;
   initialCourseId?: string | null;
   /** 請假註記（作業 × 學生），見 lib/leave.ts */
   leaveMarks?: LeaveMarks;
@@ -253,6 +257,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
   currentSemester,
   onSemesterChange,
   semesterOptions,
+  todaySemester,
   initialCourseId,
   leaveMarks,
   onSetLeave,
@@ -500,7 +505,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
   };
 
   return (
-    <div className="max-w-[1400px] mx-auto flex flex-col pb-12">
+    <div className={`${PAGE_CONTAINER} flex flex-col pb-12`}>
       {/* Student History Modal */}
       {historyModalStudent && (
         <StudentHistoryModal 
@@ -526,24 +531,13 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
           · 讀起來是一組設定，不是三顆不相干的按鈕
       */}
       <div className="mb-4 sm:mb-6 shrink-0">
-        <div className="flex flex-wrap items-end justify-between gap-3 mb-3 sm:mb-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 sm:gap-3">
-              {canGoBack && onBack && (
-                <button
-                  id="grademanagement-btn-back"
-                  onClick={onBack}
-                  className="tap-target p-1.5 sm:p-2 -ml-1 sm:-ml-2 rounded-full hover:bg-surface/50 text-text-primary transition-colors shrink-0"
-                >
-                  <ArrowLeft size={18} className="sm:size-6" />
-                </button>
-              )}
-              <h2 className="text-display font-bold text-text-primary tracking-tight whitespace-nowrap">成績管理</h2>
-            </div>
-            <p className="text-ui text-text-secondary mt-0.5 sm:mt-1 font-normal">查看課程成績總表與匯出報表</p>
-          </div>
-
-          {selectedCourseId && (
+        <PageHeader
+          title="成績管理"
+          subtitle="查看課程成績總表與匯出報表"
+          onBack={canGoBack ? onBack : undefined}
+          backId="grademanagement-btn-back"
+          className="mb-3 sm:mb-4"
+          actions={selectedCourseId && (
             <div className="shrink-0 flex items-center gap-2">
               {/*
                 期末總結是次要動作（一學期按一次），所以走描邊樣式，
@@ -569,28 +563,19 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
               </button>
             </div>
           )}
-        </div>
+        />
 
         <div className="bg-surface/60 backdrop-blur-md border border-border rounded-brand shadow-sm flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border overflow-hidden">
-          <label className="flex-1 min-w-0 px-4 py-2.5 hover:bg-surface/80 transition-colors cursor-pointer">
-            <span className="flex items-center gap-1.5 text-caption text-text-secondary uppercase tracking-wider">
-              <Calendar size={12} className="shrink-0 text-primary" />
-              學期
-            </span>
-            <div className="relative mt-0.5">
-              <select
-                id="grademanagement-select-semester"
-                value={currentSemester}
-                onChange={(e) => onSemesterChange(e.target.value)}
-                className="w-full appearance-none bg-transparent text-ui text-text-primary outline-none cursor-pointer pr-6 truncate"
-              >
-                {semesterOptions.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="text-text-secondary absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-          </label>
+          <div className="flex-1 min-w-0">
+            <SemesterSelect
+              id="grademanagement-select-semester"
+              variant="field"
+              value={currentSemester}
+              options={semesterOptions}
+              current={todaySemester}
+              onChange={onSemesterChange}
+            />
+          </div>
 
           {/*
             班級。一律開挑選視窗（縣市篩選 → 搜尋 → 學校分組）——
@@ -659,7 +644,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
       {selectedCourse && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 mb-4 sm:mb-6 shrink-0">
           {/* 六級分分布 */}
-          <div className="bg-surface/60 backdrop-blur-xl p-3 sm:p-6 rounded-brand border border-border shadow-sm">
+          <div className="bg-card p-3 sm:p-6 rounded-brand border border-border shadow-sm">
             <div className="flex items-baseline justify-between gap-3 mb-2 sm:mb-4">
               <h3 className="text-title font-bold text-text-primary flex items-center gap-2">
                 <TrendingUp size={16} className="sm:size-5 text-primary shrink-0" />
@@ -699,7 +684,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
           </div>
 
           {/* 四向度平均 */}
-          <div className="bg-surface/60 backdrop-blur-xl p-3 sm:p-6 rounded-brand border border-border shadow-sm">
+          <div className="bg-card p-3 sm:p-6 rounded-brand border border-border shadow-sm">
             <h3 className="text-title font-bold text-text-primary mb-2 sm:mb-4 flex items-center gap-2">
               <Target size={16} className="sm:size-5 text-primary shrink-0" />
               全班寫作四向度平均

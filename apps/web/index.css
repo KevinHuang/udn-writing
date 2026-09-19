@@ -42,8 +42,14 @@
   --breakpoint-lg: 1025px;
 
   /* ---------- 字形 ---------- */
-  --font-sans: "LXGW WenKai TC", "KaiTi", "DFKai-SB", "BiauKai", "Noto Serif TC", serif;
-  --font-serif: "LXGW WenKai TC", "KaiTi", "DFKai-SB", "BiauKai", "Noto Serif TC", serif;
+  /* 介面一律思源黑體（聯合學苑的視覺）。以前全站是楷書 ——
+     標題、按鈕、表格都是楷書，小字與數字的辨識度差。
+     font-serif 留著是因為舊元件的標題寫了 font-serif，一起換成黑體。 */
+  --font-sans: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-serif: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  /* **作文與題目內文保留楷書**：長篇閱讀用楷書比較舒服，也是這套系統的個性。
+     元件寫 font-essay（搭配 text-essay 字級）。 */
+  --font-essay: "LXGW WenKai TC", "KaiTi", "DFKai-SB", "BiauKai", "Noto Serif TC", serif;
 
   /* ---------- 字級 ----------
      小字固定不縮；只有標題級距在桌機放大。
@@ -78,75 +84,75 @@
   --text-essay--letter-spacing: 0.03em;
 
   /* ---------- 墨分五色（中性，取代 slate／gray） ---------- */
-  --color-ink-50:  #F5F0E4;   /* 宣紙 */
-  --color-ink-100: #EBE4D3;
-  --color-ink-200: #DED7C4;   /* 墨痕，界線 */
-  --color-ink-300: #C6BFAC;   /* 清墨 */
-  --color-ink-400: #A79E8B;
-  --color-ink-500: #8A8271;   /* 淡墨 */
-  --color-ink-600: #6B6454;
-  --color-ink-700: #4E4738;   /* 重墨 */
-  --color-ink-800: #2E2A21;   /* 濃墨 */
-  --color-ink-900: #17150F;   /* 焦墨 */
+  --color-ink-50:  #F6F4F1;   /* 宣紙 */
+  --color-ink-100: #EAE7E2;
+  --color-ink-200: #DCD6D0;   /* 墨痕，界線 */
+  --color-ink-300: #C3BCB5;   /* 清墨 */
+  --color-ink-400: #A29A93;
+  --color-ink-500: #857C76;   /* 淡墨 */
+  --color-ink-600: #675F5A;
+  --color-ink-700: #4B4440;   /* 重墨 */
+  --color-ink-800: #302B28;   /* 濃墨 */
+  --color-ink-900: #1C1917;   /* 焦墨 */
 
   /* ---------- 花青 info／主色 ---------- */
-  --color-primary-50:  #EDF1F6;
-  --color-primary-100: #E5EAF0;
-  --color-primary-200: #C3D0DF;
-  --color-primary-300: #97ADC5;
-  --color-primary-400: #6A87A8;
-  --color-primary-500: #3E5A78;
-  --color-primary-600: #354D66;
-  --color-primary-700: #2B3E53;
-  --color-primary-800: #212F3F;
-  --color-primary-900: #17212C;
+  --color-primary-50:  #EAF6FA;
+  --color-primary-100: #D5EDF5;
+  --color-primary-200: #A9DAEA;
+  --color-primary-300: #74C2DC;
+  --color-primary-400: #45AFD1;
+  --color-primary-500: #209DC4;
+  --color-primary-600: #1A85A7;
+  --color-primary-700: #156C88;
+  --color-primary-800: #10536A;
+  --color-primary-900: #0B3A4A;
 
-  --color-info-50:  #EDF1F6;
-  --color-info-100: #E5EAF0;
-  --color-info-200: #C3D0DF;
-  --color-info-300: #97ADC5;
-  --color-info-400: #6A87A8;
-  --color-info-500: #3E5A78;
-  --color-info-600: #354D66;
-  --color-info-700: #2B3E53;
-  --color-info-800: #212F3F;
-  --color-info-900: #17212C;
+  --color-info-50:  #EAF6FA;
+  --color-info-100: #D5EDF5;
+  --color-info-200: #A9DAEA;
+  --color-info-300: #74C2DC;
+  --color-info-400: #45AFD1;
+  --color-info-500: #209DC4;
+  --color-info-600: #1A85A7;
+  --color-info-700: #156C88;
+  --color-info-800: #10536A;
+  --color-info-900: #0B3A4A;
 
   /* ---------- 朱砂 danger ---------- */
-  --color-danger-50:  #FAF0EE;
-  --color-danger-100: #F3E6E2;
-  --color-danger-200: #E3C2BB;
-  --color-danger-300: #CE9A8F;
-  --color-danger-400: #B66B5D;
-  --color-danger-500: #9E3D32;
-  --color-danger-600: #87342A;
-  --color-danger-700: #6E2A23;
-  --color-danger-800: #54201B;
-  --color-danger-900: #3B1713;
+  --color-danger-50:  #FDF0EF;
+  --color-danger-100: #FBE2DF;
+  --color-danger-200: #F5BDB7;
+  --color-danger-300: #EC8F86;
+  --color-danger-400: #E0625A;
+  --color-danger-500: #CC3A33;
+  --color-danger-600: #B02D27;
+  --color-danger-700: #8F241F;
+  --color-danger-800: #6E1C18;
+  --color-danger-900: #4D1411;
 
   /* ---------- 赭石 warning ---------- */
-  --color-warning-50:  #FBF5EE;
-  --color-warning-100: #F5EAE0;
-  --color-warning-200: #E7CDB4;
-  --color-warning-300: #D4AC85;
-  --color-warning-400: #BE8B5D;
-  --color-warning-500: #A66B3C;
-  --color-warning-600: #8C5A33;
-  --color-warning-700: #71482A;
-  --color-warning-800: #563720;
-  --color-warning-900: #3D2717;
+  --color-warning-50:  #FFF6E8;
+  --color-warning-100: #FFEBCC;
+  --color-warning-200: #FFD699;
+  --color-warning-300: #FFBD5C;
+  --color-warning-400: #FAA72B;
+  --color-warning-500: #F39800;
+  --color-warning-600: #C77A00;
+  --color-warning-700: #8F5500;
+  --color-warning-800: #6E4200;
+  --color-warning-900: #4A2C00;
 
   /* ---------- 石綠 success ---------- */
-  --color-success-50:  #F1F5F1;
-  --color-success-100: #E7EDE7;
-  --color-success-200: #C8D5CB;
-  --color-success-300: #A3B8A8;
-  --color-success-400: #7E9985;
-  --color-success-500: #5C7A63;
-  --color-success-600: #4E6754;
-  --color-success-700: #3F5444;
-  --color-success-800: #303F34;
-  --color-success-900: #222D25;
+  --color-success-50:  #F0F8EC;
+  --color-success-100: #E0F0D8;
+  --color-success-200: #C2E2B3;
+  --color-success-300: #9DCF88;
+  --color-success-400: #7BBD5F;
+  --color-success-500: #5CAE3F;
+  --color-success-600: #4A8F32;
+  --color-success-700: #3A7127;
+  --color-success-800: #2A531C;
+  --color-success-900: #1B3612;
 
   /* ---------- 黛 mauve ---------- */
   --color-mauve-50:  #F3F0F5;
@@ -161,36 +167,45 @@
   --color-mauve-900: #27222B;
 
   /* ---------- 藤黃 amber ---------- */
-  --color-amber-50:  #FCF7EA;
-  --color-amber-100: #F8EFD8;
-  --color-amber-200: #EDDAAB;
-  --color-amber-300: #DEC17C;
-  --color-amber-400: #CFAB5C;
-  --color-amber-500: #C09540;
-  --color-amber-600: #A17C36;
-  --color-amber-700: #81642C;
-  --color-amber-800: #614B21;
-  --color-amber-900: #443517;
+  --color-amber-50:  #FFFBEA;
+  --color-amber-100: #FFF4CC;
+  --color-amber-200: #FFEA99;
+  --color-amber-300: #FEDB66;
+  --color-amber-400: #F5C23F;
+  --color-amber-500: #E6A817;
+  --color-amber-600: #BF8A0F;
+  --color-amber-700: #8A6309;
+  --color-amber-800: #6B4C08;
+  --color-amber-900: #473205;
+
+  /* ---------- 聯合學苑：頂端列與分數卡的暖色漸層（設計稿取色） ----------
+     只給大面積色塊用。上面壓字一律用 text-text-primary（深字），不要用白字。 */
+  --color-sun-300: #FEDB66;
+  --color-sun-400: #F9C66F;
+  --color-sun-500: #F5B776;
+  /* 設計稿原色。純裝飾（色條、圓點、底線）用；有白字的按鈕用 secondary／primary（深一階、過 AA） */
+  --color-brand-orange: #EA5514;
+  --color-brand-blue:   #209DC4;
 
   /* ---------- 語意別名（元件裡最常用的就是這幾個） ---------- */
-  --color-surface:        #F5F0E4;  /* 宣紙：頁面底色 */
-  --color-surface-soft:   #EBE4D3;  /* 紙陰：分區、次要區塊 */
-  --color-card:           #FCFAF3;  /* 卡片：取代 bg-white */
-  --color-paper:          #FCFAF3;
-  --color-primary:        #3E5A78;  /* 花青 */
-  --color-secondary:      #9E3D32;  /* 朱砂 */
+  --color-surface:        #EAE7E2;  /* 宣紙：頁面底色 */
+  --color-surface-soft:   #E0DBD5;  /* 紙陰：分區、次要區塊 */
+  --color-card:           #FFFFFF;  /* 卡片：取代 bg-white */
+  --color-paper:          #FFFFFF;
+  --color-primary:        #156C88;  /* 花青 */
+  --color-secondary:      #C0430C;  /* 朱砂 */
   /* 石綠。原本的 #5C7A63 當文字用只有 4.18:1（宣紙）／3.75:1（紙陰），
      不到 AA 的 4.5。加深到 #4C6651 之後是 5.55 / 6.04 / 4.98。 */
-  --color-accent:         #4C6651;  /* 石綠 */
-  --color-text-primary:   #17150F;  /* 焦墨 */
-  --color-text-secondary: #4E4738;  /* 重墨 */
+  --color-accent:         #3A7127;  /* 石綠 */
+  --color-text-primary:   #1C1917;  /* 焦墨 */
+  --color-text-secondary: #4B4440;  /* 重墨 */
   /* 第三層文字：說明、佔位、次要標籤。
      先前這些地方寫成 text-text-secondary/40 之類的半透明，
      實測只有 1.99:1 —— 眼睛看得到、但讀不動。
      給它一個真正的顏色，不要再靠不透明度猜。
      #6B6454 在宣紙／卡片／紙陰上分別是 5.16 / 5.62 / 4.63，都過 AA。 */
-  --color-text-muted:     #6B6454;
-  --color-border:         #DED7C4;  /* 墨痕：分隔線、裝飾性邊界 */
+  --color-text-muted:     #675F5A;
+  --color-border:         #DCD6D0;  /* 墨痕：分隔線、裝飾性邊界 */
   /*
     可操作元件的邊界。WCAG 1.4.11 要求 3:1，而 --color-border（#DED7C4）
     對宣紙底只有 1.26 —— 實測搜尋框、篩選鍵、資料夾卡片幾乎看不見邊。
@@ -198,7 +213,7 @@
     放在宣紙上仍然像一筆墨痕。**只給按鈕、輸入框、可點卡片用**，
     純裝飾的分隔線繼續用 --color-border，不然整頁會變得很方框。
   */
-  --color-border-strong:  #8A8271;
+  --color-border-strong:  #857C76;
   /*
     卡片這種「一整張紙」的邊。比 border 深一點看得出來，
     但比 border-strong 柔很多 —— 大面積的卡片畫一條 3:1 的濃線會很硬，
@@ -209,20 +224,20 @@
     真正需要 3:1 的是**只靠邊框才看得出來**的東西（空的輸入框、圖示鍵）。
     卡片改用「淡邊 + 紙張陰影」來分層，那才是宣紙的語言。
   */
-  --color-border-card:    #CFC6B0;
+  --color-border-card:    #D8D1CA;
 
   /* 帶色背景上的文字（主要按鈕、狀態標籤）。
      不能寫死 text-white —— 碑拓模式的花青會變亮，
      白字壓上去對比不足，那時要反過來用焦墨。 */
-  --color-on-accent:      #FCFAF3;
+  --color-on-accent:      #FFFFFF;
 
   /* 壓在「兩種主題都是中深色」的實心底上（朱砂刪除鍵之類）。
      這個值刻意不在 html.dark 底下覆蓋 —— 底色不翻轉，
      文字也就不該翻轉，否則深色模式會變成深字壓深紅。 */
-  --color-on-solid:       #F7F3E9;
+  --color-on-solid:       #FFFFFF;
 
   /* ---------- 其他 ---------- */
-  --radius-brand: 3px;
+  --radius-brand: 12px;
   /*
     陰影的顏色一律走 --shadow-tint-*（宣告在下面的 :root），不要直接寫死。
 
@@ -244,6 +259,8 @@
   --animate-fade-in: fadeIn 0.5s ease-out;
   --animate-slide-in-right: slideInRight 0.5s ease-out;
   --animate-pulse-subtle: pulseSubtle 2s ease-in-out infinite;
+  /* 下拉選單彈出：短、從觸發鈕的方向長出來 */
+  --animate-pop-in: popIn 0.14s ease-out;
 
   @keyframes fadeIn {
     0% { opacity: 0; }
@@ -252,6 +269,10 @@
   @keyframes slideInRight {
     0% { transform: translateX(20px); opacity: 0; }
     100% { transform: translateX(0); opacity: 1; }
+  }
+  @keyframes popIn {
+    0% { opacity: 0; transform: translateY(-4px) scale(0.98); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
   }
   @keyframes pulseSubtle {
     0%, 100% { opacity: 1; transform: scale(1); }
@@ -273,73 +294,73 @@
    選擇器用 html.dark（0,1,1）壓過 @theme 送進 :root 的（0,1,0）。
    ============================================================ */
 html.dark {
-  --color-ink-50:  #14120E;
-  --color-ink-100: #1E1B15;
-  --color-ink-200: #322D25;
-  --color-ink-300: #4A443A;
-  --color-ink-400: #635C4E;
-  --color-ink-500: #7E7767;
-  --color-ink-600: #9A927F;
-  --color-ink-700: #B3AB98;
-  --color-ink-800: #DCD5C4;
-  --color-ink-900: #F0EADB;
+  --color-ink-50:  #161412;
+  --color-ink-100: #1F1C19;
+  --color-ink-200: #2E2A26;
+  --color-ink-300: #443E39;
+  --color-ink-400: #5E5750;
+  --color-ink-500: #7B736B;
+  --color-ink-600: #9A928A;
+  --color-ink-700: #B8B0A8;
+  --color-ink-800: #DAD4CE;
+  --color-ink-900: #F2EFEB;
 
-  --color-primary-50:  #141B23;
-  --color-primary-100: #151E28;
-  --color-primary-200: #1F2C3A;
-  --color-primary-300: #2E4054;
-  --color-primary-400: #476A8E;
-  --color-primary-500: #6E8DAE;
-  --color-primary-600: #8FA9C4;
-  --color-primary-700: #AFC2D6;
-  --color-primary-800: #CCD8E4;
-  --color-primary-900: #E6EDF4;
+  --color-primary-50:  #0C1C22;
+  --color-primary-100: #0F242C;
+  --color-primary-200: #15333F;
+  --color-primary-300: #1D4A5B;
+  --color-primary-400: #26667D;
+  --color-primary-500: #2F87A6;
+  --color-primary-600: #52A9C8;
+  --color-primary-700: #7CC2DA;
+  --color-primary-800: #AAD8E8;
+  --color-primary-900: #D5EDF5;
 
-  --color-info-50:  #141B23;
-  --color-info-100: #151E28;
-  --color-info-200: #1F2C3A;
-  --color-info-300: #2E4054;
-  --color-info-400: #476A8E;
-  --color-info-500: #6E8DAE;
-  --color-info-600: #8FA9C4;
-  --color-info-700: #AFC2D6;
-  --color-info-800: #CCD8E4;
-  --color-info-900: #E6EDF4;
+  --color-info-50:  #0C1C22;
+  --color-info-100: #0F242C;
+  --color-info-200: #15333F;
+  --color-info-300: #1D4A5B;
+  --color-info-400: #26667D;
+  --color-info-500: #2F87A6;
+  --color-info-600: #52A9C8;
+  --color-info-700: #7CC2DA;
+  --color-info-800: #AAD8E8;
+  --color-info-900: #D5EDF5;
 
-  --color-danger-50:  #241512;
-  --color-danger-100: #2B1A17;
-  --color-danger-200: #3E241E;
-  --color-danger-300: #57332A;
-  --color-danger-400: #7C4A3D;
-  --color-danger-500: #A75E4F;
+  --color-danger-50:  #231110;
+  --color-danger-100: #2C1513;
+  --color-danger-200: #401D1A;
+  --color-danger-300: #5C2824;
+  --color-danger-400: #833832;
+  --color-danger-500: #B24B43;
   /* 深色底當文字用時 #C4685A 只有 4.34–4.48:1，差一點點就到 AA。
      提亮到 #CB7365 之後是 5.5 / 5.05 / 4.89。 */
-  --color-danger-600: #CB7365;
-  --color-danger-700: #D99486;
-  --color-danger-800: #E9BCB1;
-  --color-danger-900: #F6E2DC;
+  --color-danger-600: #D86A61;
+  --color-danger-700: #E8948D;
+  --color-danger-800: #F2BFBA;
+  --color-danger-900: #FAE3E1;
 
-  --color-warning-50:  #221A11;
-  --color-warning-100: #291D13;
-  --color-warning-200: #3B2A1A;
-  --color-warning-300: #533B23;
-  --color-warning-400: #765430;
-  --color-warning-500: #9C7141;
-  --color-warning-600: #C9945F;
-  --color-warning-700: #DCB489;
-  --color-warning-800: #EBD3B5;
-  --color-warning-900: #F7EBDA;
+  --color-warning-50:  #221806;
+  --color-warning-100: #2B1F08;
+  --color-warning-200: #3E2C0B;
+  --color-warning-300: #5A400F;
+  --color-warning-400: #805A14;
+  --color-warning-500: #B07B18;
+  --color-warning-600: #E0A23A;
+  --color-warning-700: #F2BE6A;
+  --color-warning-800: #F9D8A3;
+  --color-warning-900: #FDEDD3;
 
-  --color-success-50:  #141A15;
-  --color-success-100: #182018;
-  --color-success-200: #232E24;
-  --color-success-300: #334132;
-  --color-success-400: #495C4A;
-  --color-success-500: #647C68;
-  --color-success-600: #8AA891;
-  --color-success-700: #A9C1AE;
-  --color-success-800: #C8D8CB;
-  --color-success-900: #E4EDE6;
+  --color-success-50:  #111A0D;
+  --color-success-100: #152111;
+  --color-success-200: #1E2F18;
+  --color-success-300: #2B4422;
+  --color-success-400: #3C5F2F;
+  --color-success-500: #528140;
+  --color-success-600: #72A65D;
+  --color-success-700: #99C488;
+  --color-success-800: #C1DDB5;
+  --color-success-900: #E2F0DC;
 
   --color-mauve-50:  #1A1620;
   --color-mauve-100: #1F1B23;
@@ -352,39 +373,45 @@ html.dark {
   --color-mauve-800: #D4CBDA;
   --color-mauve-900: #EAE4EE;
 
-  --color-amber-50:  #221C0E;
-  --color-amber-100: #2A2212;
-  --color-amber-200: #3D311A;
-  --color-amber-300: #564424;
-  --color-amber-400: #7A6231;
-  --color-amber-500: #A18244;
-  --color-amber-600: #D9B268;
-  --color-amber-700: #E5C992;
-  --color-amber-800: #EEDCB8;
-  --color-amber-900: #F8EFDB;
+  --color-amber-50:  #211A06;
+  --color-amber-100: #2A2108;
+  --color-amber-200: #3D300B;
+  --color-amber-300: #58460F;
+  --color-amber-400: #7D6315;
+  --color-amber-500: #A8851C;
+  --color-amber-600: #D4AB3A;
+  --color-amber-700: #E9C868;
+  --color-amber-800: #F4DE9F;
+  --color-amber-900: #FBF0D2;
 
-  --color-surface:        #14120E;
-  --color-surface-soft:   #0D0C09;
-  --color-card:           #1E1B15;
-  --color-paper:          #1E1B15;
-  --color-primary:        #7E9DBF;
+  /* 頂端列的暖色漸層在碑拓模式轉成深赭：上面壓的是 text-text-primary（這時是淺字），
+     底色不壓暗的話就是亮黃底配淺字，完全讀不到 */
+  --color-sun-300: #3A3016;
+  --color-sun-400: #3E2E1A;
+  --color-sun-500: #432B1F;
+
+  --color-surface:        #161412;
+  --color-surface-soft:   #100F0D;
+  --color-card:           #211E1B;
+  --color-paper:          #211E1B;
+  --color-primary:        #52A9C8;
   /* 朱砂。原本的 #C4685A 當文字用在最深的底上只有 3.97:1，不到 AA。
      提亮到 #CE7767 之後是 5.75 / 5.28 / 4.69，三種底都過。 */
-  --color-secondary:      #CE7767;
-  --color-accent:         #8AA891;
-  --color-text-primary:   #F0EADB;
-  --color-text-secondary: #B3AB98;
+  --color-secondary:      #F07A45;
+  --color-accent:         #99C488;
+  --color-text-primary:   #F2EFEB;
+  --color-text-secondary: #B8B0A8;
   /* 碑拓模式的第三層文字：6.05 / 5.55 / 6.33，都過 AA */
-  --color-text-muted:     #9A927F;
-  --color-border:         #322D25;
+  --color-text-muted:     #9A928A;
+  --color-border:         #2E2A26;
   /* 碑拓模式：對 #14120E 的底量到 3.16 */
-  --color-border-strong:  #6B6454;
+  --color-border-strong:  #6E665F;
   /* 碑拓模式的卡片邊：量到對 #14120E 的底是 2.06 —— 比淺色模式那一條
      吃重一點（深色底上同樣的差距看起來更弱），但仍然遠低於
      border-strong 的 3.16，不會把卡片框成一個硬盒子 */
-  --color-border-card:    #453E33;
+  --color-border-card:    #3E3833;
   /* 碑拓模式的主色是亮花青，按鈕文字改用焦墨才有對比 */
-  --color-on-accent:      #14120E;
+  --color-on-accent:      #161412;
 
   /* 只換墨色，形狀沿用淺色模式那一組（見 @theme 的說明） */
   --shadow-tint-near:  rgba(0, 0, 0, .55);
@@ -446,34 +473,18 @@ html.dark {
     pointer-events: none;
   }
 
-  /* 纖維 + 簾紋 */
+  /* 點陣：聯合學苑設計稿的紙面（取色 #8E7B73 的淡點，間距 28px） */
   body::before {
-    background-image:
-      repeating-linear-gradient(
-        0deg,
-        rgba(88, 76, 54, 0.05) 0px,
-        rgba(88, 76, 54, 0.05) 1px,
-        transparent 1px,
-        transparent 7px
-      ),
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='table' tableValues='1 1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23f)' opacity='0.09'/%3E%3C/svg%3E");
-    background-size: auto, 220px 220px;
-    opacity: 1;
+    background-image: radial-gradient(circle, rgba(142, 123, 115, 0.45) 1.1px, transparent 1.6px);
+    background-size: 28px 28px;
+    background-position: 14px 14px;
   }
 
-  /* 暈染：上緣受光、下緣沉一點，避免整頁死平 */
+  /* 右側一塊淡淡的大色塊，讓整頁不死平（設計稿右緣那一塊 #DCD4CF） */
   body::after {
     background-image:
-      radial-gradient(
-        120% 70% at 50% -10%,
-        rgba(255, 254, 249, 0.9) 0%,
-        transparent 60%
-      ),
-      radial-gradient(
-        110% 60% at 50% 110%,
-        rgba(118, 104, 76, 0.14) 0%,
-        transparent 65%
-      );
+      radial-gradient(38% 55% at 100% 45%, rgba(220, 212, 207, 0.85) 0%, rgba(220, 212, 207, 0.55) 45%, transparent 70%),
+      radial-gradient(120% 70% at 50% -10%, rgba(255, 255, 255, 0.55) 0%, transparent 60%);
   }
 
   /*
@@ -482,25 +493,12 @@ html.dark {
    * 整體不透明度也壓低。
    */
   html.dark body::before {
-    background-image:
-      repeating-linear-gradient(
-        0deg,
-        rgba(240, 234, 219, 0.028) 0px,
-        rgba(240, 234, 219, 0.028) 1px,
-        transparent 1px,
-        transparent 7px
-      ),
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='table' tableValues='1 1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23f)' opacity='0.055'/%3E%3C/svg%3E");
-    opacity: 1;
+    background-image: radial-gradient(circle, rgba(242, 239, 235, 0.10) 1.1px, transparent 1.6px);
   }
 
   html.dark body::after {
     background-image:
-      radial-gradient(
-        120% 70% at 50% -10%,
-        rgba(126, 157, 191, 0.07) 0%,
-        transparent 60%
-      ),
+      radial-gradient(38% 55% at 100% 45%, rgba(82, 169, 200, 0.06) 0%, transparent 70%),
       radial-gradient(110% 60% at 50% 110%, rgba(0, 0, 0, 0.30) 0%, transparent 65%);
   }
 

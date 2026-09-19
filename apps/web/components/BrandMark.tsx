@@ -38,7 +38,8 @@ export const BrandMark: React.FC<BrandMarkProps> = ({ trailing }) => (
       </span>
     </h1>
     <div className="flex items-center gap-2 mt-0.5 sm:mt-1">
-      <span className="text-caption text-text-secondary tracking-widest uppercase">
+      {/* 手機寬度放不下英文副標，會折行撐破頂端膠囊 */}
+      <span className="hidden sm:inline text-caption text-text-secondary tracking-widest uppercase whitespace-nowrap">
         UDN Writing Classroom
       </span>
       {trailing}

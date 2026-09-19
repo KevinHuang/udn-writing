@@ -361,7 +361,7 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                     onChange={(e) => setContent(e.target.value)}
                     rows={12}
                     placeholder="拍照辨識的文字會出現在這裡，也可以直接打字。"
-                    className="w-full px-4 py-3 rounded-xl bg-card border border-border text-essay text-text-primary outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-colors resize-y"
+                    className="w-full px-4 py-3 rounded-xl bg-card border border-border text-essay font-essay text-text-primary outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-colors resize-y"
                   />
                   <p className="mt-1.5 text-caption text-text-muted">
                     {content.trim().length} 字

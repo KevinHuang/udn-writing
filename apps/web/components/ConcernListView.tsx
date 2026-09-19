@@ -7,7 +7,12 @@ import {
   Info,
 } from "lucide-react";
 import { Submission, Assignment, Course } from "../types";
-import { studentStatsForCourse } from "../lib/concern";
+import {
+  studentStatsForCourse,
+  concernListsForCourse,
+  LOW_SCORE_THRESHOLD,
+  CONCERN_LIST_SIZE,
+} from "../lib/concern";
 import { type LeaveMarks } from "../lib/leave";
 
 export const ConcernListView = ({
@@ -25,41 +30,13 @@ export const ConcernListView = ({
   onBack: () => void;
 }) => {
   const courseStats = useMemo(() => {
-    return allCourses.map((course) => {
-      // 學生統計走 lib/concern.ts，與儀表板的關心名單卡片同一套定義
-      const studentStats = studentStatsForCourse(
-        course,
-        assignments,
-        submissions,
-        new Date(),
-        leaveMarks,
-      );
-
-      const topStudents = [...studentStats]
-        .filter((s) => s.submissionCount > 0)
-        .sort((a, b) => b.avgScore - a.avgScore)
-        .slice(0, 5);
-
-      const missingStudents = [...studentStats]
-        .filter((s) => s.missingCount > 0)
-        .sort((a, b) => b.missingCount - a.missingCount)
-        .slice(0, 5);
-
-      const missingStudentNames = missingStudents.map((s) => s.name);
-
-      const lowScoreStudents = [...studentStats]
-        .filter((s) => !missingStudentNames.includes(s.name))
-        .filter((s) => s.submissionCount > 0)
-        .sort((a, b) => a.avgScore - b.avgScore)
-        .slice(0, 5);
-
-      return {
-        course,
-        topStudents,
-        missingStudents,
-        lowScoreStudents,
-      };
-    });
+    // 統計與三份名單的規則都在 lib/concern.ts，與儀表板的關心名單卡片同一套定義
+    return allCourses.map((course) => ({
+      course,
+      ...concernListsForCourse(
+        studentStatsForCourse(course, assignments, submissions, new Date(), leaveMarks),
+      ),
+    }));
   }, [allCourses, assignments, submissions, leaveMarks]);
 
   const [concernTabs, setConcernTabs] = useState<Record<string, "missing" | "lowScore">>(
@@ -117,7 +94,7 @@ export const ConcernListView = ({
                         className="text-text-muted cursor-help hover:text-text-secondary transition-colors"
                       />
                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-ink-800 text-ink-50 text-caption rounded-lg opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity pointer-events-none w-48 text-center z-10 shadow-xl">
-                        班級截至目前已截止作業的成績總平均最高分的學生名單
+                        已批改作業平均級分最高的前 {CONCERN_LIST_SIZE} 位學生
                         <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-ink-800"></div>
                       </div>
                     </div>
@@ -211,8 +188,13 @@ export const ConcernListView = ({
                             size={12}
                             className="text-text-muted cursor-help"
                           />
-                          <div className="absolute bottom-full right-0 mb-2 px-3 py-2 bg-ink-800 text-ink-50 text-caption rounded-lg opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity pointer-events-none w-48 text-center z-10 shadow-xl font-normal">
-                            班級截至目前已截止作業，扣除已出現在《缺交》名單上的學生後，作業分數平均最低的學生名單
+                          {/* 條列的內容要跟 lib/concern.ts 的 concernListsForCourse() 一致 */}
+                          <div className="absolute bottom-full right-0 mb-2 px-3 py-2 bg-ink-800 text-ink-50 text-caption rounded-lg opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity pointer-events-none w-64 text-left z-10 shadow-xl font-normal">
+                            <span className="block font-bold mb-1">低分名單</span>
+                            <span className="block">・已批改作業的平均未達 {LOW_SCORE_THRESHOLD} 級分</span>
+                            <span className="block">・已在「表現優異」或「缺交」名單上的學生不重複列出</span>
+                            <span className="block">・還沒有批改成績的學生不列入</span>
+                            <span className="block">・最多列出 {CONCERN_LIST_SIZE} 位，平均最低的排前面</span>
                             <div className="absolute top-full right-2 border-4 border-transparent border-t-ink-800"></div>
                           </div>
                         </div>
@@ -261,7 +243,10 @@ export const ConcernListView = ({
                       ))
                     ) : (
                       <p className="text-body text-text-secondary italic py-4">
-                        尚無名單資料
+                        {/* 低分有門檻，空名單是「沒有人低於門檻」，不是資料沒載入 */}
+                        {activeTab === "lowScore"
+                          ? `沒有平均未達 ${LOW_SCORE_THRESHOLD} 級分的學生`
+                          : "尚無名單資料"}
                       </p>
                     )}
                   </div>

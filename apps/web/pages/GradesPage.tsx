@@ -11,7 +11,7 @@ export const GradesPage: React.FC = () => {
   const [params] = useSearchParams();
   const {
     myCourses, assignments, submissions, currentSemester,
-    setCurrentSemester, leaveMarks, toggleLeave, semesterOptions,
+    setCurrentSemester, leaveMarks, toggleLeave, semesterOptions, todaySemester,
   } = useAppState();
 
   return (
@@ -22,6 +22,7 @@ export const GradesPage: React.FC = () => {
       currentSemester={currentSemester}
       onSemesterChange={setCurrentSemester}
       semesterOptions={semesterOptions}
+      todaySemester={todaySemester}
       // 先前是 selectedCourse?.id。放在網址裡，從課程頁點進來的班級
       // 重新整理之後還在，也可以把這個網址貼給別人。
       initialCourseId={params.get(queryKeys.course) ?? undefined}

@@ -409,7 +409,7 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                         )}
                         
                         {assignmentContent && (
-                            <div className="text-text-primary/80 text-body leading-relaxed whitespace-pre-wrap font-normal">
+                            <div className="text-text-primary/80 text-body leading-relaxed whitespace-pre-wrap font-normal font-essay">
                                 {assignmentContent}
                             </div>
                         )}
@@ -449,7 +449,7 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                       但專案沒裝那個外掛，等於完全沒有作用，已移除。
                       leading-7 md:leading-9 也拿掉 —— 會和 text-essay 自帶的行高打架。
                     */}
-                    <div className="mx-auto max-w-[34em] text-essay text-text-primary selection:bg-primary/10 selection:text-text-primary">
+                    <div className="mx-auto max-w-[34em] text-essay font-essay text-text-primary selection:bg-primary/10 selection:text-text-primary">
                         {submission.content
                             .split('\n')
                             // 段落間的空行不要變成空的 <p>，否則會多出一段間距

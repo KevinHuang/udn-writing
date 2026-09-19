@@ -21,6 +21,7 @@ import {
   assignmentPhase,
   canStudentSubmit,
 } from '../lib/assignments';
+import { SemesterSelect } from './SemesterSelect';
 
 interface StudentDashboardProps {
   studentName: string;
@@ -31,6 +32,10 @@ interface StudentDashboardProps {
   onBack?: () => void;
   canGoBack?: boolean;
   currentSemester: string;
+  /** 網址指定的學期（例如 114-2）。沒帶就是目前學期 */
+  semester?: string;
+  /** 學期下拉的選項（後端 semesters 表） */
+  semesterOptions: { value: string; label: string }[];
 }
 
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({
@@ -40,15 +45,23 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   courses,
   onBack,
   canGoBack,
-  currentSemester
+  currentSemester,
+  semester,
+  semesterOptions,
 }) => {
   const navigate = useNavigate();
+  /*
+    看哪個學期的概況。預設目前學期，可以用右上角的下拉切到別的學期。
+    學期放網址（?semester=），與成績紀錄同一個參數，重新整理不會跳走。
+  */
+  const pickedSemester = semester ?? currentSemester;
+  const isCurrentSemester = pickedSemester === currentSemester;
   // Calculate stats
   const totalGradedAndReturned = submissions.filter(s => s.status === 'Published').length;
   
   const currentCourseAssignmentIds = new Set(assignments.filter(a => {
     const course = courses.find(c => c.id === a.courseId);
-    return course && course.semester === currentSemester;
+    return course && course.semester === pickedSemester;
   }).map(a => a.id));
   
   const completedThisSemester = submissions.filter(s => 
@@ -65,7 +78,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     : '0.0';
 
   /*
-    進行中：**本學期**、還沒繳交或還在草稿的作業。
+    進行中：**選定學期**、還沒繳交或還在草稿的作業。
 
     ⚠️ 這裡以前沒有依學期過濾，所以首頁自己前後矛盾：「本學期 0 篇」用
        currentCourseAssignmentIds 算（有過濾），底下的「進行中作業」卻把
@@ -104,7 +117,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   // Recent feedback
   /*
-    近期發還：**本學期**已發還的作品，最新的兩份。
+    近期發還：**選定學期**已發還的作品，最新的兩份。
 
     ⚠️ 這裡以前沒有依學期過濾，是首頁最後一處沒收斂的地方 ——
        標頭寫 115-1，卡片卻是 114-2 的作品（實測看到的就是這個）。
@@ -133,25 +146,35 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     <div className="space-y-4 sm:space-y-8 animate-fade-in">
       {/* Greeting */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-4 sm:mb-8 shrink-0">
-        <div className="flex items-center gap-2 sm:gap-3">
-          {canGoBack && onBack && (
-            <button 
-              id="studentdashboard-btn-back"
-              onClick={onBack}
-              className="p-1.5 sm:p-2 -ml-1 sm:-ml-2 rounded-full hover:bg-card/50 text-text-primary transition-colors active:scale-90"
-            >
-              <ArrowLeft size={18} className="sm:size-6" />
-            </button>
-          )}
-          <h1 className="text-display font-bold text-text-primary tracking-tight">
-            {getGreeting()}，{studentName} 👋
-          </h1>
-          <div className="hidden sm:flex items-center gap-2 ml-2 sm:ml-4 px-2 sm:px-3 py-0.5 sm:py-1 bg-primary/5 border border-primary/10 rounded-full">
-            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-primary rounded-full animate-pulse"></span>
-            <span className="text-body text-primary">{currentSemester}</span>
+        <div className="flex flex-col gap-1 sm:gap-2">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {canGoBack && onBack && (
+              <button 
+                id="studentdashboard-btn-back"
+                onClick={onBack}
+                className="p-1.5 sm:p-2 -ml-1 sm:-ml-2 rounded-full hover:bg-card/50 text-text-primary transition-colors active:scale-90"
+              >
+                <ArrowLeft size={18} className="sm:size-6" />
+              </button>
+            )}
+            <h1 className="text-display font-bold text-text-primary tracking-tight">
+              {getGreeting()}，{studentName} 👋
+            </h1>
           </div>
+          <p className="text-ui text-text-secondary font-normal">準備好開始今天的寫作練習了嗎？</p>
         </div>
-        <p className="text-ui text-text-secondary mt-0.5 sm:mt-2 font-normal ml-0">準備好開始今天的寫作練習了嗎？</p>
+        {/* 換學期就換網址（replace，不塞歷史）。選回目前學期時拿掉參數，網址保持乾淨 */}
+        <SemesterSelect
+          id="studentdashboard-select-semester"
+          value={pickedSemester}
+          options={semesterOptions}
+          current={currentSemester}
+          onChange={(s) => navigate(
+            routes.studentDashboard({ semester: s === currentSemester ? undefined : s }),
+            { replace: true },
+          )}
+          className="self-stretch md:self-end"
+        />
       </div>
 
       {/* Stats Grid */}
@@ -159,7 +182,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         <div 
           id="studentdashboard-card-stats-history"
           onClick={() => navigate(routes.studentGrades())}
-          className="bg-card p-2.5 sm:p-4 md:p-6 rounded-2xl border-t-2 border-primary shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group flex flex-col sm:block"
+          className="bg-card p-2.5 sm:p-4 md:p-6 rounded-2xl border-t-[6px] border-brand-blue shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group flex flex-col sm:block"
         >
           <p className="text-text-secondary text-title font-bold font-serif mb-1.5 sm:mb-0 text-center sm:text-left whitespace-nowrap tracking-tighter sm:tracking-normal">
             學習紀錄
@@ -181,11 +204,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
         <div 
           id="studentdashboard-card-stats-semester"
-          onClick={() => navigate(routes.studentGrades())}
-          className="bg-card p-2.5 sm:p-4 md:p-6 rounded-2xl border-t-2 border-success-600 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group flex flex-col sm:block"
+          onClick={() => navigate(routes.studentGrades({ semester: pickedSemester }))}
+          className="bg-card p-2.5 sm:p-4 md:p-6 rounded-2xl border-t-[6px] border-brand-blue shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group flex flex-col sm:block"
         >
           <p className="text-text-secondary text-title font-bold font-serif mb-1.5 sm:mb-0 text-center sm:text-left whitespace-nowrap tracking-tighter sm:tracking-normal">
-            本學期
+            {isCurrentSemester ? '本學期' : '該學期'}
           </p>
           <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-3 sm:mt-4">
             <div className="w-7 h-7 sm:w-9 sm:h-9 md:w-12 md:h-12 rounded-full bg-success-50 text-success-600 flex items-center justify-center shadow-inner group-hover:bg-success-600 group-hover:text-on-accent transition-colors shrink-0">
@@ -204,7 +227,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
         <div 
           id="studentdashboard-card-stats-average"
-          className="bg-card p-2.5 sm:p-4 md:p-6 rounded-2xl border-t-2 border-amber-500 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group flex flex-col sm:block"
+          className="bg-card p-2.5 sm:p-4 md:p-6 rounded-2xl border-t-[6px] border-brand-blue shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group flex flex-col sm:block"
         >
           <p className="text-text-secondary text-title font-bold font-serif mb-1.5 sm:mb-0 text-center sm:text-left whitespace-nowrap tracking-tighter sm:tracking-normal">
             平均成績
@@ -260,7 +283,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     key={assignment.id} 
                     id={`studentdashboard-item-progress-${assignment.id}`}
                     onClick={() => navigate(routes.studentEditor(assignment.id))}
-                    className="bg-surface/60 backdrop-blur-xl p-4 sm:p-5 rounded-brand shadow-sm border border-border hover:border-primary/30 hover:bg-surface/80 hover:shadow-md hover:-translate-y-1 transition-all duration-300 group cursor-pointer active:scale-[0.99] relative"
+                    className="bg-card p-4 sm:p-5 rounded-brand shadow-sm border border-border hover:border-primary/30 hover:bg-surface/80 hover:shadow-md hover:-translate-y-1 transition-all duration-300 group cursor-pointer active:scale-[0.99] relative"
                   >
                     <div className="flex items-center gap-3 sm:gap-4">
                       <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center border transition-colors shrink-0 ${
@@ -333,7 +356,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               })
             ) : (
               <div className="bg-surface/40 border-2 border-dashed border-border rounded-brand p-8 sm:p-12 text-center">
-                <p className="text-body text-text-primary opacity-70 font-normal">目前沒有進行中的作業</p>
+                <p className="text-body text-text-primary opacity-70 font-normal">{isCurrentSemester ? '目前沒有進行中的作業' : '這個學期沒有進行中的作業'}</p>
               </div>
             )}
           </div>
@@ -351,7 +374,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               recentFeedback.map(submission => {
                 const assignment = assignments.find(a => a.id === submission.assignmentId);
                 return (
-                  <div key={submission.id} id={`studentdashboard-item-feedback-${submission.id}`} className="bg-surface/60 backdrop-blur-xl p-4 sm:p-5 rounded-brand shadow-sm border border-border hover:bg-surface/80 hover:shadow-md hover:-translate-y-1 transition-all duration-300 group">
+                  <div key={submission.id} id={`studentdashboard-item-feedback-${submission.id}`} className="bg-card p-4 sm:p-5 rounded-brand shadow-sm border border-border hover:bg-surface/80 hover:shadow-md hover:-translate-y-1 transition-all duration-300 group">
                     <div className="flex items-center justify-between mb-2 sm:mb-3">
                       <div className="flex flex-col gap-0.5 sm:gap-1 min-w-0 pr-2">
                         <h4 className="text-title font-serif font-bold text-text-primary truncate group-hover:text-primary transition-colors">
@@ -386,7 +409,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               })
             ) : (
               <div className="bg-surface/40 border-2 border-dashed border-border rounded-brand p-6 sm:p-8 text-center">
-                <p className="text-body text-text-primary opacity-60 font-normal">暫無發還紀錄</p>
+                <p className="text-body text-text-primary opacity-60 font-normal">{isCurrentSemester ? '暫無發還紀錄' : '這個學期沒有發還紀錄'}</p>
               </div>
             )}
           </div>

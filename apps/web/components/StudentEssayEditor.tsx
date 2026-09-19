@@ -354,7 +354,7 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
       )}
 
       {/* Header */}
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between bg-surface/60 backdrop-blur-xl p-4 sm:p-6 rounded-2xl sm:rounded-3xl shadow-sm border border-border/50 sticky top-0 z-20 gap-4">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between bg-card p-4 sm:p-6 rounded-2xl sm:rounded-3xl shadow-sm border border-border/50 sticky top-0 z-20 gap-4">
         <div className="flex items-center gap-3 sm:gap-4 w-full md:w-auto">
           <button 
             id="studentessayeditor-btn-back"
@@ -450,7 +450,7 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
         {/* Editor Area */}
         <div className="lg:col-span-2 space-y-4">
-          <div className="bg-surface/60 backdrop-blur-xl rounded-2xl sm:rounded-3xl shadow-sm border border-border/50 overflow-hidden flex flex-col h-[500px] sm:h-[600px]">
+          <div className="bg-card rounded-2xl sm:rounded-3xl shadow-sm border border-border/50 overflow-hidden flex flex-col h-[500px] sm:h-[600px]">
             <div className="bg-card/50 px-4 sm:px-6 py-3 border-b border-border/50 flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-3 sm:gap-4">
                 <span className="text-body text-text-secondary uppercase tracking-widest hidden sm:inline">寫作區域</span>
@@ -493,7 +493,7 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
               onChange={(e) => setContent(e.target.value)}
               readOnly={isLocked}
               placeholder="在此開始你的創作..."
-              className={`flex-1 p-4 sm:p-8 text-title font-serif leading-loose focus:outline-none resize-none no-scrollbar text-text-primary bg-card/50 ${
+              className={`flex-1 p-4 sm:p-8 text-title font-essay leading-loose focus:outline-none resize-none no-scrollbar text-text-primary bg-card/50 ${
                 isLocked ? 'cursor-default' : ''
               }`}
             />
@@ -609,7 +609,7 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
 
 
           {/* Prompt Card */}
-          <div className="bg-surface/60 backdrop-blur-xl p-4 sm:p-6 rounded-2xl sm:rounded-3xl shadow-sm border border-border/50">
+          <div className="bg-card p-4 sm:p-6 rounded-2xl sm:rounded-3xl shadow-sm border border-border/50">
             <h3 className="font-bold text-text-primary mb-3 sm:mb-4 flex items-center gap-2 text-ui">
               <FileText size={18} className="text-primary sm:size-[20px]" />
               題目說明

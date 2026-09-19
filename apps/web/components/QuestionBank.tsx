@@ -17,6 +17,7 @@ import { QuestionPreviewModal } from './QuestionPreviewModal';
 import { analyzeImageContent, generateGradingRubric } from '../api/ai';
 import { isAdmin, type CurrentUser } from '../lib/access';
 import { ConfirmDialog } from './ConfirmDialog';
+import { PageHeader, PAGE_CONTAINER } from './PageHeader';
 import { AVAILABLE_AI_MODELS } from '../mockData';
 import { questionCountsByFolder } from '../lib/folders';
 import { MAX_LEVEL } from '../lib/scoring';
@@ -1085,7 +1086,7 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
 
   // --- RENDER LIST VIEW ---
   return (
-    <div className="bg-transparent h-full flex flex-col max-w-7xl mx-auto pb-10">
+    <div className={`bg-transparent h-full flex flex-col ${PAGE_CONTAINER} pb-10`}>
       {/* Modals */}
       <NewFolderModal 
         isOpen={isNewFolderModalOpen}
@@ -1109,24 +1110,14 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
         onClose={() => setViewingQuestion(null)}
       />
 
-      {/* Header - Aligned with PublishAssignmentWizard */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-6 sm:mb-10 gap-4">
-        <div className="shrink-0">
-          <div className="flex items-center gap-3 sm:gap-4">
-            {onBack && (
-              <button 
-                id="questionbank-list-btn-back" 
-                onClick={onBack} 
-                className="p-2 -ml-2 rounded-full hover:bg-surface/50 text-text-primary opacity-70 hover:text-primary transition-colors"
-              >
-                <ArrowLeft size={24} />
-              </button>
-            )}
-            <h2 className="text-display font-bold text-text-primary tracking-tight whitespace-nowrap">題庫中心</h2>
-          </div>
-          <p className="text-text-secondary mt-1 sm:mt-2 font-normal ml-0 md:ml-14 text-ui whitespace-nowrap">建立、管理與分享您的作文題目</p>
-        </div>
-
+      <PageHeader
+        title="題庫中心"
+        subtitle="建立、管理與分享您的作文題目"
+        onBack={onBack}
+        backId="questionbank-list-btn-back"
+        wideActions
+        className="mb-6 sm:mb-10"
+        actions={
         <div className="flex flex-col md:flex-row gap-3 w-full lg:w-auto items-stretch md:items-center">
            {/* Tab Switcher */}
            {/*
@@ -1237,7 +1228,8 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
               */}
            </div>
         </div>
-      </div>
+        }
+      />
 
       {pendingDelete && (
         <ConfirmDialog

@@ -25,9 +25,13 @@ interface NavigationProps {
   onSwitchIdentity: (type: IdentityType) => void;
   onOpenSettings: () => void;
   onLogout: () => void;
+  /** 登入者姓名，顯示在右上角的膠囊裡（聯合學苑設計稿） */
+  userName?: string;
+  /** 頭像圖片。老師在個人設定裡選的造型（見 lib/avatar.ts） */
+  avatarSrc?: string;
 }
 
-export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdentity, onSwitchIdentity, onOpenSettings, onLogout }) => {
+export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdentity, onSwitchIdentity, onOpenSettings, onLogout, userName, avatarSrc }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
 
@@ -90,15 +94,18 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
   const bottomNavItems = menuItems;
 
   return (
-    <nav className="sticky top-0 z-40 w-full flex-none transition-all duration-300">
-      {/* Main Navigation Bar */}
-      <div className="bg-surface/90 backdrop-blur-xl border-b border-border shadow-sm relative z-20">
-        <div className="max-w-[1400px] mx-auto px-2 sm:px-4 lg:px-6">
+    <nav className="sticky top-0 z-40 w-full flex-none px-2 sm:px-4 lg:px-6 pt-2 sm:pt-3 transition-all duration-300">
+      {/*
+        頂端列：聯合學苑設計稿的暖色漸層膠囊（sun-300 → sun-500），浮在點陣紙上。
+        漸層上的字一律用深色（text-text-primary）；要強調的東西用橘紅實心膠囊（bg-secondary）。
+      */}
+      <div className="max-w-[1400px] mx-auto rounded-3xl lg:rounded-full bg-gradient-to-r from-sun-300 via-sun-400 to-sun-500 shadow-paper relative z-20">
+        <div className="px-3 sm:px-5 lg:px-6">
           <div className="flex justify-between h-16 items-center gap-2">
             
             {/* Logo Section - Left */}
             <div id="nav-logo" className="flex items-center gap-2 sm:gap-2.5 shrink-0 group cursor-pointer active:scale-95 transition-transform">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-primary rounded-lg flex items-center justify-center text-on-accent shadow-lg shadow-primary/20 group-hover:rotate-3 transition-all shrink-0">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-card rounded-full flex items-center justify-center text-secondary shadow-sm group-hover:rotate-3 transition-all shrink-0">
                 <GraduationCap size={18} className="sm:size-[22px]" strokeWidth={1.5} />
               </div>
               <BrandMark />
@@ -116,13 +123,13 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
                       key={item.key}
                       id={`nav-btn-${item.key}`}
                       onClick={() => navigate(item.path)}
-                      className={`flex items-center gap-2 px-4 py-2.5 text-body font-bold rounded-xl transition-all duration-300 whitespace-nowrap active:scale-95 group ${
-                        isActive 
-                          ? 'bg-primary text-on-accent shadow-md shadow-primary/20' 
-                          : 'text-text-primary opacity-70 hover:bg-surface-soft hover:text-primary hover:opacity-100'
+                      className={`flex items-center gap-2 px-4 py-2 text-body font-bold rounded-full transition-all duration-300 whitespace-nowrap active:scale-95 group ${
+                        isActive
+                          ? 'bg-secondary text-on-accent shadow-md shadow-secondary/25'
+                          : 'text-text-primary hover:bg-card/60'
                       }`}
                     >
-                      <Icon size={16} className={isActive ? 'text-on-accent' : 'text-text-primary opacity-60 group-hover:text-primary group-hover:opacity-100'} strokeWidth={2} />
+                      <Icon size={16} className={isActive ? 'text-on-accent' : 'text-text-primary'} strokeWidth={2} />
                       <span>{item.label}</span>
                     </button>
                   );
@@ -135,12 +142,16 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
                <div 
                 id="nav-btn-profile" 
                 onClick={() => setIsProfileOpen(!isProfileOpen)}
-                className="flex items-center gap-1 p-1 rounded-full hover:bg-card hover:shadow-md border border-transparent hover:border-border transition-all duration-300 cursor-pointer group active:scale-95"
+                className="flex items-center gap-2 pl-1 pr-3 py-1 rounded-full bg-secondary text-on-accent shadow-md shadow-secondary/25 hover:brightness-110 transition-all duration-300 cursor-pointer group active:scale-95"
                >
-                  <div className="w-8 h-8 rounded-full bg-surface-soft border-2 border-card shadow-sm overflow-hidden p-0.5 group-hover:border-primary transition-colors shrink-0 relative z-10">
-                      <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Charles" alt="User" className="rounded-full bg-card w-full h-full object-cover" />
+                  {/* 設計稿：橘紅膠囊裡放頭像與姓名 */}
+                  <div className="w-8 h-8 rounded-full bg-card overflow-hidden p-0.5 shrink-0 relative z-10">
+                      <img src={avatarSrc ?? `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(userName || 'teacher')}`} alt="" referrerPolicy="no-referrer" className="rounded-full bg-card w-full h-full object-cover" />
                   </div>
-                  <ChevronDown size={12} className={`text-text-primary opacity-60 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
+                  {userName && (
+                    <span className="hidden sm:block max-w-[8rem] truncate text-body font-bold">{userName}</span>
+                  )}
+                  <ChevronDown size={14} className={`shrink-0 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
                </div>
 
                {/* Profile Dropdown */}

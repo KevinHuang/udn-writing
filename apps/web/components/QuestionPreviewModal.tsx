@@ -83,7 +83,7 @@ export const QuestionPreviewModal: React.FC<QuestionPreviewModalProps> = ({
               題目內容
             </p>
             <div className="bg-card border border-border rounded-xl p-4">
-              <p className="text-essay text-text-primary whitespace-pre-wrap">
+              <p className="text-essay font-essay text-text-primary whitespace-pre-wrap">
                 {question.content}
               </p>
             </div>

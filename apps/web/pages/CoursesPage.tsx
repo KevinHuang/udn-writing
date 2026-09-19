@@ -10,7 +10,7 @@ export const CoursesPage: React.FC = () => {
   const { goBack, canGoBack } = useGoBack();
   const {
     currentUser, myCourses, assignments, submissions, currentSemester,
-    semesterOptions,
+    semesterOptions, todaySemester,
     setCurrentSemester, handleUpdateCourse, handleSyncCourses, handleDeleteCourse,
   } = useAppState();
 
@@ -24,6 +24,7 @@ export const CoursesPage: React.FC = () => {
       onSelectCourse={(course) => navigate(routes.grades({ courseId: course.id }))}
       currentSemester={currentSemester}
       semesterOptions={semesterOptions}
+      todaySemester={todaySemester}
       onSemesterChange={setCurrentSemester}
       onBack={goBack}
       canGoBack={canGoBack}

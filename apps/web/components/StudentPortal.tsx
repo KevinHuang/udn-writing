@@ -1,7 +1,6 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { routes } from '../lib/routes';
 import { useAppState } from '../state/appStateContext';
-import { useGoBack } from '../lib/useGoBack';
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   LayoutDashboard, 
@@ -10,13 +9,13 @@ import {
   LogOut, 
   ChevronDown,
   Bell,
-  User,
   Settings,
   HelpCircle,
-  GraduationCap,
-  ArrowLeft
+  GraduationCap
 } from 'lucide-react';
 import { BrandMark } from './BrandMark';
+import { SettingsModal } from './SettingsModal';
+import { avatarUrl, useAvatar } from '../lib/avatar';
 import { deadlineOf, assignmentPhase, canStudentSubmit } from '../lib/assignments';
 
 /**
@@ -30,11 +29,13 @@ export const StudentPortal: React.FC = () => {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const {
-    studentName, assignments, submissions, switchIdentityTo, currentSemester,
-    handleLogout,
+    studentName, assignments, submissions, currentSemester,
+    handleLogout, session, theme, applyTheme,
   } = useAppState();
-  const { goBack, canGoBack } = useGoBack();
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  // 頭像依 user.id 記在這台裝置上（見 lib/avatar.ts）
+  const [avatar, chooseAvatar] = useAvatar(session?.id ?? studentName ?? 'student', 'student');
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
   const notificationsRef = useRef<HTMLDivElement>(null);
@@ -112,8 +113,9 @@ export const StudentPortal: React.FC = () => {
   return (
     <div className="min-h-screen flex flex-col">
       {/* Top Navigation Bar */}
-      <header className="bg-surface/90 backdrop-blur-xl border-b border-border sticky top-0 z-50 shadow-sm">
-        <div className="max-w-[1400px] mx-auto px-2 sm:px-4 lg:px-6 h-16 flex items-center justify-between gap-2">
+      {/* 頂端列：聯合學苑設計稿的暖色漸層膠囊，浮在點陣紙上（與教師端 Navigation 同一套） */}
+      <header className="sticky top-0 z-50 px-2 sm:px-4 lg:px-6 pt-2 sm:pt-3">
+        <div className="max-w-[1400px] mx-auto rounded-3xl lg:rounded-full bg-gradient-to-r from-sun-300 via-sun-400 to-sun-500 shadow-paper px-3 sm:px-5 lg:px-6 h-16 flex items-center justify-between gap-2">
           {/* Logo */}
           {/*
             標題這一組原本也是 shrink-0，於是 375px 的手機上
@@ -122,21 +124,12 @@ export const StudentPortal: React.FC = () => {
             要犧牲的是標題文字，不是操作鍵。
           */}
           <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 overflow-hidden group cursor-pointer active:scale-95 transition-transform">
-            {canGoBack && (
-              <button id="student-nav-btn-notifications" 
-                onClick={goBack}
-                className="p-2 -ml-2 rounded-full hover:bg-surface-soft text-text-secondary transition-colors active:scale-90"
-                title="返回"
-              >
-                <ArrowLeft size={24} />
-              </button>
-            )}
-            <div className="w-8 h-8 sm:w-10 sm:h-10 bg-primary rounded-lg flex items-center justify-center text-on-accent shadow-lg shadow-primary/20 ring-1 ring-text-primary/5 group-hover:rotate-3 transition-all shrink-0">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 bg-card rounded-full flex items-center justify-center text-secondary shadow-sm group-hover:rotate-3 transition-all shrink-0">
               <GraduationCap size={18} className="sm:size-[22px]" strokeWidth={1.5} />
             </div>
             <BrandMark
               trailing={
-                <span className="hidden sm:block text-caption text-primary bg-primary/10 px-1.5 py-0.5 rounded tracking-widest">
+                <span className="hidden sm:block text-caption text-text-primary bg-card/70 px-2 py-0.5 rounded-full tracking-widest">
                   {currentSemester}
                 </span>
               }
@@ -155,10 +148,10 @@ export const StudentPortal: React.FC = () => {
               <button id={`student-nav-btn-${item.key}`}
                 key={item.key}
                 onClick={() => navigate(item.path)}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-body font-bold transition-all duration-300 whitespace-nowrap active:scale-95 ${
-                  isActivePath(item.path) 
-                    ? 'bg-primary text-on-accent shadow-md shadow-primary/20' 
-                    : 'text-text-secondary hover:bg-surface-soft hover:text-primary'
+                className={`flex items-center gap-2 px-4 py-2 rounded-full text-body font-bold transition-all duration-300 whitespace-nowrap active:scale-95 ${
+                  isActivePath(item.path)
+                    ? 'bg-secondary text-on-accent shadow-md shadow-secondary/25'
+                    : 'text-text-primary hover:bg-card/60'
                 }`}
               >
                 <item.icon size={18} strokeWidth={2} />
@@ -173,7 +166,7 @@ export const StudentPortal: React.FC = () => {
               <button 
                 id="student-nav-btn-notifications" 
                 onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
-                className={`p-2.5 hover:bg-card hover:shadow-md border border-transparent hover:border-border rounded-full transition-all duration-300 relative active:scale-95 ${isNotificationsOpen ? 'bg-card shadow-md border-border text-primary' : 'text-text-secondary'}`}
+                className={`p-2.5 hover:bg-card/60 rounded-full transition-all duration-300 relative active:scale-95 ${isNotificationsOpen ? 'bg-card shadow-md text-secondary' : 'text-text-primary'}`}
               >
                 <Bell size={20} />
                 {notifications.length > 0 && (
@@ -229,17 +222,21 @@ export const StudentPortal: React.FC = () => {
               )}
             </div>
 
-            <div className="h-8 w-px bg-border/50 mx-1"></div>
+            <div className="h-8 w-px bg-text-primary/15 mx-1"></div>
 
             <div className="relative" ref={profileRef}>
-              <button id="student-nav-btn-switch-role" 
+              <button id="student-nav-btn-account" 
                 onClick={() => setIsProfileOpen(!isProfileOpen)}
-                className="flex items-center gap-1 p-1 rounded-full hover:bg-card hover:shadow-md border border-transparent hover:border-border transition-all duration-300 cursor-pointer group active:scale-95"
+                className="flex items-center gap-2 pl-1 pr-3 py-1 rounded-full bg-secondary text-on-accent shadow-md shadow-secondary/25 hover:brightness-110 transition-all duration-300 cursor-pointer group active:scale-95"
               >
-                <div className="w-8 h-8 rounded-full bg-surface-soft border-2 border-card shadow-sm overflow-hidden p-0.5 group-hover:border-primary transition-colors shrink-0 relative z-10">
-                  <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${studentName}`} alt="avatar" referrerPolicy="no-referrer" className="rounded-full bg-card w-full h-full object-cover" />
+                {/* 設計稿：橘紅膠囊裡放頭像與姓名 */}
+                <div className="w-8 h-8 rounded-full bg-card overflow-hidden p-0.5 shrink-0 relative z-10">
+                  <img src={avatarUrl(avatar)} alt="" referrerPolicy="no-referrer" className="rounded-full bg-card w-full h-full object-cover" />
                 </div>
-                <ChevronDown size={12} className={`text-text-primary opacity-60 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
+                {studentName && (
+                  <span className="hidden sm:block max-w-[8rem] truncate text-body font-bold">{studentName}</span>
+                )}
+                <ChevronDown size={14} className={`shrink-0 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
               </button>
 
               {/* Profile Dropdown */}
@@ -253,25 +250,20 @@ export const StudentPortal: React.FC = () => {
                     </div>
                   </div>
                   
-                  <button id="student-nav-btn-settings" 
+                  {/*
+                    這裡以前有一顆寫死的「切換至教師界面」—— 原型的假切換，
+                    每個學生都看得到。學生帳號沒有教師身分，按了只會被後端擋下來。
+                  */}
+                  <button id="student-nav-btn-settings"
                     onClick={() => {
-                      // 後端確認之後才導航，被打回來時才不會畫面閃一下
-                      switchIdentityTo('instructor')
-                        .then(() => navigate(routes.dashboard()))
-                        .catch((e) => console.error('切換身分失敗:', e));
+                      setIsSettingsOpen(true);
                       setIsProfileOpen(false);
                     }}
-                    className="w-full px-4 py-2.5 text-left text-body text-mauve-600 hover:bg-mauve-50 flex items-center gap-3 transition-colors"
+                    className="w-full px-4 py-2.5 text-left text-body text-text-secondary hover:bg-surface flex items-center gap-3 transition-colors"
                   >
-                    <User size={18} /> 切換至教師界面
-                  </button>
-                  
-                  <div className="h-px bg-border/30 my-2"></div>
-                  
-                  <button id="student-nav-btn-help" className="w-full px-4 py-2.5 text-left text-body text-text-secondary hover:bg-surface flex items-center gap-3 transition-colors">
                     <Settings size={18} /> 個人設定
                   </button>
-                  <button id="student-nav-btn-feedback" className="w-full px-4 py-2.5 text-left text-body text-text-secondary hover:bg-surface flex items-center gap-3 transition-colors">
+                  <button id="student-nav-btn-help" className="w-full px-4 py-2.5 text-left text-body text-text-secondary hover:bg-surface flex items-center gap-3 transition-colors">
                     <HelpCircle size={18} /> 幫助中心
                   </button>
                   
@@ -286,6 +278,17 @@ export const StudentPortal: React.FC = () => {
           </div>
         </div>
       </header>
+
+      <SettingsModal
+        audience="student"
+        idPrefix="student-settings"
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        avatar={avatar}
+        onChooseAvatar={chooseAvatar}
+        theme={theme}
+        onChangeTheme={applyTheme}
+      />
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-10 pb-24 lg:pb-10">

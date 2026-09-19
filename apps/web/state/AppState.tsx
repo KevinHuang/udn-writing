@@ -49,7 +49,7 @@ import {
   fetchFolders, createFolder, renameFolder, deleteFolder,
 } from "../api/folders";
 import { useApiList } from "./useApiList";
-import type { Semester } from "../lib/semester";
+import { selectableSemesters, type Semester } from "../lib/semester";
 import {
   fetchSession, switchIdentity, toUserRole, logout,
   type IdentityType, type Session,
@@ -221,6 +221,13 @@ function useAppStateValue() {
    */
   const [currentSemester, setCurrentSemester] = useState(CURRENT_SEMESTER);
   const [semesterOptions, setSemesterOptions] = useState<Semester[]>([]);
+  /**
+   * **今天**落在的學年期（後端算的），選單上標「本學期」用。
+   *
+   * 與 currentSemester 不同：教師端換學期時 currentSemester 會跟著變成
+   * 被選的那一個，它就不再是「本學期」了。
+   */
+  const [todaySemester, setTodaySemester] = useState(CURRENT_SEMESTER);
 
   useEffect(() => {
     if (sessionStatus !== 'ready') return;   // 未登入時打了也是 401
@@ -228,8 +235,12 @@ function useAppStateValue() {
     fetchSemesters()
       .then(({ options, current }) => {
         if (cancelled) return;
-        setSemesterOptions(options);
-        if (current) setCurrentSemester(current.value);
+        // 只列到目前學期為止（規則見 lib/semester.ts）
+        setSemesterOptions(selectableSemesters(options, current));
+        if (current) {
+          setCurrentSemester(current.value);
+          setTodaySemester(current.value);
+        }
       })
       .catch((e) => console.error('取得學年期失敗:', e));
     return () => { cancelled = true; };
@@ -938,6 +949,7 @@ function useAppStateValue() {
     currentSemester,
     setCurrentSemester,
     semesterOptions,
+    todaySemester,
     courses: visibleCourses,
     setCourses,
     handleUpdateCourse,

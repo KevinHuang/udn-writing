@@ -6,20 +6,17 @@
     <title>聯合報雲寫作教室</title>
 
     <!--
-      全站單一字形：霞鶩文楷（LXGW WenKai TC，SIL OFL 1.1）——教科書體風格的楷書，
-      本來就是為長文閱讀設計的，不是裝飾性毛筆字。
+      兩套字形（聯合學苑的視覺，2026-09-19）：
+        介面  思源黑體 Noto Sans TC（400／500／700）—— 按鈕、標題、表格、數字
+        作文  霞鶩文楷 LXGW WenKai TC（400／700）—— 學生作文與題目內文（font-essay）
 
-      只載 400 與 700 兩個真實字重（此字體另有 300，但用不到）。
-      Google Fonts 會把繁中切成 115 個 unicode-range 片段、依字頻排序，
-      瀏覽器只抓頁面實際用到的那幾片（約 200–600KB）。
-      改用自架的整包 woff2 反而會變成固定 1.9MB，所以維持 CDN。
-
-      preconnect 讓字體檔的連線提前建立；fallback 裡放系統楷體，
-      字體還沒下載完時至少不會跳成黑體。
+      Google Fonts 會把繁中切成上百個 unicode-range 片段、依字頻排序，
+      瀏覽器只抓頁面實際用到的那幾片，所以兩套都走 CDN 而不是自架整包。
+      preconnect 讓字體檔的連線提前建立。
     -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=LXGW+WenKai+TC:wght@400;700&display=swap" rel="stylesheet">
 
     <link rel="stylesheet" href="/index.css">
   </head>

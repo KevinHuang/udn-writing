@@ -4,10 +4,15 @@
  * 儀表板的關心名單卡片與關心名單頁面必須用同一套定義，
  * 否則卡片上寫 5 位、點進去列出 7 位，老師會不信任這個數字。
  *
- * 判準只有一個是明確的：**有逾期未繳的作業**。
- * 「低分」那組在關心名單頁面裡只是「平均分數最低的前幾名」，
- * 沒有分數門檻 —— 只要班上有人繳交就一定選得出人來，
- * 所以不能拿來當「需關注人數」。
+ * 儀表板卡片的「需關注人數」只看一件事：**有逾期未繳的作業**。
+ *
+ * 關心名單頁面的三份名單（規則在 concernListsForCourse()）：
+ *   表現優異 —— 已批改作業平均最高的前 5 位
+ *   缺交     —— 逾期未繳次數最多的前 5 位
+ *   低分     —— 已批改作業平均**未達 3 級分**，且不在前兩份名單上的，
+ *              平均最低的前 5 位
+ *
+ * 低分只列在關心名單頁面，不算進卡片的人數。
  */
 
 import { Assignment, Course, Submission } from '../types';
@@ -19,8 +24,10 @@ export interface StudentStat {
   /** 座號。校務系統沒給就是 undefined —— 畫面上顯示破折號，不要假造號碼 */
   seatNo?: number;
   name: string;
-  /** 已批改／已發還作業的平均分數；沒有已批改的作業時為 0 */
+  /** 已批改／已發還作業的平均分數；沒有已批改的作業時為 0（看 gradedCount 分辨） */
   avgScore: number;
+  /** 已批改／已發還的份數。0 表示還沒有成績，avgScore 的 0 不是真的 0 級分 */
+  gradedCount: number;
   /** 已逾期且未繳交的作業數 */
   missingCount: number;
   submissionCount: number;
@@ -88,11 +95,63 @@ export function studentStatsForCourse(
       seatNo: first.seatNo,
       name: first.studentName,
       avgScore,
+      gradedCount: graded.length,
       missingCount,
       submissionCount: studentSubmissions.length,
       totalAssignments: courseAssignments.length,
     };
   });
+}
+
+/** 平均低於這個級分才算「低分」（未達 3 級分：2.9 算，3.0 不算） */
+export const LOW_SCORE_THRESHOLD = 3;
+
+/** 關心名單每一份最多列幾位 */
+export const CONCERN_LIST_SIZE = 5;
+
+export interface ConcernLists {
+  topStudents: StudentStat[];
+  missingStudents: StudentStat[];
+  lowScoreStudents: StudentStat[];
+}
+
+/**
+ * 一個班的三份關心名單。畫面上的說明文字要跟這裡一致。
+ *
+ * 低分的三個條件缺一不可：
+ *   1. 有已批改的作業 —— 還沒成績的人 avgScore 是 0，不是真的 0 級分，
+ *      沒有這條會把「還沒批」的學生全部當成最低分
+ *   2. 平均未達 LOW_SCORE_THRESHOLD
+ *   3. 不在「表現優異」與「缺交」名單上 —— 同一個人只出現一次。
+ *      全班都低於 3 級分的小班，前幾名會同時符合 1、2，靠這條排除
+ *
+ * 排除一律比 studentId，不比姓名 —— 同班同名會誤排除。
+ */
+export function concernListsForCourse(stats: StudentStat[]): ConcernLists {
+  const topStudents = stats
+    .filter((s) => s.gradedCount > 0)
+    .sort((a, b) => b.avgScore - a.avgScore)
+    .slice(0, CONCERN_LIST_SIZE);
+
+  const missingStudents = stats
+    .filter((s) => s.missingCount > 0)
+    .sort((a, b) => b.missingCount - a.missingCount)
+    .slice(0, CONCERN_LIST_SIZE);
+
+  const listed = new Set(
+    [...topStudents, ...missingStudents].map((s) => s.studentId),
+  );
+  const lowScoreStudents = stats
+    .filter(
+      (s) =>
+        s.gradedCount > 0 &&
+        s.avgScore < LOW_SCORE_THRESHOLD &&
+        !listed.has(s.studentId),
+    )
+    .sort((a, b) => a.avgScore - b.avgScore)
+    .slice(0, CONCERN_LIST_SIZE);
+
+  return { topStudents, missingStudents, lowScoreStudents };
 }
 
 /**

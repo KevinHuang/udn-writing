@@ -90,7 +90,7 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
             )}
             <h1 className="text-display font-serif font-bold text-text-primary tracking-tight">我的作業</h1>
           </div>
-          <p className="text-caption sm:text-text-primary font-normal ml-0 sm:ml-12 opacity-80">本學期所有班級的作業</p>
+          <p className="text-caption sm:text-text-primary font-normal opacity-80">本學期所有班級的作業</p>
         </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
@@ -181,7 +181,7 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                     navigate(routes.studentEditor(assignment.id));
                   }
                 }}
-                className="bg-surface/60 backdrop-blur-xl p-4 sm:p-5 rounded-2xl sm:rounded-3xl shadow-sm border border-card/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-primary/30 hover:shadow-md transition-all duration-300 group cursor-pointer active:scale-[0.99]"
+                className="bg-card p-4 sm:p-5 rounded-2xl sm:rounded-3xl shadow-sm border border-border-card flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-primary/30 hover:shadow-md transition-all duration-300 group cursor-pointer active:scale-[0.99]"
               >
                 <div className="flex items-start sm:items-center gap-3 sm:gap-4">
                   <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl flex items-center justify-center shrink-0 shadow-sm ${

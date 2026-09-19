@@ -23,7 +23,7 @@ export type SemesterFilter = 'PAST' | 'CURRENT' | 'ALL';
  * 「我正在看的這個篩選結果」貼給別人。
  */
 export const queryKeys = {
-  /** 學生成績紀錄的學期代碼（例如 115-1） */
+  /** 學生端學習概況、成績紀錄的學期代碼（例如 115-1） */
   semesterFilter: 'semester',
   /** 批改清單選中的作業 */
   assignment: 'assignment',
@@ -65,7 +65,9 @@ export const routes = {
   concern: () => '/concern',
 
   // ── 學生端 ──
-  studentDashboard: () => '/student',
+  /** semester：要看哪個學期的概況。不帶就是目前學期 */
+  studentDashboard: (opts?: { semester?: string }) =>
+    withQuery('/student', { [queryKeys.semesterFilter]: opts?.semester }),
   /** focusId：進來時要捲到／highlight 哪一份作業 */
   studentAssignments: (opts?: { focusId?: string }) =>
     withQuery('/student/assignments', { [queryKeys.focus]: opts?.focusId }),

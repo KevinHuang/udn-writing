@@ -6,7 +6,6 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun } from 'do
 import { 
   Award,
   ChevronRight,
-  ChevronDown,
   FileText,
   Calendar,
   MessageSquare,
@@ -16,6 +15,7 @@ import {
 import { Submission, Assignment, Course, Question, CATEGORY_LABELS } from '../types';
 import { levelStyle, MAX_LEVEL } from '../lib/scoring';
 import { semesterLabel } from '../lib/semester';
+import { SemesterSelect } from './SemesterSelect';
 import { SHOW_CATEGORY_SCORES } from '../lib/features';
 import { 
   Radar, 
@@ -338,7 +338,7 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-8">
           {/* Left Column: Summary & Scores */}
           <div className="lg:col-span-2 space-y-4 sm:space-y-6">
-            <div className="bg-surface/60 backdrop-blur-xl p-5 sm:p-8 rounded-2xl sm:rounded-3xl shadow-sm border border-card/20">
+            <div className="bg-card p-5 sm:p-8 rounded-2xl sm:rounded-3xl shadow-sm border border-border-card">
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-6 mb-6 sm:mb-8">
                 <div>
                   <h1 className="text-display font-bold text-text-primary mb-3 sm:mb-2 tracking-tight">{currentAssignment?.title}</h1>
@@ -353,8 +353,8 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
                     </div>
                   </div>
                 </div>
-                <div className="text-left sm:text-center bg-card/50 sm:bg-transparent p-4 sm:p-0 rounded-xl sm:rounded-none border border-card/40 sm:border-none">
-                  <div className="text-display font-bold text-primary mb-1">
+                <div className="text-left sm:text-center bg-gradient-to-br from-sun-300 to-sun-500 px-6 py-4 rounded-2xl shadow-sm shrink-0">
+                  <div className="text-display font-bold text-text-primary mb-1">
                     {displayData.result?.totalScore || '--'}
                   </div>
                   <div className="text-caption text-text-secondary uppercase tracking-widest">總分</div>
@@ -390,7 +390,7 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
                         <span>{item.subject}</span>
                         <span>{item.A} / {item.fullMark}</span>
                       </div>
-                      <div className="h-2 bg-card/50 rounded-full overflow-hidden border border-card/20">
+                      <div className="h-2 bg-card/50 rounded-full overflow-hidden border border-border-card">
                         <div 
                           className="h-full bg-primary rounded-full transition-all duration-1000" 
                           style={{ width: `${(item.A / item.fullMark) * 100}%` }}
@@ -404,7 +404,7 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
             </div>
 
             {/* AI Feedback */}
-            <div className="bg-surface/60 backdrop-blur-xl p-5 sm:p-8 rounded-2xl sm:rounded-3xl shadow-sm border border-card/20">
+            <div className="bg-card p-5 sm:p-8 rounded-2xl sm:rounded-3xl shadow-sm border border-border-card">
               {/*
                 評語只有**一個**區塊。先前這裡分成「AI 批改建議」「教師回饋」
                 「具體優化建議」三段，但資料庫裡一份繳交任何時刻只有一筆有效的
@@ -412,7 +412,7 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
                 建議本來就寫在那份 markdown 報告裡。
               */}
               <div className="flex items-center justify-between gap-2 mb-4 sm:mb-6">
-                <div className="flex items-center gap-2 text-primary font-bold">
+                <div className="flex items-center gap-2 text-secondary font-bold">
                   <MessageSquare size={20} className="sm:size-6" />
                   <h2 className="text-title tracking-tight">批改評語</h2>
                 </div>
@@ -432,23 +432,23 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
           {/* Right Column: Original Text & Prompt */}
           <div className="space-y-4 sm:space-y-6">
             {currentQuestion && (
-              <div className="bg-surface/60 backdrop-blur-xl p-5 sm:p-6 rounded-2xl sm:rounded-3xl shadow-sm border border-card/20">
+              <div className="bg-card p-5 sm:p-6 rounded-2xl sm:rounded-3xl shadow-sm border border-border-card">
                 <div className="flex items-center gap-2 text-text-secondary font-bold mb-3 sm:mb-4">
                   <FileText size={18} className="sm:size-5" />
                   <h3 id="studentgrades-prompt-title" className="text-ui">作業題目</h3>
                 </div>
-                <div className="bg-card/50 p-4 sm:p-5 rounded-xl sm:rounded-2xl text-body text-text-primary leading-relaxed border border-card/40 whitespace-pre-wrap shadow-sm">
+                <div className="bg-surface/50 p-4 sm:p-5 rounded-xl sm:rounded-2xl text-body text-text-primary font-essay leading-relaxed border border-border whitespace-pre-wrap shadow-sm">
                   {currentQuestion.content}
                 </div>
               </div>
             )}
 
-            <div className="bg-surface/60 backdrop-blur-xl p-5 sm:p-6 rounded-2xl sm:rounded-3xl shadow-sm border border-card/20 sticky top-4 sm:top-6">
+            <div className="bg-card p-5 sm:p-6 rounded-2xl sm:rounded-3xl shadow-sm border border-border-card sticky top-4 sm:top-6">
               <div className="flex items-center gap-2 text-text-secondary font-bold mb-3 sm:mb-4">
                 <FileText size={18} className="sm:size-5" />
                 <h3 id="studentgrades-content-title" className="text-ui">原文內容</h3>
               </div>
-              <div className="bg-card/50 p-4 sm:p-5 rounded-xl sm:rounded-2xl text-body text-text-primary leading-loose font-serif h-[300px] sm:h-[500px] overflow-y-auto no-scrollbar border border-card/40 whitespace-pre-wrap shadow-sm">
+              <div className="bg-surface/50 p-4 sm:p-5 rounded-xl sm:rounded-2xl text-body text-text-primary leading-loose font-essay h-[300px] sm:h-[500px] overflow-y-auto no-scrollbar border border-border whitespace-pre-wrap shadow-sm">
                 {displayData.content}
               </div>
             </div>
@@ -476,28 +476,16 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
           </div>
           
           {/* 學期：與教師端一樣用下拉，預設目前學期。換學期就換網址（replace，不塞歷史） */}
-          <label className="relative inline-flex items-center gap-2 bg-card border border-border rounded-xl px-3 sm:px-4 py-2 shadow-sm self-stretch md:self-center">
-            <Calendar size={16} className="text-primary shrink-0" />
-            <span className="text-caption text-text-secondary uppercase tracking-wider whitespace-nowrap shrink-0">
-              學期
-            </span>
-            <span className="h-4 w-px bg-border shrink-0" aria-hidden="true"></span>
-            <select
-              id="studentgrades-select-semester"
-              value={pickedSemester}
-              onChange={(e) => navigate(routes.studentGrades({ semester: e.target.value }), { replace: true })}
-              className="flex-1 min-w-0 appearance-none bg-transparent text-body text-text-primary outline-none cursor-pointer pr-6 truncate"
-            >
-              {/* 後端清單還沒回來時先放目前學期，免得 select 對不到值 */}
-              {(semesterOptions.length ? semesterOptions : [{ value: pickedSemester, label: semesterLabel(pickedSemester) }])
-                .map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-            </select>
-            <ChevronDown size={14} className="text-text-secondary absolute right-3 pointer-events-none" />
-          </label>
+          <SemesterSelect
+            id="studentgrades-select-semester"
+            value={pickedSemester}
+            options={semesterOptions}
+            current={currentSemester}
+            onChange={(s) => navigate(routes.studentGrades({ semester: s }), { replace: true })}
+            className="self-stretch md:self-center"
+          />
         </div>
-        <p className="tap-target text-body text-text-secondary font-normal ml-0 sm:ml-12">追蹤你的寫作進度與成長曲線</p>
+        <p className="tap-target text-body text-text-secondary font-normal">追蹤你的寫作進度與成長曲線</p>
       </div>
 
       {/*
@@ -506,13 +494,13 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
       */}
       <div>
         <div>
-          <div className="bg-surface/60 backdrop-blur-xl p-4 sm:p-8 rounded-2xl sm:rounded-3xl shadow-sm border border-card/20 hover:shadow-md transition-all duration-300">
+          <div className="bg-card p-4 sm:p-8 rounded-2xl sm:rounded-3xl shadow-sm border border-border-card hover:shadow-md transition-all duration-300">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 sm:mb-8">
               <div className="flex items-center gap-2 text-secondary font-bold">
                 <Award size={20} className="sm:size-6" />
                 <h2 className="text-title tracking-tight">所有成績紀錄 (總表)</h2>
               </div>
-              <div className="text-body text-text-secondary uppercase tracking-widest bg-card/50 px-2 py-1 rounded-md border border-card/40 w-fit">
+              <div className="text-body text-text-secondary uppercase tracking-widest bg-surface/60 px-2.5 py-1 rounded-full border border-border w-fit">
                 共 {gradedSubmissions.length} 筆紀錄
               </div>
             </div>
@@ -530,7 +518,7 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
                       key={submission.id}
                       id={`studentgrades-mobile-card-${submission.id}`}
                       onClick={() => handleShowDetail(submission.id)}
-                      className="bg-card/60 backdrop-blur-md p-4 rounded-2xl border border-card/40 shadow-sm flex flex-col gap-3 active:scale-[0.98] transition-transform"
+                      className="bg-surface/50 p-4 rounded-2xl border border-border flex flex-col gap-3 active:scale-[0.98] transition-transform"
                     >
                       <div className="flex justify-between items-start">
                         <div>
@@ -580,14 +568,14 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
             <div className="hidden sm:block overflow-x-auto -mx-4 sm:-mx-8">
               <table className="w-full text-left border-collapse min-w-[600px]">
                 <thead>
-                  <tr className="bg-card/40 border-y border-card/30">
+                  <tr className="bg-surface-soft/60 border-y border-border">
                     <th className="px-4 sm:px-6 py-3 sm:py-4 text-body text-text-secondary uppercase tracking-widest whitespace-nowrap">學期</th>
                     <th className="px-4 sm:px-6 py-3 sm:py-4 text-body text-text-secondary uppercase tracking-widest">作業名稱</th>
                     <th className="px-4 sm:px-6 py-3 sm:py-4 text-body text-text-secondary uppercase tracking-widest text-center">總分</th>
                     <th className="px-4 sm:px-6 py-3 sm:py-4 text-body text-text-secondary uppercase tracking-widest text-right">操作</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/30">
+                <tbody className="divide-y divide-dashed divide-border dark:divide-border-strong/60">
                   {gradedSubmissions.length > 0 ? (
                     gradedSubmissions.map(submission => {
                       const assignment = assignments.find(a => a.id === submission.assignmentId);
@@ -598,7 +586,7 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
                         <tr 
                           key={submission.id} 
                           id={`studentgrades-table-row-${submission.id}`}
-                          className="hover:bg-card/60 transition-all duration-200 group cursor-pointer active:bg-card/40"
+                          className="hover:bg-surface/70 transition-all duration-200 group cursor-pointer active:bg-surface-soft"
                           onClick={() => handleShowDetail(submission.id)}
                         >
                           <td className="px-4 sm:px-8 py-4 sm:py-5">

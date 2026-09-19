@@ -23,7 +23,7 @@ import { useGoBack } from "../../lib/useGoBack";
  */
 export const StudentAssignmentsPage: React.FC = () => {
   const { goBack, canGoBack } = useGoBack();
-  const { assignments, submissions, courses, currentSemester } = useAppState();
+  const { assignments, submissions, courses, todaySemester: currentSemester } = useAppState();
 
   const thisSemester = useMemo(() => {
     const ids = new Set(

@@ -92,7 +92,7 @@ export const StudentQuestionPreview: React.FC<{ data: QuestionPreviewData }> = (
           {data.imagePosition === 'before' && image}
 
           {data.content ? (
-            <p className="text-essay text-text-primary whitespace-pre-wrap">{data.content}</p>
+            <p className="text-essay font-essay text-text-primary whitespace-pre-wrap">{data.content}</p>
           ) : (
             <p className="text-body text-text-muted">（尚未輸入題說）</p>
           )}

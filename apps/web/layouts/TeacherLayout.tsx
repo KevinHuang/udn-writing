@@ -1,8 +1,9 @@
 import React from "react";
 import { Outlet, useNavigate } from "react-router-dom";
-import {
-  Bot, X, AlertTriangle, Settings, } from "lucide-react";
+import { Bot, AlertTriangle } from "lucide-react";
 import { Navigation } from "../components/Navigation";
+import { SettingsModal } from "../components/SettingsModal";
+import { avatarUrl, useAvatar } from "../lib/avatar";
 import { GradedStatsModal } from "../components/GradedStatsModal";
 import { QuestionPickerModal } from "../components/QuestionPickerModal";
 import { useAppState } from "../state/appStateContext";
@@ -43,6 +44,8 @@ export const TeacherLayout: React.FC = () => {
     setConfirmDialog,
     currentSemester,
   } = useAppState();
+  // 頭像依 user.id 記在這台裝置上（見 lib/avatar.ts）
+  const [avatar, chooseAvatar] = useAvatar(session?.id ?? session?.name ?? 'teacher', 'teacher');
 
   /**
    * 切換身分。
@@ -122,109 +125,54 @@ export const TeacherLayout: React.FC = () => {
               currentSemester={currentSemester}
             />
   
-            {/* Settings Modal */}
-            {isSettingsOpen && (
-              <div id="settings-modal" className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
-                <div
-                  className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm"
-                  onClick={() => setIsSettingsOpen(false)}
-                ></div>
-                <div className="relative w-full max-w-md bg-surface rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 border border-border">
-                  <div className="p-6 border-b border-border flex justify-between items-center">
-                    <h2 className="text-title font-bold text-text-primary flex items-center gap-2">
-                      <Settings size={20} className="text-primary" />
-                      個人設定
-                    </h2>
-                    <button id="settings-btn-close"
-                      onClick={() => setIsSettingsOpen(false)}
-                      className="p-2 text-text-muted hover:text-text-primary hover:bg-surface-soft rounded-full transition-colors"
-                    >
-                      <X size={20} />
-                    </button>
-                  </div>
-                  <div className="p-6 space-y-6">
-  
-                    <div>
-                      <label className="block text-body text-text-primary mb-2">
-                        介面配色
-                      </label>
-                      <div className="grid grid-cols-2 gap-3">
-                        <button id="settings-btn-theme-light"
-                          onClick={() => applyTheme('light')}
-                          className={`px-4 py-3 rounded-xl border-2 font-bold transition-all flex flex-col items-center gap-2 ${
-                            theme === 'light'
-                              ? "border-primary bg-primary/5 text-primary shadow-sm"
-                              : "border-border bg-card text-text-secondary hover:border-primary/30"
-                          }`}
-                        >
-                          <span className="text-title">宣紙</span>
-                          <span className="text-caption opacity-60 uppercase tracking-widest">Light</span>
-                        </button>
-                        <button id="settings-btn-theme-dark"
-                          onClick={() => applyTheme('dark')}
-                          className={`px-4 py-3 rounded-xl border-2 font-bold transition-all flex flex-col items-center gap-2 ${
-                            theme === 'dark'
-                              ? "border-primary bg-primary/5 text-primary shadow-sm"
-                              : "border-border bg-card text-text-secondary hover:border-primary/30"
-                          }`}
-                        >
-                          <span className="text-title">碑拓</span>
-                          <span className="text-caption opacity-60 uppercase tracking-widest">Dark</span>
-                        </button>
-                      </div>
-                      <p className="mt-3 text-caption text-text-secondary opacity-60 leading-relaxed">
-                        碑拓是深色模式：以石面為底、字口透紙色，適合夜間批改。
-                      </p>
-                    </div>
-  
-                    {/*
-                      展示用的重置。這個原型把操作結果存在瀏覽器的 localStorage，
-                      所以重新整理不會遺失 —— 但示範完要換下一個人看時，
-                      需要一鍵回到 mockData 的初始狀態。
-                    */}
-                    {hasDemoData() && (
-                      <div className="pt-2 border-t border-border">
-                        <label className="block text-body text-text-primary mb-2">
-                          展示資料
-                        </label>
-                        <button
-                          id="settings-btn-reset-demo"
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                "確定要重置嗎？所有派發的作業、批改結果與設定都會回到初始狀態，這個動作無法復原。",
-                              )
-                            ) {
-                              resetDemo();
-                            }
-                          }}
-                          className="w-full px-4 py-2.5 rounded-xl border-2 border-danger-200 bg-danger-50 text-danger-700 font-bold transition-all hover:border-danger-500 active:scale-95"
-                        >
-                          重置為初始資料
-                        </button>
-                        <p className="mt-3 text-caption text-text-secondary opacity-60 leading-relaxed">
-                          目前的操作結果存在這台瀏覽器裡，重新整理不會消失。換人示範前可以按這裡清空。
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                  <div className="p-6 bg-surface-soft/50 border-t border-border flex justify-end">
-                    <button id="settings-btn-save"
-                      onClick={() => setIsSettingsOpen(false)}
-                      className="px-6 py-2.5 bg-primary hover:bg-primary/90 text-on-accent rounded-xl font-bold shadow-lg shadow-primary/20 transition-all active:scale-95"
-                    >
-                      完成設定
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
+            {/* 個人設定：與學生端同一個視窗（頭像、配色），教師端多一段展示資料重置 */}
+            <SettingsModal
+              audience="teacher"
+              idPrefix="settings"
+              isOpen={isSettingsOpen}
+              onClose={() => setIsSettingsOpen(false)}
+              avatar={avatar}
+              onChooseAvatar={chooseAvatar}
+              theme={theme}
+              onChangeTheme={applyTheme}
+            >
+              {/*
+                展示用的重置。這個原型把操作結果存在瀏覽器的 localStorage，
+                所以重新整理不會遺失 —— 但示範完要換下一個人看時，
+                需要一鍵回到 mockData 的初始狀態。
+              */}
+              {hasDemoData() && (
+                <section className="pt-5 border-t border-border">
+                  <p className="text-ui font-bold text-text-primary mb-3">展示資料</p>
+                  <button
+                    id="settings-btn-reset-demo"
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          "確定要重置嗎？所有派發的作業、批改結果與設定都會回到初始狀態，這個動作無法復原。",
+                        )
+                      ) {
+                        resetDemo();
+                      }
+                    }}
+                    className="w-full px-4 py-2.5 rounded-xl border-2 border-danger-200 bg-danger-50 text-danger-700 font-bold transition-all hover:border-danger-500 active:scale-95"
+                  >
+                    重置為初始資料
+                  </button>
+                  <p className="mt-3 text-caption text-text-secondary leading-relaxed">
+                    目前的操作結果存在這台瀏覽器裡，重新整理不會消失。換人示範前可以按這裡清空。
+                  </p>
+                </section>
+              )}
+            </SettingsModal>
             <Navigation
               identities={session?.identities ?? []}
               activeIdentity={session?.activeIdentity ?? null}
               onSwitchIdentity={handleSwitchIdentity}
               onOpenSettings={() => setIsSettingsOpen(true)}
               onLogout={() => void handleLogout()}
+              userName={session?.name}
+              avatarSrc={avatarUrl(avatar)}
             />
             <main className="flex-1 overflow-y-auto p-4 md:p-8 pb-24 lg:pb-8">
               <Outlet />

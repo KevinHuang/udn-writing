@@ -4,7 +4,6 @@ import React, { useState, useMemo } from 'react';
 import { 
   Download, 
   Calendar, 
-  ChevronDown, 
   Search, 
   Users,
   ArrowLeft,
@@ -33,6 +32,7 @@ import { orderedAssignments, orderNumbers } from '../lib/assignmentOrder';
 import { CoursePickerModal } from './CoursePickerModal';
 import { PageHeader, PAGE_CONTAINER } from './PageHeader';
 import { SemesterSelect } from './SemesterSelect';
+import { FieldSelect } from './FieldSelect';
 
 interface GradeManagementProps {
   courses: Course[];
@@ -565,8 +565,13 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
           )}
         />
 
-        <div className="bg-surface/60 backdrop-blur-md border border-border rounded-brand shadow-sm flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border overflow-hidden">
-          <div className="flex-1 min-w-0">
+        {/*
+          三個篩選各自是一顆獨立的控制項（白卡＋外框＋箭頭），不是一條平的資訊列。
+          先前三欄共用一個外框、值是純文字、箭頭又是淺灰色，老師看不出來可以點
+          （使用者回報「看起來不像可以選的項目」）。
+        */}
+        <div className="grid gap-2 sm:gap-3 sm:grid-cols-3">
+          <div className="min-w-0">
             <SemesterSelect
               id="grademanagement-select-semester"
               variant="field"
@@ -583,47 +588,47 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
             （實測一位老師有 8 所學校的班），攤成一條下拉找不到東西。
             與課程管理、批改作業頁用同一套分組。
           */}
-          <div className="flex-1 min-w-0 px-4 py-2.5 hover:bg-surface/80 transition-colors">
+          <button
+            id="grademanagement-btn-pick-course"
+            onClick={() => setIsCoursePickerOpen(true)}
+            disabled={semesterCourses.length === 0}
+            title="搜尋並選擇班級"
+            className="tap-target min-w-0 w-full text-left rounded-xl border border-border bg-card px-4 py-2.5 shadow-sm transition-all cursor-pointer outline-none hover:border-primary/50 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-border disabled:hover:shadow-sm"
+          >
             <span className="flex items-center gap-1.5 text-caption text-text-secondary uppercase tracking-wider">
               <Users size={12} className="shrink-0 text-primary" />
               班級
             </span>
-            <button
-              id="grademanagement-btn-pick-course"
-              onClick={() => setIsCoursePickerOpen(true)}
-              disabled={semesterCourses.length === 0}
-              title="搜尋並選擇班級"
-              className="tap-target mt-0.5 w-full flex items-center gap-2 text-left text-ui text-text-primary cursor-pointer disabled:cursor-not-allowed"
-            >
-              <span className="flex-1 min-w-0 truncate">
+            <span className="mt-0.5 flex items-center gap-2">
+              <span className="flex-1 min-w-0 truncate text-ui font-bold text-text-primary">
                 {selectedCourse?.name ?? '本學期沒有課程'}
               </span>
-              <Search size={14} className="shrink-0 text-text-secondary" />
-            </button>
-          </div>
-
-          <label className="flex-1 min-w-0 px-4 py-2.5 hover:bg-surface/80 transition-colors cursor-pointer">
-            <span className="flex items-center gap-1.5 text-caption text-text-secondary uppercase tracking-wider">
-              <ClipboardList size={12} className="shrink-0 text-primary" />
-              作業
+              <Search size={14} className="shrink-0 text-primary/70" />
             </span>
-            <div className="relative mt-0.5">
-              <select
-                id="grademanagement-select-assignment"
-                value={selectedAssignmentId}
-                onChange={(e) => setPickedAssignmentId(e.target.value)}
-                className="w-full appearance-none bg-transparent text-ui text-text-primary outline-none cursor-pointer pr-6 truncate"
-              >
-                <option value="ALL">全部作業</option>
-                {courseAssignments.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {assignmentNo[a.id]}. {a.title}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="text-text-secondary absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-          </label>
+          </button>
+
+          {/* 作業：與學期、班級同一套外觀（FieldSelect），不用原生 <select> 的系統選單 */}
+          <FieldSelect
+            id="grademanagement-select-assignment"
+            variant="field"
+            label="作業"
+            icon={ClipboardList}
+            value={selectedAssignmentId}
+            onChange={setPickedAssignmentId}
+            panelWidth="w-72"
+            sections={[
+              {
+                key: 'assignments',
+                items: [
+                  { value: 'ALL', label: '全部作業' },
+                  ...courseAssignments.map((a) => ({
+                    value: a.id,
+                    label: `${assignmentNo[a.id]}. ${a.title}`,
+                  })),
+                ],
+              },
+            ]}
+          />
         </div>
       </div>
 

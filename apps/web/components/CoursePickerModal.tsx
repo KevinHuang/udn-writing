@@ -139,17 +139,24 @@ export const CoursePickerModal: React.FC<CoursePickerModalProps> = ({
             <div className="flex flex-col gap-5">
               {groups.map((group) => (
                 <section key={group.key}>
-                  <div className="flex items-center gap-2 mb-2.5 pb-2 border-b border-border">
+                  {/*
+                    學校與班級要一眼分得出上下層：學校是**深一階的橫帶**、班級是白色卡片。
+                    先前學校只是一行字加一條細線、班級是 bg-card/40，兩者對底色都幾乎沒有
+                    差別（使用者回報「分色太接近」）。學校列捲動時釘在最上面，
+                    班級一多（實測一所學校 16 班）才不會忘記自己在看哪一所。
+                  */}
+                  <div className="sticky top-0 z-10 flex items-center gap-2 rounded-xl border border-primary/30 border-l-4 border-l-primary bg-primary/10 px-3 py-2 shadow-sm">
                     <School size={15} className="text-primary shrink-0" />
-                    <h3 className="text-ui text-text-primary truncate">
+                    <h3 className="text-ui font-bold text-primary truncate">
                       {group.label}
                     </h3>
-                    <span className="ml-auto shrink-0 text-caption text-text-muted tabular-nums">
+                    <span className="ml-auto shrink-0 text-caption text-primary/80 tabular-nums">
                       {group.courses.length} 班
                     </span>
                   </div>
 
-                  <ul className="flex flex-col gap-1">
+                  {/* 左邊那條線把班級收在學校底下，層級看得出來 */}
+                  <ul className="mt-2 ml-3 flex flex-col gap-1.5 border-l-2 border-border pl-3">
                     {group.courses.map((course) => {
                       const isSelected = course.id === selectedCourseId;
                       return (
@@ -161,10 +168,10 @@ export const CoursePickerModal: React.FC<CoursePickerModalProps> = ({
                               onSelect(course.id);
                               onClose();
                             }}
-                            className={`w-full text-left px-3 py-2.5 rounded-brand border transition-colors flex items-center gap-3 ${
+                            className={`w-full text-left px-3 py-2.5 rounded-brand border shadow-sm transition-all flex items-center gap-3 ${
                               isSelected
-                                ? 'bg-primary/10 border-primary/30 text-primary'
-                                : 'bg-card/40 border-transparent hover:bg-surface-soft text-text-primary'
+                                ? 'bg-primary/10 border-primary text-primary'
+                                : 'bg-card border-border hover:border-primary/50 hover:shadow-md text-text-primary'
                             }`}
                           >
                             <span className="min-w-0 flex-1">

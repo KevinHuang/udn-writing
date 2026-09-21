@@ -397,7 +397,6 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
         <DocumentScannerModal
           subtitle={active ? `${seatText(active.seatNo)} ${active.studentName}` : undefined}
           pageCount={picFiles.length}
-          allowSystemCamera={false}
           onClose={() => setScannerOpen(false)}
           onPage={handleScannedPage}
         />

@@ -166,7 +166,7 @@ export const StudentPortal: React.FC = () => {
               <button 
                 id="student-nav-btn-notifications" 
                 onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
-                className={`p-2.5 hover:bg-card/60 rounded-full transition-all duration-300 relative active:scale-95 ${isNotificationsOpen ? 'bg-card shadow-md text-secondary' : 'text-text-primary'}`}
+                className={`hidden sm:block p-2.5 hover:bg-card/60 rounded-full transition-all duration-300 relative active:scale-95 ${isNotificationsOpen ? 'bg-card shadow-md text-secondary' : 'text-text-primary'}`}
               >
                 <Bell size={20} />
                 {notifications.length > 0 && (
@@ -222,7 +222,7 @@ export const StudentPortal: React.FC = () => {
               )}
             </div>
 
-            <div className="h-8 w-px bg-text-primary/15 mx-1"></div>
+            <div className="hidden sm:block h-8 w-px bg-text-primary/15 mx-1"></div>
 
             <div className="relative" ref={profileRef}>
               <button id="student-nav-btn-account" 
@@ -254,6 +254,26 @@ export const StudentPortal: React.FC = () => {
                     這裡以前有一顆寫死的「切換至教師界面」—— 原型的假切換，
                     每個學生都看得到。學生帳號沒有教師身分，按了只會被後端擋下來。
                   */}
+                  {/*
+                    手機上鈴鐺收進這個選單 —— 頁首放不下鈴鐺＋頭像＋標題，
+                    「聯合報雲寫作教室」會被擠掉一半（使用者回報）。
+                  */}
+                  <button
+                    id="student-nav-btn-notifications-mobile"
+                    onClick={() => {
+                      setIsProfileOpen(false);
+                      setIsNotificationsOpen(true);
+                    }}
+                    className="sm:hidden w-full px-4 py-2.5 text-left text-body text-text-secondary hover:bg-surface flex items-center gap-3 transition-colors"
+                  >
+                    <Bell size={18} /> 通知
+                    {notifications.length > 0 && (
+                      <span className="ml-auto text-caption font-bold px-2 py-0.5 rounded-full bg-danger-500 text-on-accent">
+                        {notifications.length}
+                      </span>
+                    )}
+                  </button>
+
                   <button id="student-nav-btn-settings"
                     onClick={() => {
                       setIsSettingsOpen(true);

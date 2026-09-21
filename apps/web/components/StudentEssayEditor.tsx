@@ -71,10 +71,11 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   /**
    * 稿紙掃描視窗（components/scan）。取代了原本的相機視窗 ——
-   * 掃描視窗自己有即時相機（getUserMedia）、系統相機與相簿三個入口，
+   * 掃描視窗自己有即時相機（getUserMedia）與相簿兩個入口，
    * 拍下來會拉正、去陰影再送辨識，辨識率比直接拍照好很多。
    */
   const [scannerOpen, setScannerOpen] = useState(false);
+
   /**
    * 手寫原稿在 GCS 的相對路徑。
    *
@@ -137,6 +138,11 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
    *   已截止 —— 過了截止時間又不收遲交
    */
   const isLocked = isGraded || isEnded;
+  /**
+   * 正在選「直接打字／掃描稿紙／上傳照片」。
+   * 已截止或已批改就不給選 —— 選了也交不出去，只是讓人白做（新版也這樣擋）。
+   */
+  const showMethodChooser = !isLocked && showMethodSelector && !content;
 
   /**
    * 存草稿。
@@ -450,7 +456,17 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
         {/* Editor Area */}
         <div className="lg:col-span-2 space-y-4">
-          <div className="bg-card rounded-2xl sm:rounded-3xl shadow-sm border border-border/50 overflow-hidden flex flex-col h-[500px] sm:h-[600px]">
+          {/*
+            ⚠️ 這張卡片一定要 relative。兩張覆蓋層（選輸入方式、OCR 辨識中）都是
+            absolute inset-0，沒有定位祖先時會以整頁為基準 —— 實測它們蓋到整個頁面，
+            再被 sticky 的標題列壓在上面，標題與說明文字被切掉一半（手機、桌機都是）。
+
+            選輸入方式時不要鎖高度：三張方式卡片在手機上是直向排列，
+            鎖 500px 會變成卡片裡再捲一層。
+          */}
+          <div className={`bg-card rounded-2xl sm:rounded-3xl shadow-sm border border-border/50 overflow-hidden flex flex-col relative ${
+            showMethodChooser ? '' : 'h-[500px] sm:h-[600px]'
+          }`}>
             <div className="bg-card/50 px-4 sm:px-6 py-3 border-b border-border/50 flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-3 sm:gap-4">
                 <span className="text-body text-text-secondary uppercase tracking-widest hidden sm:inline">寫作區域</span>
@@ -495,17 +511,17 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
               placeholder="在此開始你的創作..."
               className={`flex-1 p-4 sm:p-8 text-title font-essay leading-loose focus:outline-none resize-none no-scrollbar text-text-primary bg-card/50 ${
                 isLocked ? 'cursor-default' : ''
-              }`}
+              } ${showMethodChooser ? 'hidden' : ''}`}
             />
 
-            {/* 已截止或已批改就不給選輸入方式 —— 選了也交不出去，只是讓人白做（新版也這樣擋） */}
-            {!isLocked && showMethodSelector && !content && (
-              <div className="absolute inset-0 z-10 bg-card/95 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 md:p-12 overflow-y-auto">
-                <div className="max-w-4xl w-full space-y-8 sm:space-y-12 text-center my-auto">
+            {showMethodChooser && (
+              <div className="flex items-center justify-center p-4 sm:p-6 md:p-10">
+                <div className="max-w-4xl w-full space-y-6 sm:space-y-10 text-center">
                   <div className="space-y-2 sm:space-y-4">
-                    <h2 className="text-display font-bold text-text-primary tracking-tight">選擇作文提供方式</h2>
-                    <p className="text-text-secondary text-title max-w-2xl mx-auto px-4">
-                      準備好開始了嗎？您可以選擇直接在線上打字，或是利用 AI 強大的 OCR 功能辨識您的手寫稿。
+                    <h2 className="text-title sm:text-heading font-bold text-text-primary tracking-tight">選擇作文提供方式</h2>
+                    {/* 一句話講完就好：手機上大標＋兩行說明會佔掉半個畫面（使用者回報） */}
+                    <p className="text-body sm:text-ui text-text-secondary max-w-xl mx-auto">
+                      直接打字，或拍手寫稿讓 AI 轉成文字。
                     </p>
                   </div>
 

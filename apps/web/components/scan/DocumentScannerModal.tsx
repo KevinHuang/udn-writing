@@ -42,13 +42,6 @@ interface DocumentScannerModalProps {
   subtitle?: string;
   /** 已經掃好幾頁了。作文常常是兩張稿紙 */
   pageCount?: number;
-  /**
-   * 首頁要不要放「用系統相機拍」。預設要（學生端）。
-   * 教師的批次代繳交不放 —— 老師是在電腦前一疊一疊登錄紙本，
-   * 用的是即時相機或相簿；系統相機那顆在桌機上只會跳出檔案選擇器，
-   * 和「從相簿選擇」重複（使用者要求移除）。
-   */
-  allowSystemCamera?: boolean;
   onClose: () => void;
   /** 掃好一頁。回傳後畫面會回到首頁，可以接著掃下一張 */
   onPage: (page: ScannedPage) => void | Promise<void>;
@@ -67,7 +60,6 @@ type Step = 'home' | 'camera' | 'editor' | 'result';
 export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   subtitle,
   pageCount = 0,
-  allowSystemCamera = true,
   onClose,
   onPage,
 }) => {
@@ -94,7 +86,6 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   const [detected, setDetected] = useState<Point[] | null>(null);
   const resultRef = useRef<ScanResult | null>(null);
   const previewRef = useRef<HTMLCanvasElement>(null);
-  const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
   const insecure = typeof window !== 'undefined' && !window.isSecureContext;
@@ -288,7 +279,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
         onClose();
         return;
       }
-      // 不能開相機的環境（非 https、沒給權限）回首頁，那裡有系統相機與相簿兩個入口
+      // 不能開相機的環境（非 https、沒給權限）回首頁，那裡還有「從相簿選擇」
       setStep(insecure ? 'home' : 'camera');
     } catch (e) {
       console.error(e);
@@ -354,7 +345,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
             {inAppBrowser && (
               <p className="flex items-start gap-2 text-caption text-warning-700 bg-warning-100 border border-warning-200 rounded-brand px-3.5 py-3">
                 <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                你正在 LINE／Facebook 的內建瀏覽器中，相機可能無法使用。請點右上角選單改用瀏覽器開啟，或改用下方的「用系統相機拍」。
+                你正在 LINE／Facebook 的內建瀏覽器中，相機可能無法使用。請點右上角選單改用瀏覽器開啟，或改用下方的「從相簿選擇照片」。
               </p>
             )}
 
@@ -370,24 +361,6 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 <Camera size={18} />
                 開啟相機掃描
               </button>
-
-              {allowSystemCamera && (
-              <label
-                id="scanner-btn-system-camera"
-                className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-brand bg-card border border-border-strong text-text-primary text-body cursor-pointer hover:bg-surface-soft transition-colors"
-              >
-                <Camera size={16} />
-                用系統相機拍（畫質最高）
-                <input
-                  ref={cameraInputRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={onPickFile}
-                />
-              </label>
-              )}
 
               <label
                 id="scanner-btn-gallery"

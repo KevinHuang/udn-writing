@@ -716,10 +716,11 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
       {/* Main Content */}
       <div className="flex flex-col items-start">
          {/* Right: Grade Table */}
-         <div className="flex-1 w-full bg-surface/60 backdrop-blur-2xl rounded-brand border border-border shadow-sm flex flex-col transition-all duration-300">
+         {/* 成績表的外框用實色白卡：凍結欄也是實色，兩者要同一個底色才不會看出一條色差 */}
+         <div className="flex-1 w-full bg-card rounded-brand border border-border shadow-sm flex flex-col transition-all duration-300">
              {selectedCourse ? (
                  <>
-                    <div className="p-3 sm:p-6 border-b border-border flex flex-col md:flex-row justify-between items-start md:items-center gap-3 sm:gap-4 bg-surface/40 backdrop-blur-md">
+                    <div className="p-3 sm:p-6 border-b border-border flex flex-col md:flex-row justify-between items-start md:items-center gap-3 sm:gap-4 bg-card">
                         <div className="flex items-center gap-2 sm:gap-4">
                              <div>
                                 <h2 className="text-heading font-bold text-text-primary leading-none">
@@ -749,18 +750,23 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
 
                     <div className="overflow-x-auto rounded-b-brand">
                         <table className="w-full text-left border-collapse min-w-[600px] sm:min-w-[800px]">
-                            <thead className="bg-secondary/5 backdrop-blur-sm sticky top-0 z-10 shadow-sm">
+                            {/*
+                              凍結欄的底色一定要**實色**。先前是 bg-secondary/5（5% 不透明），
+                              橫向捲動時中間的作業欄從底下透出來，看起來就是文字疊文字（實測手機、平板都會）。
+                              寬度與 left 位移也要和下面的 <td> 一字不差，否則凍結欄會錯開、露出縫隙。
+                            */}
+                            <thead className="bg-surface-soft sticky top-0 z-10 shadow-sm">
                                 <tr>
-                                    <th className="p-2 sm:p-4 px-1 sm:px-2 text-body text-text-primary sticky left-0 bg-secondary/5 z-20 border-b border-r border-border w-10 sm:w-14 min-w-[2.5rem] sm:min-w-[3.5rem] text-center">
+                                    <th className="p-2 sm:p-4 px-1 sm:px-2 text-body text-text-primary sticky left-0 bg-surface-soft z-20 border-b border-r border-border w-12 sm:w-14 min-w-[3rem] sm:min-w-[3.5rem] text-center">
                                         座號
                                     </th>
-                                    <th className="p-2 sm:p-4 px-1.5 sm:px-3 text-body text-text-primary sticky left-10 sm:left-14 bg-secondary/5 z-20 border-b border-r border-border w-20 sm:w-28 min-w-[5rem] sm:min-w-[7rem]">
+                                    <th className="p-2 sm:p-4 px-1.5 sm:px-3 text-body text-text-primary sticky left-12 sm:left-14 bg-surface-soft z-20 border-b border-r border-border w-28 min-w-[7rem]">
                                         學生姓名
                                     </th>
                                     {scopedAssignments.map(a => {
                                         const isOverdue = isAssignmentOverdue(a);
                                         return (
-                                            <th key={a.id} className={`py-2 sm:py-4 px-1 text-body font-bold text-text-primary border-b border-border w-16 sm:w-24 min-w-[4rem] sm:min-w-[6rem] max-w-[4rem] sm:max-w-[6rem] text-center transition-colors ${isOverdue ? 'bg-danger-50/80 text-danger-700' : ''}`}>
+                                            <th key={a.id} className={`py-2 sm:py-4 px-1 text-body font-bold text-text-primary border-b border-border w-16 sm:w-24 min-w-[4rem] sm:min-w-[6rem] max-w-[4rem] sm:max-w-[6rem] text-center transition-colors ${isOverdue ? 'bg-danger-50 text-danger-700' : ''}`}>
                                                 <div className="flex flex-col items-center justify-center gap-0.5 w-full overflow-hidden" title={`第 ${assignmentNo[a.id]} 份・${a.title}${isOverdue ? '（已截止）' : ''}`}>
                                                     <div className="flex items-center justify-center gap-0.5 sm:gap-1 w-full px-0.5 sm:px-1">
                                                         {/*
@@ -778,7 +784,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                             </th>
                                         );
                                     })}
-                                    <th className="p-2 sm:p-4 px-1 sm:px-2 text-body text-text-primary border-b border-l border-border text-center sticky right-0 bg-secondary/5 z-20 w-16 sm:w-24 min-w-[4rem] sm:min-w-[6rem]">
+                                    <th className="p-2 sm:p-4 px-1 sm:px-2 text-body text-text-primary border-b border-l border-border text-center sticky right-0 bg-surface-soft z-20 w-20 sm:w-24 min-w-[5rem] sm:min-w-[6rem]">
                                         平均級分
                                     </th>
                                 </tr>
@@ -789,13 +795,18 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                     let gradedCount = 0;
 
                                     return (
-                                        <tr key={student.studentId} id={`grademanagement-table-row-${student.studentId}`} className="hover:bg-surface/60 transition-colors group">
-                                            <td className="p-3 sm:p-4 px-1.5 sm:px-2 text-text-primary font-mono text-center sticky left-0 bg-surface group-hover:bg-secondary/5 border-r border-border/50 z-10 w-12 sm:w-14 min-w-[3rem] sm:min-w-[3.5rem] text-body">
+                                        <tr key={student.studentId} id={`grademanagement-table-row-${student.studentId}`} className="hover:bg-surface-soft transition-colors group">
+                                            <td className="p-3 sm:p-4 px-1.5 sm:px-2 text-text-primary font-mono text-center sticky left-0 bg-card group-hover:bg-surface-soft border-r border-border/50 z-10 w-12 sm:w-14 min-w-[3rem] sm:min-w-[3.5rem] text-body">
                                                 {seatText(student.seatNo)}
                                             </td>
-                                            <td className="p-3 sm:p-4 px-2 sm:px-3 text-text-primary sticky left-12 sm:left-14 bg-surface group-hover:bg-secondary/5 border-r border-border/50 z-10 w-24 sm:w-28 min-w-[6rem] sm:min-w-[7rem] text-body">
-                                                <div className="flex items-center justify-between gap-1">
-                                                    <span className="truncate">{student.name}</span>
+                                            <td className="p-3 sm:p-4 px-2 sm:px-3 text-text-primary sticky left-12 sm:left-14 bg-card group-hover:bg-surface-soft border-r border-border/50 z-10 w-28 min-w-[7rem] text-body">
+                                                {/*
+                                                  姓名要 min-w-0 才截斷得了 —— flex 子元素預設 min-width:auto，
+                                                  只給 truncate 不會縮，長姓名會整串溢出凍結欄、壓到作業欄上。
+                                                  也不要 justify-between／flex-1，否則圖示被推到欄位最右邊，離姓名很遠。
+                                                */}
+                                                <div className="flex items-center gap-1 min-w-0">
+                                                    <span className="truncate min-w-0">{student.name}</span>
                                                     <button 
                                                         id={`grademanagement-btn-history-${student.studentId}`}
                                                         onClick={() => setHistoryModalStudent(student)}
@@ -866,7 +877,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                                     </td>
                                                 );
                                             })}
-                                            <td className="p-3 sm:p-4 px-1.5 sm:px-2 text-center border-l border-border/50 sticky right-0 bg-surface group-hover:bg-secondary/5 z-10 w-20 sm:w-24 min-w-[5rem] sm:min-w-[6rem]">
+                                            <td className="p-3 sm:p-4 px-1.5 sm:px-2 text-center border-l border-border/50 sticky right-0 bg-card group-hover:bg-surface-soft z-10 w-20 sm:w-24 min-w-[5rem] sm:min-w-[6rem]">
                                                 {gradedCount > 0 ? (
                                                     <span className="text-primary bg-primary/5 px-2 sm:px-3 py-0.5 sm:py-1 rounded-brand text-body">
                                                         {(totalScore / gradedCount).toFixed(1)}

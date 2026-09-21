@@ -754,7 +754,13 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                     </div>
 
                     <div className="overflow-x-auto rounded-b-brand">
-                        <table className="w-full text-left border-collapse min-w-[600px] sm:min-w-[800px]">
+                        {/*
+                          不要硬撐最小寬度。作業欄有 max-w 上限，撐出來的空白會全部
+                          灌進沒有上限的姓名欄（實測 390px 畫面上姓名欄變成 246px，
+                          成績欄幾乎看不到）。各欄自己的 min-w 就是表格的自然寬度：
+                          作業少就剛好放得下、作業多才需要左右捲。
+                        */}
+                        <table className="w-full text-left border-collapse">
                             {/*
                               凍結欄的底色一定要**實色**。先前是 bg-secondary/5（5% 不透明），
                               橫向捲動時中間的作業欄從底下透出來，看起來就是文字疊文字（實測手機、平板都會）。
@@ -762,10 +768,10 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                             */}
                             <thead className="bg-surface-soft sticky top-0 z-10 shadow-sm">
                                 <tr>
-                                    <th className="p-2 sm:p-4 px-1 sm:px-2 text-body text-text-primary sticky left-0 bg-surface-soft z-20 border-b border-r border-border w-12 sm:w-14 min-w-[3rem] sm:min-w-[3.5rem] text-center">
+                                    <th className="p-2 sm:p-4 px-1 sm:px-2 text-body text-text-primary sticky left-0 bg-surface-soft z-20 border-b border-r border-border w-10 md:w-14 min-w-[2.5rem] md:min-w-[3.5rem] max-w-[2.5rem] md:max-w-[3.5rem] text-center">
                                         座號
                                     </th>
-                                    <th className="p-2 sm:p-4 px-1.5 sm:px-3 text-body text-text-primary sticky left-12 sm:left-14 bg-surface-soft z-20 border-b border-r border-border w-28 min-w-[7rem]">
+                                    <th className="p-2 sm:p-4 px-1.5 sm:px-3 text-body text-text-primary sticky left-10 md:left-14 bg-surface-soft z-20 border-b border-r border-border w-24 md:w-28 min-w-[6rem] md:min-w-[7rem] max-w-[6rem] md:max-w-[9rem]">
                                         學生姓名
                                     </th>
                                     {scopedAssignments.map(a => {
@@ -789,8 +795,9 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                             </th>
                                         );
                                     })}
-                                    <th className="p-2 sm:p-4 px-1 sm:px-2 text-body text-text-primary border-b border-l border-border text-center sticky right-0 bg-surface-soft z-20 w-20 sm:w-24 min-w-[5rem] sm:min-w-[6rem]">
-                                        平均級分
+                                    <th className="p-2 sm:p-4 px-1 sm:px-2 text-body text-text-primary border-b border-l border-border text-center sticky right-0 bg-surface-soft z-20 w-16 md:w-24 min-w-[4rem] md:min-w-[6rem] max-w-[4rem] md:max-w-[6rem]">
+                                        {/* 窄畫面只寫「平均」—— 四個字要 6rem，等於吃掉一整欄成績 */}
+                                        平均<span className="hidden md:inline">級分</span>
                                     </th>
                                 </tr>
                             </thead>
@@ -801,10 +808,10 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
 
                                     return (
                                         <tr key={student.studentId} id={`grademanagement-table-row-${student.studentId}`} className="hover:bg-surface-soft transition-colors group">
-                                            <td className="p-3 sm:p-4 px-1.5 sm:px-2 text-text-primary font-mono text-center sticky left-0 bg-card group-hover:bg-surface-soft border-r border-border/50 z-10 w-12 sm:w-14 min-w-[3rem] sm:min-w-[3.5rem] text-body">
+                                            <td className="p-3 sm:p-4 px-1 sm:px-2 text-text-primary font-mono text-center sticky left-0 bg-card group-hover:bg-surface-soft border-r border-border/50 z-10 w-10 md:w-14 min-w-[2.5rem] md:min-w-[3.5rem] max-w-[2.5rem] md:max-w-[3.5rem] text-body">
                                                 {seatText(student.seatNo)}
                                             </td>
-                                            <td className="p-3 sm:p-4 px-2 sm:px-3 text-text-primary sticky left-12 sm:left-14 bg-card group-hover:bg-surface-soft border-r border-border/50 z-10 w-28 min-w-[7rem] text-body">
+                                            <td className="p-3 sm:p-4 px-2 text-text-primary sticky left-10 md:left-14 bg-card group-hover:bg-surface-soft border-r border-border/50 z-10 w-24 md:w-28 min-w-[6rem] md:min-w-[7rem] max-w-[6rem] md:max-w-[9rem] text-body">
                                                 {/*
                                                   姓名要 min-w-0 才截斷得了 —— flex 子元素預設 min-width:auto，
                                                   只給 truncate 不會縮，長姓名會整串溢出凍結欄、壓到作業欄上。
@@ -882,7 +889,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                                     </td>
                                                 );
                                             })}
-                                            <td className="p-3 sm:p-4 px-1.5 sm:px-2 text-center border-l border-border/50 sticky right-0 bg-card group-hover:bg-surface-soft z-10 w-20 sm:w-24 min-w-[5rem] sm:min-w-[6rem]">
+                                            <td className="p-3 sm:p-4 px-1.5 sm:px-2 text-center border-l border-border/50 sticky right-0 bg-card group-hover:bg-surface-soft z-10 w-16 md:w-24 min-w-[4rem] md:min-w-[6rem] max-w-[4rem] md:max-w-[6rem]">
                                                 {gradedCount > 0 ? (
                                                     <span className="text-primary bg-primary/5 px-2 sm:px-3 py-0.5 sm:py-1 rounded-brand text-body">
                                                         {(totalScore / gradedCount).toFixed(1)}

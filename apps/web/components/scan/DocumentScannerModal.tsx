@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
   Camera,
@@ -296,8 +297,21 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     error: { text: '影像引擎載入失敗：' + cvError, cls: 'text-danger-700' },
   }[cvState];
 
-  return (
-    <div className="fixed inset-0 z-[120] bg-surface flex flex-col">
+  /*
+    整個視窗掛到 document.body（createPortal），而且 z-[1100]。兩件事都是必要的：
+
+    z-[1100] —— 手機的底部導覽是 z-[1001]（StudentPortal / Navigation），
+    這個視窗原本 z-[120]，相機畫面最下面那排「閃光燈／快門／自動」
+    整條被導覽列蓋住，學生按不到快門（iPhone 與 Android 的直式畫面都是）。
+    SettingsModal 為了同一個原因也是 z-[1100]。
+
+    portal —— 原本掛在學生作文頁那個 `space-y-6` 容器裡，Tailwind v4 的
+    space-y 會給「不是最後一個」的子項一段 margin-bottom，fixed inset-0
+    因此短了 24px：畫面最下緣露出一條，底部導覽從那條縫透出來（實測 390×844
+    量到視窗只有 820px 高）。掛到 body 底下就不受任何版面容器影響。
+  */
+  return createPortal(
+    <div className="fixed inset-0 z-[1100] bg-surface flex flex-col">
       {/* 標題列。相機與微調是全黑畫面，那兩步自己有控制列，不重複顯示 */}
       {(step === 'home' || step === 'result') && (
         <div className="shrink-0 flex items-start justify-between gap-3 px-4 sm:px-6 py-4 border-b border-border bg-card/60">
@@ -559,6 +573,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
           </p>
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 };

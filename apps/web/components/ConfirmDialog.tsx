@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle, X } from 'lucide-react';
 
 interface ConfirmDialogProps {
@@ -37,10 +38,15 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
     return () => document.removeEventListener('keydown', onKey);
   }, [onCancel]);
 
-  return (
+  /*
+    掛到 document.body，並且壓過手機的底部導覽（z-[1001]）。
+    不掛 body 的話，呼叫端若是 `space-y-*` 容器，Tailwind v4 會給這個
+    fixed inset-0 一段 margin-bottom，遮罩底部會短一截、露出後面的畫面。
+  */
+  return createPortal(
     <div
       id="confirm-dialog"
-      className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6"
+      className="fixed inset-0 z-[1100] flex items-center justify-center p-4 sm:p-6"
     >
       <div
         className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm"
@@ -93,6 +99,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };

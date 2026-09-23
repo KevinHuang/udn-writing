@@ -11,6 +11,7 @@ import {
   Info, 
   FileText,
   ScanLine,
+  Eraser,
   Keyboard,
   Image as ImageIcon,
   X,
@@ -28,6 +29,7 @@ import {
   canStudentSubmit,
 } from '../lib/assignments';
 import { DocumentScannerModal, type ScannedPage } from './scan/DocumentScannerModal';
+import { ConfirmDialog } from './ConfirmDialog';
 import { blobToBase64 } from '../lib/scan/image';
 import { countWords } from '../lib/wordCount';
 
@@ -95,6 +97,7 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
   /** 這次掃了幾頁。給掃描視窗顯示「第 N 頁」用（render 裡不能讀 ref） */
   const [sessionScanCount, setSessionScanCount] = useState(0);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showClearModal, setShowClearModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isOcrLoading, setIsOcrLoading] = useState(false);
   const [showMethodSelector, setShowMethodSelector] = useState(!existingSubmission?.content);
@@ -260,6 +263,36 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
     }
   };
 
+  /**
+   * 清除：把編輯區恢復成「還沒開始寫」的樣子。
+   *
+   * 掃描來的原稿（picFiles）也一起清掉 —— 只清文字的話，學生重打一篇交出去，
+   * 老師那邊卻還附著上一次掃的稿紙，對不起來。
+   * scannedThisSession 要跟著歸零，否則清完再掃第一頁時會被當成「這次的第二頁」，
+   * 接在已經不存在的前一批後面（見 handleScannedPage 的整份覆蓋規則）。
+   *
+   * ⚠️ 只動編輯區，不去刪已經存進後端的草稿 —— 要等學生再次儲存或提交才會寫回去。
+   *    確認視窗裡也是這樣講的，不要讓人以為按下去就把交出去的東西收回了。
+   */
+  const hasAnythingToClear = content.length > 0 || picFiles.length > 0;
+
+  const clearMessage = [
+    `寫作區的文字${picFiles.length > 0 ? `，以及掃描進來的 ${picFiles.length} 張原稿` : ''}都會被清掉，沒有辦法復原。`,
+    (isDraft || isSubmitted)
+      ? '已經存在系統裡的那一份還在，要等你再次儲存草稿或提交，才會換成清除後的內容。'
+      : '',
+  ].filter(Boolean).join('\n\n');
+
+  const confirmClear = () => {
+    setShowClearModal(false);
+    setContent('');
+    setPicFiles([]);
+    scannedThisSession.current = false;
+    setSessionScanCount(0);
+    setShowMethodSelector(true);
+    setError(null);
+  };
+
   const handleSubmit = async () => {
     if (!content.trim() || isLocked) return;
     setShowConfirmModal(true);
@@ -312,7 +345,8 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
       )}
       {/* Confirmation Modal */}
       {showConfirmModal && (
-        <div id="studentessayeditor-confirmmodal" className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+        // z-[1100]：低於手機底部導覽（z-[1001]）的話，「確認提交」會被導覽列蓋住
+        <div id="studentessayeditor-confirmmodal" className="fixed inset-0 z-[1100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
           <div className="bg-card rounded-3xl p-8 max-w-sm w-full shadow-2xl border border-border/50 space-y-6">
             <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center text-primary mx-auto">
               <Send size={32} />
@@ -346,6 +380,18 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* 清除全部內容：不可復原，所以先問一次（走系統共用的確認視窗，Esc 可以退出） */}
+      {showClearModal && (
+        <ConfirmDialog
+          title="清除全部內容？"
+          message={clearMessage}
+          confirmLabel="清除全部內容"
+          danger
+          onConfirm={confirmClear}
+          onCancel={() => setShowClearModal(false)}
+        />
       )}
 
       {/* Error Toast */}
@@ -479,7 +525,17 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
               <div className="flex items-center gap-1 sm:gap-2">
                 {/* 已批改就不給改，那兩顆 OCR 也要跟著收起來 —— 留一顆按不動的按鈕，
                     跟先前那顆什麼都沒存的「儲存草稿」是同一類問題 */}
-                {!isLocked && <button 
+                {!isLocked && <button
+                  id="studentessayeditor-btn-clear"
+                  onClick={() => setShowClearModal(true)}
+                  disabled={!hasAnythingToClear}
+                  className="p-1.5 sm:p-2 hover:bg-danger-50 hover:text-danger-600 rounded-lg sm:rounded-xl text-text-secondary transition-colors flex items-center gap-1 sm:gap-1.5 text-body disabled:opacity-40 disabled:pointer-events-none"
+                  title="清除全部內容"
+                >
+                  <Eraser size={14} className="sm:size-[16px]" /> <span>清除</span>
+                </button>}
+                {!isLocked && <div className="h-4 w-px bg-border/60" aria-hidden="true"></div>}
+                {!isLocked && <button
                   id="studentessayeditor-btn-ocr-camera"
                   onClick={() => setScannerOpen(true)}
                   className="p-1.5 sm:p-2 hover:bg-card rounded-lg sm:rounded-xl text-primary transition-colors flex items-center gap-1 sm:gap-1.5 text-body"

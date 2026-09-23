@@ -42,7 +42,7 @@ export const StudentQuestionPreview: React.FC<{ data: QuestionPreviewData }> = (
       src={data.imageUrl}
       alt={data.imageAlt || '題目配圖'}
       referrerPolicy="no-referrer"
-      className="w-full max-h-52 object-cover rounded-xl border border-border"
+      className="w-full max-h-52 object-contain rounded-xl border border-border bg-surface-soft"
     />
   );
 
@@ -115,8 +115,14 @@ export const StudentQuestionPreview: React.FC<{ data: QuestionPreviewData }> = (
           <div className="mt-1 flex flex-wrap items-center gap-2 border-t border-border pt-3 text-caption text-text-secondary">
             <FileText size={12} className="shrink-0" />
             <span className="whitespace-nowrap">{isEnglish ? '橫線紙' : '方格稿紙'}</span>
-            <span className="ml-auto rounded-lg bg-primary/40 text-on-accent px-3.5 py-1.5 whitespace-nowrap">
-              開始寫作
+            {/*
+              這是**示意**用的，模擬學生看到的按鈕，點了不會有任何反應。
+              先前它是實心主色，而整張預覽卡片是 sticky —— 老師捲動找儲存鈕時
+              會把它當成主要動作（使用者回報「按了存不了檔」）。
+              改成灰色虛線外框，一看就知道只是畫面示意。
+            */}
+            <span className="ml-auto rounded-lg border border-dashed border-border-strong text-text-muted px-3.5 py-1.5 whitespace-nowrap">
+              開始寫作（學生端）
             </span>
           </div>
         </div>

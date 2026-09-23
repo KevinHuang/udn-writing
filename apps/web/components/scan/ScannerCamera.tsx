@@ -10,6 +10,10 @@ import {
   smoothPoints,
   type Point,
 } from '../../lib/scan/geometry';
+import { FrameTimings, type PerfSummary } from '../../lib/scan/perf';
+import { previewTargetSize, shouldApplyPreview } from '../../lib/scan/preview';
+import { isScanDebug, toggleScanDebug } from '../../lib/scan/debug';
+import { ScanDebugHud } from './ScanDebugHud';
 
 /** 拍照當下預覽畫面最後框到的四角。高解析照片偵測失敗時可以沿用 */
 export interface LiveHint {
@@ -80,6 +84,111 @@ function waitForVideo(video: HTMLVideoElement): Promise<void> {
   });
 }
 
+/**
+ * 探測說可信、實際拍出來卻只有預覽解析度的鏡頭（見 capture 的保護 A）。
+ *
+ * 放模組層而不是元件裡：掃第二張時 ScannerCamera 會重新掛載，
+ * 記在元件裡的話每開一次相機都要再浪費一張照片才學到同一件事。
+ */
+const untrustedPhotoDevices = new Set<string>();
+
+/** 這個瀏覽器有沒有 ImageCapture（按快門時能拿感光元件全解析度） */
+function imageCaptureCtor():
+  | (new (t: MediaStreamTrack) => {
+      takePhoto(): Promise<Blob>;
+      getPhotoCapabilities?: () => Promise<{ imageWidth?: { max?: number } }>;
+    })
+  | undefined {
+  if (!SCAN_CONFIG.useTakePhoto) return undefined;
+  return (
+    window as unknown as {
+      ImageCapture?: new (t: MediaStreamTrack) => {
+        takePhoto(): Promise<Blob>;
+        getPhotoCapabilities?: () => Promise<{ imageWidth?: { max?: number } }>;
+      };
+    }
+  ).ImageCapture;
+}
+
+/**
+ * 拍照管線可不可信 —— 決定了能不能把取景串流壓小。
+ *
+ * 規格上 takePhoto() 拿的是 still-capture 管線的成品，與 video track 的
+ * 尺寸無關；但部分 Android（沒有獨立 still pipeline 的舊 camera HAL）
+ * 實際上只是把預覽畫格回傳。那種裝置一旦壓低預覽，存檔的稿紙就從
+ * 12M 像素掉到 1.5M，A3 只剩約 87 DPI —— 辨識率會直接崩。
+ *
+ * 所以開相機時先問一次 getPhotoCapabilities：說得出夠大的尺寸才算數。
+ * **問不到就當作不可信**（這支 API 在某些機種會 throw 或回空物件）。
+ * 寧可慢，也不能毀畫質。
+ */
+async function photoPipelineTrusted(track: MediaStreamTrack): Promise<boolean> {
+  const Ctor = imageCaptureCtor();
+  if (!Ctor) return false;
+  try {
+    const ic = new Ctor(track);
+    if (!ic.getPhotoCapabilities) return false;
+    const caps = await withTimeout(ic.getPhotoCapabilities(), 2000);
+    return (caps?.imageWidth?.max ?? 0) >= SCAN_CONFIG.trustedPhotoMinWidth;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 取景串流要開多大。
+ *
+ * ⚠️ 這裡原本是**無條件** `applyConstraints({ width: caps.width.max, … })`，
+ *    理由寫著「有些裝置會忽略 getUserMedia 的 ideal 值」。但它把上面
+ *    刻意做的分流整個洗掉了：Android Chrome 的預覽因此被拉到感光元件最大
+ *    （常見 4000×3000＝12M 像素），而每一幀都要把它縮到 512 再 getImageData
+ *    回讀 —— 加上那個 canvas 用了 willReadFrequently（Chrome 會改走 CPU 光柵化），
+ *    等於每秒九次在 CPU 上降採樣 12M 像素。**這就是 Android 對邊比 iOS 慢的主因。**
+ *
+ * 現在依快門路徑決定：
+ *   - 拍照管線可信（takePhoto 拿得到高解析）→ 預覽壓到 previewLongSide，
+ *     而且**照感光元件的長寬比**算寬高（理由見 config 的 previewLongSide）。
+ *   - 其餘（iOS Safari、takePhoto 不可信的 Android）→ 串流就是成品畫質，
+ *     維持原本「要最大」的行為，只夾在 maxSourceLongSide，再大也會在 capture 被縮掉。
+ *
+ * 已經符合目標就整段跳過 —— 有些機器 applyConstraints 會讓畫面黑一下。
+ */
+async function applyTrackResolution(
+  track: MediaStreamTrack,
+  caps: MediaTrackCapabilities,
+  trusted: boolean,
+): Promise<void> {
+  const maxW = caps.width?.max;
+  const maxH = caps.height?.max;
+  if (!maxW || !maxH) return;
+
+  const target = previewTargetSize(maxW, maxH, trusted);
+  if (!shouldApplyPreview(track.getSettings(), target, trusted)) return;
+
+  try {
+    await track.applyConstraints({
+      width: { ideal: target.width },
+      height: { ideal: target.height },
+    });
+  } catch {
+    /* 套不上就沿用原本的 */
+  }
+}
+
+/**
+ * 等影片畫格真的換成新解析度。
+ *
+ * applyConstraints 的 promise resolve 得比實際生效早 ——
+ * 馬上讀 video.videoWidth 拿到的還是舊值，直接 drawImage 就會拍到舊尺寸。
+ */
+function waitFrames(count = 2): Promise<void> {
+  return new Promise((resolve) => {
+    let left = count;
+    const tick = () => (--left <= 0 ? resolve() : requestAnimationFrame(tick));
+    requestAnimationFrame(tick);
+  });
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('逾時')), ms);
@@ -127,6 +236,27 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
 
   /** 連續幾幀沒找到紙張。累積到門檻就改跑完整偵測（見 step） */
   const missesRef = useRef(0);
+
+  /*
+    效能診斷（?scandebug=1 才看得到，見 lib/scan/debug.ts）。
+    計時本身常駐 —— 一幀 8 次 performance.now() 的成本可以忽略，
+    但「算百分位 + setState」只在開啟時做，而且限制在每 500ms 一次：
+    step() 已經每幀兩次 setState，不能再多一次每幀的。
+  */
+  const timingsRef = useRef(new FrameTimings(30));
+  const hudAtRef = useRef(0);
+  const debugRef = useRef(isScanDebug());
+  /** 快門走哪一條。開相機時決定，拍照失敗退回影片畫格時會改（見 capture） */
+  const shutterPathRef = useRef<'takePhoto' | '影片畫格'>('影片畫格');
+  /**
+   * 這台裝置的 takePhoto 拿不拿得到高解析。false 就不壓預覽，
+   * 拍照也直接走影片畫格（那時串流本身就是成品畫質）。
+   */
+  const photoTrustedRef = useRef(false);
+  /** 鏡頭能力。拍照要暫時把串流拉回最大時要用（見 capture 的保護 A／B） */
+  const capsRef = useRef<MediaTrackCapabilities | null>(null);
+  /** 疊圖畫布的實際像素大小，只給診斷顯示用 */
+  const overlaySizeRef = useRef('');
   const anchorRef = useRef<Point[] | null>(null);
   const smoothRef = useRef<Point[] | null>(null);
   const lastLiveRef = useRef<(LiveHint & { at: number }) | null>(null);
@@ -148,6 +278,39 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
   const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
   /** 目前實際開著的是哪一顆 */
   const [activeDeviceId, setActiveDeviceId] = useState<string | undefined>(undefined);
+  /** 效能診斷：開關與最近一次的統計。關閉時 summary 永遠是 null，HUD 整個不 render */
+  const [debug, setDebug] = useState(isScanDebug);
+  /**
+   * 要顯示的診斷數字。**整包一起進 state**：ref 不能在 render 階段讀
+   * （React 的 lint 會擋，而且讀到的值本來就不保證是這次 render 的），
+   * 所以快門路徑與疊圖尺寸也在這裡一起帶出來。
+   */
+  const [hud, setHud] = useState<{
+    summary: PerfSummary;
+    stream: string;
+    shutter: string;
+    overlay: string;
+    dpr: number;
+  } | null>(null);
+  /** 串流實際跑在多大、幾 fps。診斷用，也是驗證取景解析度有沒有壓下去的依據 */
+  const streamInfoRef = useRef('');
+
+  /* 長按解析度標籤 800ms 切換診斷顯示 */
+  const debugPressRef = useRef<number | null>(null);
+  const startDebugPress = useCallback(() => {
+    if (debugPressRef.current) window.clearTimeout(debugPressRef.current);
+    debugPressRef.current = window.setTimeout(() => {
+      const next = toggleScanDebug();
+      debugRef.current = next;
+      if (!next) setHud(null);
+      setDebug(next);
+    }, 800);
+  }, []);
+  const cancelDebugPress = useCallback(() => {
+    if (debugPressRef.current) window.clearTimeout(debugPressRef.current);
+    debugPressRef.current = null;
+  }, []);
+  useEffect(() => cancelDebugPress, [cancelDebugPress]);
 
   /*
     ⚠️ **上層的回呼一律經過 ref 呼叫，不要放進 effect 的依賴。**
@@ -181,6 +344,7 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
     if (canvas.width !== Math.round(cw * dpr) || canvas.height !== Math.round(ch * dpr)) {
       canvas.width = Math.round(cw * dpr);
       canvas.height = Math.round(ch * dpr);
+      overlaySizeRef.current = `${canvas.width}×${canvas.height}`;
     }
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -303,21 +467,46 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
         let canvas: HTMLCanvasElement | null = null;
 
         // 優先用 ImageCapture 取得感光元件全解析度，失敗再退回擷取影片畫格
-        const ImageCaptureCtor = (
-          window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => { takePhoto(): Promise<Blob> } }
-        ).ImageCapture;
-        if (SCAN_CONFIG.useTakePhoto && ImageCaptureCtor) {
+        const ImageCaptureCtor = imageCaptureCtor();
+        if (ImageCaptureCtor && photoTrustedRef.current) {
           try {
             const ic = new ImageCaptureCtor(track);
             const blob = await withTimeout(ic.takePhoto(), SCAN_CONFIG.takePhotoTimeoutMs);
             const { blobToCanvas } = await import('../../lib/scan/image');
             canvas = await blobToCanvas(blob, SCAN_CONFIG.maxSourceLongSide);
+            /*
+              保護 A：說好的高解析沒有兌現。
+              有些 Android 的 takePhoto 其實只是回傳預覽畫格 —— 事前探測
+              （photoPipelineTrusted）攔不到全部。成品明顯小於預期就整張作廢，
+              把串流拉回最大、改用影片畫格重拍，並記下這台裝置之後都不壓預覽。
+              慢一點沒關係，交出一張 87 DPI 的稿紙才是真的壞掉。
+            */
+            if (
+              Math.max(canvas.width, canvas.height) <
+              SCAN_CONFIG.previewLongSide * SCAN_CONFIG.trustedPhotoRatio
+            ) {
+              console.warn('[camera] takePhoto 只拿到預覽解析度，改用影片畫格重拍');
+              photoTrustedRef.current = false;
+              shutterPathRef.current = '影片畫格';
+              const id = track.getSettings().deviceId;
+              if (id) untrustedPhotoDevices.add(id);
+              canvas = null;
+            }
           } catch (e) {
             console.warn('[camera] takePhoto 失敗，改用影片畫格：', e);
           }
         }
 
         if (!canvas) {
+          /*
+            保護 B：走影片畫格時，串流就是成品畫質。
+            取景可能被壓到 previewLongSide，這裡要先把它拉回感光元件最大，
+            而且要等畫格真的換過去（applyConstraints 比實際生效早 resolve）。
+          */
+          if (capsRef.current) {
+            await applyTrackResolution(track, capsRef.current, false);
+            await waitFrames(2);
+          }
           const w = video.videoWidth;
           const h = video.videoHeight;
           if (!w || !h) throw new Error('相機畫面尚未就緒');
@@ -358,7 +547,13 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
     }
 
     const cv = getCv();
-    const scale = SCAN_CONFIG.detectLongSide / Math.max(vw, vh);
+    const frameStart = performance.now();
+    /*
+      Math.min(1, …)：預覽解析度被壓低之後（見 applyTrackResolution），
+      串流有可能比 detectLongSide 還小 —— 沒有夾值就會變成放大重採樣，
+      白花時間又不會讓邊緣更清楚。
+    */
+    const scale = Math.min(1, SCAN_CONFIG.detectLongSide / Math.max(vw, vh));
     const w = Math.round(vw * scale);
     const h = Math.round(vh * scale);
 
@@ -372,8 +567,11 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
     }
     const fctx = fc.getContext('2d', { willReadFrequently: true });
     if (!fctx) return;
+    const tDraw0 = performance.now();
     fctx.drawImage(video, 0, 0, w, h);
+    const tDraw1 = performance.now();
     const imageData = fctx.getImageData(0, 0, w, h);
+    const tRead1 = performance.now();
 
     // 重複使用同一個 Mat，不要每幀配置記憶體
     if (!frameMatRef.current || frameMatRef.current.cols !== w || frameMatRef.current.rows !== h) {
@@ -388,7 +586,9 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
       模糊度也不在這裡算：它只在四角都合格、快要自動快門時才用得到。
     */
     const useFull = missesRef.current >= SCAN_CONFIG.fullDetectAfterMisses;
+    const tDet0 = performance.now();
     const det = detectDocument(frameMatRef.current, { fast: !useFull });
+    const tDet1 = performance.now();
     missesRef.current = det.points ? 0 : missesRef.current + 1;
     const pts = det.points ? det.points.map((p) => ({ x: p.x / scale, y: p.y / scale })) : null;
     const now = performance.now();
@@ -434,9 +634,33 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
     }
 
     smoothRef.current = smoothPoints(smoothRef.current, pts);
+    const tOvl0 = performance.now();
     drawOverlay(smoothRef.current, autoRef.current ? progress : 0, !problem);
+    const tOvl1 = performance.now();
     setStatus(text);
     setAligned(!problem);
+
+    timingsRef.current.push({
+      draw: tDraw1 - tDraw0,
+      read: tRead1 - tDraw1,
+      detect: tDet1 - tDet0,
+      overlay: tOvl1 - tOvl0,
+      total: tOvl1 - frameStart,
+      full: useFull,
+      hit: Boolean(det.points),
+      at: frameStart,
+    });
+    // 只有開著診斷時才付「算百分位 + setState」的成本，而且最多每 500ms 一次
+    if (debugRef.current && tOvl1 - hudAtRef.current > 500) {
+      hudAtRef.current = tOvl1;
+      setHud({
+        summary: timingsRef.current.summary(),
+        stream: streamInfoRef.current,
+        shutter: shutterPathRef.current,
+        overlay: overlaySizeRef.current,
+        dpr: window.devicePixelRatio || 1,
+      });
+    }
 
     if (autoRef.current && progress >= 1) void capture('auto');
   }, [capture, drawOverlay]);
@@ -546,17 +770,21 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
         exposureCompensation?: { min: number; max: number };
       };
 
-      // 有些裝置會忽略 getUserMedia 的 ideal 值，取得能力之後再要求一次最高畫質
-      if (caps.width?.max && caps.height?.max) {
-        try {
-          await track.applyConstraints({
-            width: { ideal: caps.width.max },
-            height: { ideal: caps.height.max },
-          });
-        } catch {
-          /* 套不上就沿用原本的 */
-        }
-      }
+      /*
+        取景要開多大，取決於按快門時拿得到什麼（見 applyTrackResolution）。
+        先探測拍照管線可不可信，可信才把預覽壓小 —— 那是 Android 上
+        即時對邊跟不上手的主因，但壓錯機器會毀掉存檔畫質。
+      */
+      const settingsDeviceId = track.getSettings().deviceId;
+      const trusted =
+        !(settingsDeviceId && untrustedPhotoDevices.has(settingsDeviceId)) &&
+        (await photoPipelineTrusted(track));
+      if (cancelled) return;
+      photoTrustedRef.current = trusted;
+      shutterPathRef.current = trusted ? 'takePhoto' : '影片畫格';
+      capsRef.current = caps;
+      await applyTrackResolution(track, caps, trusted);
+      if (cancelled) return;
       // 整片白紙會讓自動曝光過亮、字跡變淡
       if (caps.exposureCompensation) {
         try {
@@ -587,6 +815,9 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
 
       const s = track.getSettings();
       setInfo(`${s.width ?? '?'}×${s.height ?? '?'}`);
+      streamInfoRef.current =
+        `${s.width ?? '?'}×${s.height ?? '?'}@${s.frameRate ? Math.round(s.frameRate) : '?'}`;
+      timingsRef.current.clear();
 
       startedAtRef.current = performance.now();
       stableSinceRef.current = startedAtRef.current;
@@ -659,18 +890,30 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
         >
           {status}
         </div>
-        {/* 頁數優先；解析度留在 title 裡，除錯時用得到 */}
+        {/*
+          頁數優先；解析度留在 title 裡，除錯時用得到。
+          長按 800ms 切換效能診斷 —— 現場遇到「這支手機特別慢」時，
+          不必重打網址就能把數字叫出來（另一條是 ?scandebug=1）。
+        */}
         <div
           id="scanner-camera-pagecount"
           title={info}
-          className="px-2 py-1.5 rounded-full bg-black/40 text-white text-caption tabular-nums whitespace-nowrap"
+          onPointerDown={startDebugPress}
+          onPointerUp={cancelDebugPress}
+          onPointerLeave={cancelDebugPress}
+          onPointerCancel={cancelDebugPress}
+          onContextMenu={(e) => e.preventDefault()}
+          className="px-2 py-1.5 rounded-full bg-black/40 text-white text-caption tabular-nums whitespace-nowrap select-none"
         >
           {pageCount > 0 ? `已掃 ${pageCount} 頁` : info}
         </div>
       </div>
 
-      {/* 控制列 */}
-      <div className="absolute bottom-0 inset-x-0 flex items-center justify-center gap-5 sm:gap-8 p-5 sm:p-6">
+      {/*
+        控制列。底部多留 iPhone 的安全區（home indicator 那一條），
+        不留的話快門會壓在橫線上，按下去常常變成滑回主畫面。
+      */}
+      <div className="absolute bottom-0 inset-x-0 flex items-center justify-center gap-5 sm:gap-8 p-5 sm:p-6 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
         <button
           id="scanner-btn-torch"
           onClick={toggleTorch}
@@ -702,33 +945,48 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
         </button>
       </div>
 
-      {/*
-        切換鏡頭。以前只寫「偵測到 N 顆鏡頭」，挑錯了（例如筆電的虛擬鏡頭）也換不了。
-        寫出目前這顆的名稱，老師看得出是不是開錯了。
-      */}
-      {lenses.length > 1 && (
-        <button
-          id="scanner-btn-switch-lens"
-          onClick={() => {
-            const i = lenses.findIndex((l) => l.deviceId === activeDeviceId);
-            setDeviceId(lenses[(i + 1) % lenses.length].deviceId);
-          }}
-          title="切換鏡頭"
-          className="absolute right-3 bottom-24 max-w-[60%] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/55 text-white text-caption backdrop-blur-sm"
-        >
-          <RefreshCw size={12} className="shrink-0" />
-          <span className="truncate">
-            切換鏡頭（{lenses.find((l) => l.deviceId === activeDeviceId)?.label || `共 ${lenses.length} 顆`}）
-          </span>
-        </button>
+      {/* 效能診斷。只有 ?scandebug=1 或長按解析度標籤才會出現 */}
+      {debug && hud && (
+        <ScanDebugHud
+          summary={hud.summary}
+          stream={hud.stream}
+          shutter={hud.shutter}
+          dpr={hud.dpr}
+          overlay={hud.overlay}
+        />
       )}
 
-      {/* 橫持提示：A3 稿紙橫拍才有足夠解析度 */}
-      <div className="absolute left-1/2 -translate-x-1/2 bottom-24 sm:hidden pointer-events-none">
-        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/55 text-white text-caption whitespace-nowrap">
+      {/*
+        控制列上方的兩個小標。排成一欄而不是各自 absolute ——
+        原本「稿紙請橫持拍攝」置中、「切換鏡頭」靠右，都在 bottom-24，
+        手機寬度（390px）兩者直接疊在一起，鏡頭名稱被蓋掉一半。
+      */}
+      <div className="absolute inset-x-3 bottom-24 flex flex-col items-center gap-2 pointer-events-none">
+        {/* 橫持提示：A3 稿紙橫拍才有足夠解析度 */}
+        <span className="sm:hidden inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/55 text-white text-caption whitespace-nowrap">
           <Camera size={12} />
           稿紙請橫持拍攝
         </span>
+        {/*
+          切換鏡頭。以前只寫「偵測到 N 顆鏡頭」，挑錯了（例如筆電的虛擬鏡頭）也換不了。
+          寫出目前這顆的名稱，老師看得出是不是開錯了。
+        */}
+        {lenses.length > 1 && (
+          <button
+            id="scanner-btn-switch-lens"
+            onClick={() => {
+              const i = lenses.findIndex((l) => l.deviceId === activeDeviceId);
+              setDeviceId(lenses[(i + 1) % lenses.length].deviceId);
+            }}
+            title="切換鏡頭"
+            className="pointer-events-auto self-center sm:self-end max-w-full inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/55 text-white text-caption backdrop-blur-sm"
+          >
+            <RefreshCw size={12} className="shrink-0" />
+            <span className="truncate">
+              切換鏡頭（{lenses.find((l) => l.deviceId === activeDeviceId)?.label || `共 ${lenses.length} 顆`}）
+            </span>
+          </button>
+        )}
       </div>
     </div>
   );

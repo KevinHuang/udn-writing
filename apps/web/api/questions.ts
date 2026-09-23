@@ -125,11 +125,21 @@ function toQuestion(r: RawTask): Question {
   };
 }
 
-/** 送回後端時的形狀。只送後端真的收的欄位。 */
-function toTaskPayload(q: Partial<Question>) {
+/**
+ * 送回後端時的形狀。只送後端真的收的欄位。
+ *
+ * ⚠️ 漏欄位不會有編譯錯誤，只會安靜地存不進去 —— `refFolderId` 就漏過：
+ *    表單選了資料夾、state 也有值，但沒送出去，題目一律落在根目錄；
+ *    更糟的是 UPDATE 會無條件寫 `ref_folder_id`，等於每次編輯都把題目
+ *    洗回根目錄，連「移動至…」都失效（它走的是同一支 update）。
+ *    改這裡時對照 apps/api 的 routes/instructor.ts 與 dal/task_helper.ts。
+ */
+export function toTaskPayload(q: Partial<Question>) {
   return {
     title: q.title,
     description: q.content,
+    // 沒有指定資料夾就是根目錄（null）
+    refFolderId: q.folderId ? Number(q.folderId) : null,
     note: q.teacherNotes ?? '',
     pic1: toStoredPic1(q.imageUrl),
     pic_position: q.imagePosition ?? 'after',

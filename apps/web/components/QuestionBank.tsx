@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Folder as FolderIcon, Plus, Copy, MoreVertical, Search, FileText, Layers, Home, ArrowLeft, Archive, Trash2, FolderInput, X, Check, Filter, RotateCcw, Save, AlignLeft, Image as ImageIcon, Upload, Sparkles, Loader2, ListChecks, Users, User, Bot, GraduationCap, BookOpen, Wand2, Info, PenLine, Eye } from 'lucide-react';
+import { Folder as FolderIcon, FolderPlus, ArchiveRestore, Plus, Copy, MoreVertical, Search, FileText, Layers, Home, ArrowLeft, Archive, Trash2, FolderInput, X, Check, RotateCcw, Save, AlignLeft, Image as ImageIcon, Upload, Sparkles, Loader2, ListChecks, Users, User, Bot, GraduationCap, BookOpen, Wand2, Info, PenLine, Eye } from 'lucide-react';
 import { Question, QuestionType, Folder, TargetGrade, QuestionSource } from '../types';
 import {
   TARGET_GRADES,
@@ -16,6 +16,7 @@ import { StudentQuestionPreview } from './StudentQuestionPreview';
 import { QuestionPreviewModal } from './QuestionPreviewModal';
 import { analyzeImageContent, generateGradingRubric } from '../api/ai';
 import { isAdmin, type CurrentUser } from '../lib/access';
+import { ApiError } from '../api/client';
 import { ConfirmDialog } from './ConfirmDialog';
 import { PageHeader, PAGE_CONTAINER } from './PageHeader';
 import { AVAILABLE_AI_MODELS } from '../mockData';
@@ -352,6 +353,12 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
 
   // Edit/Create State
   const [editingId, setEditingId] = useState<string | null>(null);
+  /** 正在編輯的題目屬於哪個題庫。存檔要原樣帶回去，不然共同題目會掉到個人題庫 */
+  const [editingType, setEditingType] = useState<QuestionType | null>(null);
+  /** 存檔中：按鈕停用，避免連點建立兩題 */
+  const [isSaving, setIsSaving] = useState(false);
+  /** 存檔失敗的原因。有值就留在表單顯示，不要靜默跳回清單 */
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [formData, setFormData] = useState<QuestionFormState>(emptyForm());
   
   // Image Upload State
@@ -380,6 +387,8 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
   // Initialize form when entering create view
   const initCreateForm = () => {
       setEditingId(null);
+      setEditingType(null);
+      setSaveError(null);
       setFormData(emptyForm(currentFolderId || ''));
       setImagePreview(null);
       setAiImageAnalysis(null);
@@ -389,6 +398,8 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
 
   const initEditForm = (q: Question) => {
       setEditingId(q.id);
+      setEditingType(q.type);
+      setSaveError(null);
       setFormData({
           ...emptyForm(q.folderId || ''),
           title: q.title,
@@ -484,13 +495,24 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
       setImageError(null);
       setShowRubric(false);
       setEditingId(null);
+      setEditingType(null);
+      setSaveError(null);
       setView('LIST');
   };
 
-  const handleSaveQuestion = () => {
-      if (!isQuestionValid(formData)) return;
+  /**
+   * 存檔。
+   *
+   * ⚠️ 這裡原本是 `void questionOps.create(...)` 之後**無條件**離開表單。
+   *    api/client.ts 失敗時是 throw，所以 403／500 只會進 console ——
+   *    畫面照樣回清單，題目卻不在那裡，使用者看到的就是「存不了檔」。
+   *    現在等結果：成功才離開，失敗留在表單並把原因寫出來。
+   */
+  const handleSaveQuestion = async () => {
+      if (!isQuestionValid(formData) || isSaving) return;
+      setSaveError(null);
+      setIsSaving(true);
 
-      const targetFolder = folders.find(f => f.id === formData.folderId);
       // 移植進來的欄位，新增與編輯共用同一份
       const portedFields = {
           teacherNotes: formData.teacherNotes || undefined,
@@ -498,44 +520,56 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
           sources: formData.sources,
           imagePosition: formData.imagePosition,
       };
-      
-      if (editingId) {
-          const newFolderId = formData.folderId || null;
 
-          void questionOps.update(editingId, {
-              title: formData.title,
-              content: formData.content,
-              folderId: newFolderId,
-              gradeLevel: formData.gradeLevel,
-              gradingCriteria: formData.gradingCriteria,
-              maxScore: formData.maxScore,
-              imageUrl: imagePreview || undefined,
-              aiImageDescription: aiImageAnalysis || undefined,
-              preferredAiModel: formData.preferredAiModel,
-              ...portedFields,
-          });
-
-      } else {
-          const newQuestion: Question = {
-              id: `q-new-${Date.now()}`,
-              title: formData.title,
-              content: formData.content,
-              type: activeTab,
-              folderId: formData.folderId || null,
-              folderName: targetFolder ? targetFolder.name : '未分類',
-              gradeLevel: '一般',
-              maxScore: formData.maxScore,
-              gradingCriteria: formData.gradingCriteria,
-              isArchived: false,
-              imageUrl: imagePreview || undefined,
-              aiImageDescription: aiImageAnalysis || undefined,
-              preferredAiModel: formData.preferredAiModel,
-              ...portedFields,
-          };
-
-          void questionOps.create(newQuestion);
+      try {
+          if (editingId) {
+              await questionOps.update(editingId, {
+                  title: formData.title,
+                  content: formData.content,
+                  folderId: formData.folderId || null,
+                  /*
+                    type 一定要帶。payload 的 shared 是從它算出來的，
+                    漏了就變成 false —— 管理人員編輯共同題目，存檔後會掉到個人題庫。
+                  */
+                  type: editingType ?? activeTab,
+                  gradeLevel: formData.gradeLevel,
+                  gradingCriteria: formData.gradingCriteria,
+                  maxScore: formData.maxScore,
+                  imageUrl: imagePreview || undefined,
+                  aiImageDescription: aiImageAnalysis || undefined,
+                  preferredAiModel: formData.preferredAiModel,
+                  ...portedFields,
+              });
+          } else {
+              const newQuestion: Question = {
+                  id: `q-new-${Date.now()}`,
+                  title: formData.title,
+                  content: formData.content,
+                  type: activeTab,
+                  folderId: formData.folderId || null,
+                  gradeLevel: '一般',
+                  maxScore: formData.maxScore,
+                  gradingCriteria: formData.gradingCriteria,
+                  isArchived: false,
+                  imageUrl: imagePreview || undefined,
+                  aiImageDescription: aiImageAnalysis || undefined,
+                  preferredAiModel: formData.preferredAiModel,
+                  ...portedFields,
+              };
+              await questionOps.create(newQuestion);
+          }
+          handleLeaveForm();
+      } catch (e) {
+          // 403 的原因很具體（共同題庫只有管理人員能動），值得講清楚
+          const status = e instanceof ApiError ? e.status : 0;
+          setSaveError(
+              status === 403
+                  ? '沒有權限編輯共同題庫。共同題目只有聯合報管理人員能新增或修改。'
+                  : `儲存失敗：${e instanceof Error ? e.message : '請稍後再試'}`,
+          );
+      } finally {
+          setIsSaving(false);
       }
-      handleLeaveForm();
   };
 
   useEffect(() => {
@@ -559,6 +593,15 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
     [folders, questions, includeArchived],
   );
 
+  /**
+   * 題目所在資料夾的名字。
+   *
+   * ⚠️ 不要用 `q.folderName` —— 後端回來的題目沒有這個欄位（見 api/questions.ts
+   *    的 toQuestion），所以重新整理之後標籤永遠不見。資料夾名字是查出來的。
+   */
+  const folderNameOf = (q: Question): string | null =>
+    q.folderId ? folders.find(f => f.id === q.folderId)?.name ?? null : null;
+
   // Handle Search Logic
   const visibleFolders = !searchTerm.trim() 
     ? folders.filter(f => {
@@ -577,7 +620,7 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
         return matchesTab && matchesArchive && (
             q.title.toLowerCase().includes(term) ||
             q.content.toLowerCase().includes(term) ||
-            (q.folderName && q.folderName.toLowerCase().includes(term)) ||
+            (folderNameOf(q)?.toLowerCase().includes(term) ?? false) ||
             (q.gradeLevel && q.gradeLevel.toLowerCase().includes(term))
         );
     }
@@ -593,7 +636,6 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
       id: Math.random().toString(36).substr(2, 9),
       type: QuestionType.PERSONAL,
       folderId: null,
-      folderName: '未分類',
       title: `${q.title} (複製)`,
       isArchived: false
     };
@@ -862,7 +904,7 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
                                         src={imagePreview}
                                         alt={aiImageAnalysis || '題目配圖預覽'}
                                         referrerPolicy="no-referrer"
-                                        className="w-full max-h-56 object-cover"
+                                        className="w-full max-h-56 object-contain"
                                     />
                                     <button
                                         id="questionbank-create-btn-removeimage"
@@ -1041,6 +1083,7 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
                         </Field>
                     </div>
 
+                    <div className="lg:sticky lg:top-6 space-y-4">
                     <StudentQuestionPreview
                       data={{
                         title: formData.title,
@@ -1053,31 +1096,49 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
                         imagePosition: formData.imagePosition,
                       }}
                     />
-                </div>
+                        {/* ── 操作列 ────────────────────────────────────── */}
+                        {/*
+                          儲存放在學生端預覽的正下方，跟著預覽一起釘在畫面上：
+                          老師確認完學生看到的樣子，手就在按鈕旁邊。
 
-                {/* ── 操作列 ────────────────────────────────────── */}
-                <div className="lg:col-span-2 flex flex-wrap items-center justify-end gap-3 bg-card border border-border rounded-brand shadow-sm px-5 py-4">
-                    {!canSave && (
-                        <span className="mr-auto text-caption text-text-muted flex items-center gap-1.5">
-                            <Info size={13} className="shrink-0" />
-                            題目名稱、題說與適用階段填齊後才能儲存
-                        </span>
-                    )}
-                    <button
-                      id="questionbank-create-btn-cancel"
-                      onClick={handleLeaveForm}
-                      className="px-6 py-2.5 rounded-brand text-ui text-text-secondary hover:bg-surface-soft hover:text-text-primary transition-colors whitespace-nowrap"
-                    >
-                        取消
-                    </button>
-                    <button
-                      id="questionbank-create-btn-save"
-                      onClick={handleSaveQuestion}
-                      disabled={!canSave}
-                      className="px-7 py-2.5 rounded-brand text-ui text-on-accent bg-primary hover:bg-primary/90 shadow-lg shadow-primary/25 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap"
-                    >
-                        <Save size={17} className="shrink-0" /> {editingId ? '儲存修改' : '建立題目'}
-                    </button>
+                          ⚠️ 先前是放在格線最後一列、用 sticky bottom-0 —— 沒有用。
+                             sticky 的可移動範圍是它自己的格線區域，而那一列的高度
+                             就等於按鈕本身，等於完全沒有空間可以固定（使用者回報
+                             捲到底也看不到儲存鈕）。
+                             窄畫面沒有分欄，才用 sticky 釘在視窗底部。
+                        */}
+                    <div className="sticky bottom-0 z-20 lg:static flex flex-wrap items-center justify-end gap-3 bg-card border border-border rounded-brand shadow-lift px-5 py-4">
+                        {saveError && (
+                            <span className="mr-auto text-caption text-danger-600 flex items-center gap-1.5">
+                                <Info size={13} className="shrink-0" />
+                                {saveError}
+                            </span>
+                        )}
+                        {!canSave && !saveError && (
+                            <span className="mr-auto text-caption text-text-muted flex items-center gap-1.5">
+                                <Info size={13} className="shrink-0" />
+                                題目名稱、題說與適用階段填齊後才能儲存
+                            </span>
+                        )}
+                        <button
+                          id="questionbank-create-btn-cancel"
+                          onClick={handleLeaveForm}
+                          className="px-6 py-2.5 rounded-brand text-ui text-text-secondary hover:bg-surface-soft hover:text-text-primary transition-colors whitespace-nowrap"
+                        >
+                            取消
+                        </button>
+                        <button
+                          id="questionbank-create-btn-save"
+                          onClick={handleSaveQuestion}
+                          disabled={!canSave || isSaving}
+                          className="px-7 py-2.5 rounded-brand text-ui text-on-accent bg-primary hover:bg-primary/90 shadow-lg shadow-primary/25 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap"
+                        >
+                            {isSaving
+                              ? <><Loader2 size={17} className="shrink-0 animate-spin" /> 儲存中…</>
+                              : <><Save size={17} className="shrink-0" /> {editingId ? '儲存修改' : '儲存題目'}</>}
+                        </button>
+                    </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1188,9 +1249,11 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
                           ? 'bg-text-primary text-surface border-text-primary shadow-md' 
                           : 'bg-card text-text-secondary border-border-strong hover:bg-surface-soft hover:shadow-sm'
                   }`}
-                  title="顯示封存"
+                  title={showArchived ? '隱藏已封存的題目' : '顯示已封存的題目'}
+                  aria-pressed={showArchived}
               >
-                  {showArchived ? <Check size={20} /> : <Filter size={20} />}
+                  {/* 漏斗是「篩選」的通用圖示，看不出跟封存有關；箱子才是封存 */}
+                  {showArchived ? <ArchiveRestore size={20} /> : <Archive size={20} />}
               </button>
               )}
 
@@ -1202,7 +1265,7 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
                   className="flex-1 md:flex-none p-3 bg-card hover:bg-surface-soft border border-border-strong text-text-secondary hover:text-primary rounded-2xl transition-all shadow-sm hover:shadow-md flex items-center justify-center" 
                   title="新增資料夾"
               >
-                  <FolderIcon size={20} />
+                  <FolderPlus size={20} />
               </button>
               )}
 
@@ -1426,9 +1489,9 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
                                         
                                         <div className="flex items-center justify-between pt-2.5 sm:pt-4 border-t border-secondary/5 mt-auto">
                                             <div className="flex items-center gap-1 sm:gap-2 text-caption font-normal text-text-muted">
-                                                {q.folderName && (
+                                                {folderNameOf(q) && (
                                                     <span className="flex items-center gap-1 sm:gap-1.5 bg-surface/40 px-1 sm:px-2 py-0.5 sm:py-1 rounded-md">
-                                                        <FolderIcon size={9} className="sm:size-3" /> {q.folderName}
+                                                        <FolderIcon size={9} className="sm:size-3" /> {folderNameOf(q)}
                                                     </span>
                                                 )}
                                             </div>

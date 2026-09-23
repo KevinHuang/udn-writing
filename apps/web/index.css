@@ -287,6 +287,16 @@
   --shadow-tint-far:   rgba(23, 21, 15, .10);
   --shadow-tint-glass: rgba(23, 21, 15, .08);
   --shadow-tint-lift:  rgba(23, 21, 15, .14);
+
+  /* 老師在評語裡標的螢光筆底色與文字色（見 lib/feedbackMarks.ts）。
+     與陰影同理，這幾個不是 Tailwind token，不需要生出 utility。 */
+  --hl-yellow: #FCEFA6;
+  --hl-green:  #CCEBC6;
+  --hl-blue:   #C7E4F2;
+  --hl-pink:   #F8D3DF;
+  --tx-red:    #B3261E;
+  --tx-orange: #9A4B00;
+  --tx-green:  #256029;
 }
 
 /* ============================================================
@@ -294,6 +304,15 @@
    選擇器用 html.dark（0,1,1）壓過 @theme 送進 :root 的（0,1,0）。
    ============================================================ */
 html.dark {
+  /* 標色在碑拓底下要換一組：底色壓暗到能襯深色文字、文字色提亮才看得見 */
+  --hl-yellow: #5C4A12;
+  --hl-green:  #23461F;
+  --hl-blue:   #123A4C;
+  --hl-pink:   #4E2131;
+  --tx-red:    #FF9B93;
+  --tx-orange: #F2A65A;
+  --tx-green:  #8BD49B;
+
   --color-ink-50:  #161412;
   --color-ink-100: #1F1C19;
   --color-ink-200: #2E2A26;
@@ -600,3 +619,34 @@ html.dark {
   --tw-prose-th-borders:    var(--color-border-strong);
   --tw-prose-td-borders:    var(--color-border);
 }
+
+/* ============================================================
+   評語的標色（螢光筆、文字顏色）
+   ------------------------------------------------------------
+   老師在批改評語的編輯器裡標的，存成 markdown 裡的行內 HTML：
+     <mark class="hl-yellow">…</mark>  <span class="tx-red">…</span>
+   學生端與教師端都經過 components/Markdown.tsx 的白名單過濾，
+   只有這幾個 class 進得來（見 lib/feedbackMarks.ts）。
+
+   螢光筆一律配深色文字、文字色一律吃 token —— 兩者在碑拓模式各自換值，
+   不要在這裡寫死成只適用淺色的顏色。
+   ============================================================ */
+mark.hl-yellow,
+mark.hl-green,
+mark.hl-blue,
+mark.hl-pink {
+  background-color: var(--hl-yellow);
+  color: var(--color-text-primary);
+  padding: 0.05em 0.15em;
+  border-radius: 0.2em;
+  /* typography 會給 mark 自己的顏色，這裡要壓過去 */
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+mark.hl-green { background-color: var(--hl-green); }
+mark.hl-blue  { background-color: var(--hl-blue); }
+mark.hl-pink  { background-color: var(--hl-pink); }
+
+span.tx-red    { color: var(--tx-red); }
+span.tx-orange { color: var(--tx-orange); }
+span.tx-green  { color: var(--tx-green); }

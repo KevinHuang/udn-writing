@@ -97,3 +97,18 @@ export function cityChipsOf(counts: Record<string, number>): string[] {
     ...(counts[UNASSIGNED_GROUP] ? [UNASSIGNED_GROUP] : []),
   ];
 }
+
+/**
+ * 「整間學校」這個選擇要怎麼表示。
+ *
+ * 成績管理原本只認班級 id，加上「全校總覽」之後多了一種範圍。
+ * 與其另外開一個 state（兩個值要同步，遲早會有一邊忘了更新），
+ * 用同一個字串表示：班級就是 id，整間學校是 `school:<學校分組的 key>`。
+ */
+const SCHOOL_PREFIX = 'school:';
+
+export const schoolScopeValue = (groupKey: string): string => `${SCHOOL_PREFIX}${groupKey}`;
+
+/** 是整間學校的話回傳學校分組的 key，否則 null（代表那是班級 id） */
+export const schoolScopeKey = (scope: string | null): string | null =>
+  scope?.startsWith(SCHOOL_PREFIX) ? scope.slice(SCHOOL_PREFIX.length) : null;

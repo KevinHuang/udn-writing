@@ -7,13 +7,15 @@ import {
   cityCountsOf,
   cityChipsOf,
   UNASSIGNED_GROUP,
+  schoolScopeValue,
 } from '../lib/courseGroups';
 
 interface CoursePickerModalProps {
   /** 可選的班級。已經過學期與身分篩選，這裡不再過濾 */
   courses: Course[];
-  selectedCourseId: string | null;
-  onSelect: (courseId: string) => void;
+  /** 目前選到的範圍：班級 id，或 schoolScopeValue() 產生的「整間學校」 */
+  selectedScope: string | null;
+  onSelect: (scope: string) => void;
   onClose: () => void;
 }
 
@@ -27,7 +29,7 @@ interface CoursePickerModalProps {
  */
 export const CoursePickerModal: React.FC<CoursePickerModalProps> = ({
   courses,
-  selectedCourseId,
+  selectedScope,
   onSelect,
   onClose,
 }) => {
@@ -145,7 +147,10 @@ export const CoursePickerModal: React.FC<CoursePickerModalProps> = ({
                     差別（使用者回報「分色太接近」）。學校列捲動時釘在最上面，
                     班級一多（實測一所學校 16 班）才不會忘記自己在看哪一所。
                   */}
-                  <div className="sticky top-0 z-10 flex items-center gap-2 rounded-xl border border-primary/30 border-l-4 border-l-primary bg-primary/10 px-3 py-2 shadow-sm">
+                  {/* 底色一定要**實色**：sticky 的橫帶半透明時，底下捲過去的班級會透出來，
+                      兩層字疊在一起（使用者回報看不清楚）。primary-50 是實色，
+                      而且在碑拓模式會換成深藍，不必另外處理。 */}
+                  <div className="sticky top-0 z-10 flex items-center gap-2 rounded-xl border border-primary-200 border-l-4 border-l-primary bg-primary-50 px-3 py-2 shadow-sm">
                     <School size={15} className="text-primary shrink-0" />
                     <h3 className="text-ui font-bold text-primary truncate">
                       {group.label}
@@ -157,8 +162,41 @@ export const CoursePickerModal: React.FC<CoursePickerModalProps> = ({
 
                   {/* 左邊那條線把班級收在學校底下，層級看得出來 */}
                   <ul className="mt-2 ml-3 flex flex-col gap-1.5 border-l-2 border-border pl-3">
+                    {/*
+                      全校：看整間學校的總覽（各班一列）。
+                      放在班級清單的第一個 —— 老師的視線本來就從上往下找。
+                    */}
+                    <li>
+                      <button
+                        ref={selectedScope === schoolScopeValue(group.key) ? selectedRef : undefined}
+                        id={`course-picker-btn-school-${group.key}`}
+                        onClick={() => {
+                          onSelect(schoolScopeValue(group.key));
+                          onClose();
+                        }}
+                        className={`w-full text-left px-3 py-2.5 rounded-brand border shadow-sm transition-all flex items-center gap-3 ${
+                          selectedScope === schoolScopeValue(group.key)
+                            ? 'bg-primary/10 border-primary text-primary'
+                            : 'bg-card border-border hover:border-primary/50 hover:shadow-md text-text-primary'
+                        }`}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="text-body">全校總覽</span>
+                          <span className="block text-caption text-text-secondary truncate">
+                            {group.courses.length} 個班級一起看
+                          </span>
+                        </span>
+                        <span className="shrink-0 flex items-center gap-1 text-caption text-text-secondary tabular-nums">
+                          <Users size={12} />
+                          {group.courses.reduce((n, c) => n + (c.studentCount ?? 0), 0)}
+                        </span>
+                        {selectedScope === schoolScopeValue(group.key) && (
+                          <Check size={16} className="shrink-0 text-primary" />
+                        )}
+                      </button>
+                    </li>
                     {group.courses.map((course) => {
-                      const isSelected = course.id === selectedCourseId;
+                      const isSelected = course.id === selectedScope;
                       return (
                         <li key={course.id}>
                           <button

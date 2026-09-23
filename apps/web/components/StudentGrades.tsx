@@ -17,6 +17,7 @@ import { levelStyle, MAX_LEVEL } from '../lib/scoring';
 import { semesterLabel } from '../lib/semester';
 import { SemesterSelect } from './SemesterSelect';
 import { SHOW_CATEGORY_SCORES } from '../lib/features';
+import { stripFeedbackMarks } from '../lib/feedbackMarks';
 import { 
   Radar, 
   RadarChart, 
@@ -203,7 +204,9 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
     const children: Paragraph[] = [];
 
     const createParagraphs = (text: string) => {
-      return text.split('\n').map(line => new Paragraph({
+      // 老師標的螢光筆與文字色是行內 HTML，Word 這邊是逐行塞純文字 ——
+      // 不剝掉的話文件裡會出現 <mark class="hl-yellow"> 這種標籤
+      return stripFeedbackMarks(text).split('\n').map(line => new Paragraph({
         children: [new TextRun({ text: line })],
         spacing: { after: 120 }
       }));
@@ -279,8 +282,8 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
           heading: HeadingLevel.HEADING_2,
           spacing: { before: 240, after: 120 }
         }),
-        // ⚠️ 內容是 markdown。Word 匯出目前**照原樣輸出**，
-        //    所以文件裡會看得到 ### 與 -。要漂亮的話得把 markdown 轉成
+        // ⚠️ 內容是 markdown。標色的標籤會被剝掉（見 createParagraphs），
+        //    但 ### 與 - 仍會照原樣輸出。要漂亮的話得把 markdown 轉成
         //    docx 的段落與清單，那是另一件事（見 artifacts/findings.md）。
         ...createParagraphs(displayData.result.feedback)
       );

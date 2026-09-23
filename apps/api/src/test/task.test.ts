@@ -77,6 +77,62 @@ describe('題目：migration 002 的五個欄位', () => {
     assert.equal(row.pic1_description, '換了');
   });
 
+  /*
+    資料夾是前端最容易漏送的一欄：表單選了、state 也有值，但 payload 忘了帶，
+    題目就一律落在根目錄；更糟的是 UPDATE 無條件寫 ref_folder_id，
+    等於每次編輯都把題目洗回根目錄，連「移動至…」都失效。
+    API 這一層原本完全沒測到，所以前端漏送也沒人發現。
+  */
+  test('建立時指定的資料夾真的存進 ref_folder_id', async () => {
+    const { cookie } = await asTeacher();
+    const folder = await (await req(srv, '/service/instructor/folders', cookie,
+      { method: 'POST', ...json({ name: '第一次段考', parentId: null, shared: false }) })).json();
+
+    const created = await (await req(srv, '/service/instructor/tasks', cookie,
+      { method: 'POST', ...json({ ...full, refFolderId: Number(folder.id) }) })).json();
+
+    const row = await rawDb.one(`SELECT ref_folder_id::text FROM task WHERE id = $1`, [created.id]);
+    assert.equal(row.ref_folder_id, String(folder.id));
+  });
+
+  test('更新時帶著同一個資料夾，不會被洗回根目錄', async () => {
+    const { cookie } = await asTeacher();
+    const folder = await (await req(srv, '/service/instructor/folders', cookie,
+      { method: 'POST', ...json({ name: '寫作社講義', parentId: null, shared: false }) })).json();
+    const created = await (await req(srv, '/service/instructor/tasks', cookie,
+      { method: 'POST', ...json({ ...full, refFolderId: Number(folder.id) }) })).json();
+
+    await req(srv, `/service/instructor/tasks/${created.id}`, cookie,
+      { method: 'PUT', ...json({ ...full, refFolderId: Number(folder.id), title: '改個標題' }) });
+
+    const row = await rawDb.one(
+      `SELECT title, ref_folder_id::text FROM task WHERE id = $1`, [created.id]);
+    assert.equal(row.title, '改個標題');
+    assert.equal(row.ref_folder_id, String(folder.id));
+  });
+
+  test('移動：更新成另一個資料夾就會搬過去；帶 null 回到根目錄', async () => {
+    const { cookie } = await asTeacher();
+    const a = await (await req(srv, '/service/instructor/folders', cookie,
+      { method: 'POST', ...json({ name: 'A', parentId: null, shared: false }) })).json();
+    const b = await (await req(srv, '/service/instructor/folders', cookie,
+      { method: 'POST', ...json({ name: 'B', parentId: null, shared: false }) })).json();
+    const created = await (await req(srv, '/service/instructor/tasks', cookie,
+      { method: 'POST', ...json({ ...full, refFolderId: Number(a.id) }) })).json();
+
+    await req(srv, `/service/instructor/tasks/${created.id}`, cookie,
+      { method: 'PUT', ...json({ ...full, refFolderId: Number(b.id) }) });
+    assert.equal(
+      (await rawDb.one(`SELECT ref_folder_id::text FROM task WHERE id = $1`, [created.id])).ref_folder_id,
+      String(b.id));
+
+    await req(srv, `/service/instructor/tasks/${created.id}`, cookie,
+      { method: 'PUT', ...json({ ...full, refFolderId: null }) });
+    assert.equal(
+      (await rawDb.one(`SELECT ref_folder_id FROM task WHERE id = $1`, [created.id])).ref_folder_id,
+      null);
+  });
+
   test('沒帶的欄位存成 NULL，不是空字串', async () => {
     const { cookie } = await asTeacher();
     const { writingType, maxScore, preferredAiModel, pic1Description, ...minimal } = full;

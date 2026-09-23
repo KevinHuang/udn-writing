@@ -48,6 +48,27 @@ export const SCAN_CONFIG = {
    */
   previewWidth: 1920,
   previewHeight: 1080,
+  /**
+   * 取景串流的**長邊**目標（只有拍照走 takePhoto 的裝置才會套用）。
+   *
+   * ⚠ 實際要求的寬高要**照感光元件的長寬比算出來**，不可以直接寫死 1920×1080。
+   *   感光元件多半是 4:3，預覽若設成 16:9，DocumentScannerModal 那條
+   *   「高解析照片偵測失敗時沿用預覽框到的四角」的救援路徑會永遠不成立
+   *   （它要求兩者長寬比相差 2% 以內）—— 使用者預覽裡看得到綠框，
+   *   按下快門卻被丟去手動拖四角。4:3 的機器套出來是 1440×1080。
+   *
+   * 1440 是取景與偵測夠用的下限：偵測本來就只吃 detectLongSide(512) 的縮圖，
+   * 而畫面上給人看的取景框再大也沒有意義。
+   */
+  previewLongSide: 1440,
+  /**
+   * takePhoto() 的成品長邊至少要有 previewLongSide 的幾倍，才算「拍照管線可信」。
+   * 有些 Android 的 ImageCapture 其實只是回傳預覽畫格 —— 那種裝置不能壓預覽，
+   * 否則存檔畫質會從 12M 掉到 1.5M（見 ScannerCamera 的 capture）。
+   */
+  trustedPhotoRatio: 1.5,
+  /** 事前探測：getPhotoCapabilities 回報的最大寬度要 ≥ 這個值才算可信 */
+  trustedPhotoMinWidth: 2500,
   /** 支援 ImageCapture 時用 takePhoto() 取得感光元件全解析度 */
   useTakePhoto: true,
   takePhotoTimeoutMs: 6000,

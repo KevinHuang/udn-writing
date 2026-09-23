@@ -1,8 +1,22 @@
 
-import React, { useState } from 'react';
-import { ArrowLeft, Save, CheckCircle2, PenTool, Highlighter, FileText, Layout, PanelLeftClose, PanelLeftOpen, BookOpen, Image as ImageIcon, X, Sparkles, Bot, ChevronDown, RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ArrowLeft, Save, CheckCircle2, PenTool, Highlighter, FileText, Layout, PanelLeftClose, PanelLeftOpen, BookOpen, Image as ImageIcon, X, Sparkles, Bot, ChevronDown, RotateCcw, Send, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Submission, GradingResult } from '../types';
-import { Markdown } from './Markdown';
+/*
+  評語編輯器延後載入。它背後是 TipTap／ProseMirror（兩百多 KB），
+  而且在 import 當下就要碰 document —— 靜態匯入會讓沒有 DOM 的環境
+  （node:test 跑的路由測試）在載入模組時就炸掉，學生端也得白白下載這包。
+*/
+const FeedbackEditor = React.lazy(() =>
+  import('./FeedbackEditor').then((m) => ({ default: m.FeedbackEditor })),
+);
+import { useSplitPane, MIN_PCT, MAX_PCT } from '../lib/useSplitPane';
+
+/** 左右比例記在哪、預設多少（左欄 60%：稿紙比評語面板寬一點） */
+const SPLIT_KEY = 'udn.grading.split';
+const DEFAULT_SPLIT = 60;
+/** 桌機版面的分界，與 Tailwind 的 lg 一致 */
+const DESKTOP_MIN_WIDTH = 1024;
 import { imageUrlOf } from '../api/ai';
 import { MAX_LEVEL, MIN_LEVEL, toLevel } from '../lib/scoring';
 import { StatusBadge } from './StatusBadge';
@@ -45,6 +59,8 @@ interface GradingEditorProps {
   onSave: (submissionId: string, result: GradingResult, shouldBack?: boolean) => void;
   onSelectAiModel?: (model: string) => void;
   onResetGrading?: (submissionId: string) => void;
+  /** 單筆發還。改完一位就先讓他看到，不必等整班改完 */
+  onPublish?: (submissionId: string) => void;
   /**
    * 用 AI 批改這一篇。**會直接存進資料庫**（後端寫一筆 is_ai = true 的版本），
    * 所以按完不需要再按儲存。失敗時要 reject，這裡才跳得出錯誤訊息。
@@ -72,6 +88,7 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
   onSave,
   onSelectAiModel,
   onResetGrading,
+  onPublish,
   onAutoGrade,
   marks,
   onToggleMark,
@@ -80,13 +97,6 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
   onNextStudent,
 }) => {
   const [result, setResult] = useState<GradingResult | undefined>(submission.result);
-  /**
-   * 評語是「預覽 markdown」還是「編輯原始碼」。
-   *
-   * 預設預覽 —— 老師多數時候只是看 AI 寫了什麼，直接給一個裝著 ### 與 **
-   * 的 textarea 反而難讀。點一下才切成編輯，失焦回到預覽。
-   */
-  const [isEditingFeedback, setIsEditingFeedback] = useState(false);
   /**
    * 上次存檔時的內容。用來判斷「還沒存」——
    * 老師改了分數卻忘了存，按下一位就沒了，按鈕要看得出差別。
@@ -104,6 +114,36 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
 
   // Desktop View State: Toggle Essay Visibility
   const [isEssayVisible, setIsEssayVisible] = useState(true);
+  /**
+   * 左右兩欄的比例（左欄佔幾 %）。拖過一次就記在這台裝置上，
+   * 下次打開批改頁就是老師自己調好的比例（見 lib/useSplitPane.ts）。
+   */
+  const [splitPct, setSplitPct, resetSplit] = useSplitPane(SPLIT_KEY, DEFAULT_SPLIT);
+  const dragging = useRef(false);
+  const [isDragging, setIsDragging] = useState(false);
+  /** 量測拖曳位置用的容器（左欄＋分隔線＋右欄） */
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  /**
+   * 手機／平板走分頁切換，不套比例。
+   * 用 matchMedia 而不是只看一次視窗寬度 —— 轉向或拉動視窗時要跟著變。
+   */
+  const [isMobileLayout, setIsMobileLayout] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth < DESKTOP_MIN_WIDTH,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${DESKTOP_MIN_WIDTH - 1}px)`);
+    const onChange = (e: MediaQueryListEvent | MediaQueryList) => setIsMobileLayout(e.matches);
+    onChange(mq);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  /** 拖曳分隔線：算出滑鼠在容器裡的百分比位置 */
+  const onSplitPointerMove = (clientX: number) => {
+    const box = workspaceRef.current?.getBoundingClientRect();
+    if (!box || box.width === 0) return;
+    setSplitPct(((clientX - box.left) / box.width) * 100);
+  };
 
   const isGraded = submission.status === 'Graded';
   const isPublished = submission.status === 'Published';
@@ -300,6 +340,41 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
             )}
 
             {/*
+              發還：只有「已批改、還沒發還」的時候才有意義。
+              已發還的不再顯示（右邊會改成一個狀態標籤），避免重複發還。
+
+              未存的改動要先存 —— 發還的是資料庫裡那一版，
+              直接發還會把老師剛改的評語留在畫面上、卻發出舊的那份。
+            */}
+            {isGraded && onPublish && (
+              <button
+                  id="gradingeditor-btn-publish"
+                  onClick={() => onPublish(submission.id)}
+                  disabled={isDirty}
+                  className={`shrink-0 whitespace-nowrap flex items-center gap-1 md:gap-2 px-2 md:px-4 py-2 md:py-2.5 rounded-xl text-body font-bold transition-all active:scale-95 ${
+                    isDirty
+                      ? 'bg-primary/10 text-primary/60 border border-primary/20 cursor-not-allowed'
+                      : 'bg-primary text-on-accent hover:bg-primary/90 shadow-lg shadow-primary/25'
+                  }`}
+                  title={isDirty ? '有未存檔的修改，請先存檔再發還' : '把這一份發還給學生，學生就看得到分數與評語'}
+              >
+                  <Send size={14} className="md:w-[18px] md:h-[18px]" />
+                  <span>發還</span>
+              </button>
+            )}
+
+            {isPublished && (
+              <span
+                id="gradingeditor-published-tag"
+                title="學生已經看得到這份成績與評語"
+                className="shrink-0 whitespace-nowrap flex items-center gap-1 md:gap-2 px-2 md:px-4 py-2 md:py-2.5 rounded-xl text-body font-bold bg-success-50 text-success-700 border border-success-200"
+              >
+                  <CheckCircle2 size={14} className="md:w-[18px] md:h-[18px]" />
+                  <span>已發還</span>
+              </span>
+            )}
+
+            {/*
               已發還的也要能存 —— 右邊的欄位本來就編輯得動，
               少了這顆按鈕，老師改完評語會找不到地方存，改的東西直接消失。
             */}
@@ -382,21 +457,28 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
       </div>
 
       {/* Main Workspace */}
-      <div className="flex-1 flex overflow-hidden relative">
+      <div ref={workspaceRef} className="flex-1 flex overflow-hidden relative">
         
         {/* Left: Essay Paper View - Collapsible on Desktop */}
-        <div className={`
-            bg-surface overflow-hidden flex flex-col transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]
+        {/*
+          桌機的寬度走 flexBasis（老師拖出來的比例），不是寫死的 flex-[3]。
+          拖曳中關掉 transition —— 否則每次 setState 都補一段 500ms 動畫，
+          拖起來像在拉橡皮筋。
+        */}
+        <div
+          style={isEssayVisible && !isMobileLayout ? { flexBasis: `${splitPct}%` } : undefined}
+          className={`
+            bg-surface overflow-hidden flex flex-col ${isDragging ? '' : 'transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]'}
             ${mobileTab === 'essay' ? 'flex-1' : 'hidden'} 
             ${isEssayVisible 
-                ? 'lg:flex lg:flex-[3] lg:opacity-100 lg:translate-x-0' 
+                ? 'lg:flex lg:flex-grow-0 lg:flex-shrink-0 lg:opacity-100 lg:translate-x-0' 
                 : 'lg:flex-none lg:w-0 lg:opacity-0 lg:-translate-x-10'}
         `}>
-            <div className="flex-1 overflow-y-auto p-4 md:p-6 xl:p-10 flex flex-col items-center">
+            <div className="flex-1 overflow-y-auto p-3 md:p-4 flex flex-col items-center">
                 
                 {/* Assignment Prompt Card */}
                 {(assignmentContent || referenceImageUrl) && (
-                    <div className={`w-full ${!result && !isGrading ? 'max-w-5xl' : 'max-w-[840px]'} mb-6 bg-primary/5 border border-primary/10 rounded-2xl p-6 shadow-sm transition-all duration-500`}>
+                    <div className={`w-full mb-6 bg-primary/5 border border-primary/10 rounded-2xl p-6 shadow-sm transition-all duration-500`}>
                         <div className="flex items-center gap-2 mb-3">
                             <span className="bg-primary/10 text-primary p-1.5 rounded-lg">
                                 <BookOpen size={16}/> 
@@ -434,7 +516,7 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                 )}
 
                 {/* The Paper - Realistic Shadow and Texture */}
-                <div className={`w-full ${!result && !isGrading ? 'max-w-5xl' : 'max-w-[840px]'} bg-card min-h-[calc(100%-2rem)] shrink-0 shadow-card border border-border rounded-sm px-5 py-8 md:px-8 md:py-12 xl:px-12 mb-8 relative transition-all duration-500`}>
+                <div className="w-full bg-card min-h-[calc(100%-2rem)] shrink-0 shadow-card border border-border rounded-sm px-4 py-6 md:px-8 md:py-10 mb-8 relative">
                     <h1 className="text-heading font-bold mb-6 md:mb-10 text-text-primary text-center text-balance">
                         {assignmentTitle || "學生作品"}
                     </h1>
@@ -449,7 +531,7 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                       但專案沒裝那個外掛，等於完全沒有作用，已移除。
                       leading-7 md:leading-9 也拿掉 —— 會和 text-essay 自帶的行高打架。
                     */}
-                    <div className="mx-auto max-w-[34em] text-essay font-essay text-text-primary selection:bg-primary/10 selection:text-text-primary">
+                    <div className="mx-auto max-w-[38em] text-essay font-essay text-text-primary selection:bg-primary/10 selection:text-text-primary">
                         {submission.content
                             .split('\n')
                             // 段落間的空行不要變成空的 <p>，否則會多出一段間距
@@ -464,13 +546,54 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
             </div>
         </div>
 
+        {/*
+          可拖曳的分隔線。只有桌機、而且左欄沒收起來時才有意義。
+          用 pointer events：滑鼠、觸控筆、觸控螢幕同一套。
+        */}
+        {!isMobileLayout && isEssayVisible && (
+          <div
+            id="gradingeditor-split-handle"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="調整作文與批改面板的寬度"
+            aria-valuenow={splitPct}
+            aria-valuemin={MIN_PCT}
+            aria-valuemax={MAX_PCT}
+            tabIndex={0}
+            title="拖曳調整寬度（雙擊還原）"
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId);
+              dragging.current = true;
+              setIsDragging(true);
+              document.body.style.userSelect = 'none';
+            }}
+            onPointerMove={(e) => { if (dragging.current) onSplitPointerMove(e.clientX); }}
+            onPointerUp={(e) => {
+              e.currentTarget.releasePointerCapture(e.pointerId);
+              dragging.current = false;
+              setIsDragging(false);
+              document.body.style.userSelect = '';
+            }}
+            onDoubleClick={resetSplit}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowLeft') { e.preventDefault(); setSplitPct(splitPct - 2); }
+              if (e.key === 'ArrowRight') { e.preventDefault(); setSplitPct(splitPct + 2); }
+              if (e.key === 'Home') { e.preventDefault(); resetSplit(); }
+            }}
+            className="hidden lg:flex w-1.5 shrink-0 cursor-col-resize items-center justify-center bg-border/60 hover:bg-primary/60 focus-visible:bg-primary focus-visible:outline-none transition-colors group"
+          >
+            {/* 中間那三點讓它看起來就是可以拉的 */}
+            <span className="h-8 w-0.5 rounded-full bg-text-muted/50 group-hover:bg-on-accent/70" aria-hidden="true" />
+          </div>
+        )}
+
         {/* Right: Grading Tool Panel - Glass Sidebar - Expandable */}
         <div className={`
             bg-card/60 backdrop-blur-2xl flex flex-col shadow-[-10px_0_40px_rgba(0,0,0,0.03)] z-10 shrink-0 transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]
             ${mobileTab === 'grading' ? 'absolute inset-0 flex lg:relative lg:inset-auto' : 'hidden'}
             ${isEssayVisible 
-                ? 'lg:flex lg:flex-[2] border-l border-card/50'
-                : 'lg:flex lg:flex-1 lg:w-full border-l-0'}
+                ? 'lg:flex lg:flex-1 lg:min-w-0'
+                : 'lg:flex lg:flex-1 lg:w-full'}
         `}>
             {/* Tool Header */}
             <div className="p-6 border-b border-card/40 flex items-center justify-between sticky top-0 z-10 bg-card/40 backdrop-blur-xl">
@@ -602,28 +725,25 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                                     </span>
                                 </div>
 
-                                {isEditingFeedback ? (
-                                    <textarea
-                                        id="gradingeditor-textarea-feedback"
-                                        value={result.feedback}
-                                        onChange={(e) => setResult({ ...result, feedback: e.target.value, isAi: false })}
-                                        onBlur={() => setIsEditingFeedback(false)}
-                                        autoFocus
-                                        className="w-full text-body leading-relaxed p-5 border border-card/60 rounded-2xl text-text-primary bg-card focus:ring-2 focus:ring-primary/10 focus:border-primary focus:outline-none min-h-[240px] shadow-sm resize-y font-mono"
-                                    />
-                                ) : (
-                                    <div
-                                        id="gradingeditor-feedback-preview"
-                                        onClick={() => setIsEditingFeedback(true)}
-                                        title="點一下編輯"
-                                        className="w-full p-5 border border-card/60 rounded-2xl bg-card/60 hover:bg-card cursor-text min-h-[240px] shadow-sm backdrop-blur-sm"
-                                    >
-                                        {/* 內容是 markdown —— 直接印字串會看到滿螢幕的 ### 與 ** */}
-                                        {result.feedback
-                                            ? <Markdown>{result.feedback}</Markdown>
-                                            : <span className="text-text-muted text-body">尚無評語</span>}
+                                {/*
+                                  所見即所得（見 components/FeedbackEditor.tsx）。
+                                  存回去的仍然是 markdown —— 學生端與預覽都吃這個格式。
+                                */}
+                                <React.Suspense
+                                  fallback={
+                                    <div className="rounded-2xl border border-border bg-card shadow-sm min-h-[240px] flex items-center justify-center text-body text-text-muted">
+                                      編輯器載入中…
                                     </div>
-                                )}
+                                  }
+                                >
+                                  <FeedbackEditor
+                                    id="gradingeditor-feedback"
+                                    value={result.feedback}
+                                    onChange={(markdown) =>
+                                      setResult({ ...result, feedback: markdown, isAi: false })
+                                    }
+                                  />
+                                </React.Suspense>
                             </div>
                         </>
                     )}

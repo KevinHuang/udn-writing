@@ -737,6 +737,24 @@ function useAppStateValue() {
   };
 
   /**
+   * 單筆發還 —— 批改頁上針對「正在看的這一位」。
+   *
+   * 與批次發還（handleBatchPublish）走同一支 API，差別只在目標是一份。
+   * 老師常常是改完一個人就想讓他先看到，不必等整班改完。
+   */
+  const handlePublishOne = async (submissionId: string) => {
+    const target = submissions.find((s) => s.id === submissionId);
+    if (!target || target.status !== 'Graded') return;
+    try {
+      await returnFeedback([submissionId]);
+      await reloadSubmissions();
+      await ensureSubmissions(target.assignmentId);
+    } catch (e) {
+      console.error('發還失敗:', e);
+    }
+  };
+
+  /**
    * 代繳交：老師替學生登錄紙本作文。
    *
    * 不能沿用 handleSubmitEssay —— 那一支寫死示範學生的 STUDENT_ID，
@@ -997,6 +1015,7 @@ function useAppStateValue() {
     handleSaveGrading,
     handleBatchGrade,
     handleBatchPublish,
+    handlePublishOne,
     handleProxySubmit,
     handleBatchReset,
     handleResetGrading,

@@ -229,7 +229,7 @@ export const GradingHub: React.FC<GradingHubProps> = ({
           <span className="text-body font-normal text-text-secondary tabular-nums">{pendingTotal} 份</span>
         </h3>
         {pendingRows.length === 0 ? (
-          <p className="text-body text-text-muted py-8 text-center bg-surface-soft/30 rounded-xl border border-dashed border-border">
+          <p className="text-body text-text-muted py-8 text-center bg-card rounded-xl border border-dashed border-border-strong">
             目前沒有待批改的作業
           </p>
         ) : (
@@ -291,7 +291,7 @@ export const GradingHub: React.FC<GradingHubProps> = ({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="搜尋縣市、學校、班級或課程代碼"
-            className="w-full bg-surface/60 border border-border rounded-brand pl-10 pr-10 py-2.5 text-ui text-text-primary placeholder:text-text-muted outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/20 transition-colors [&::-webkit-search-cancel-button]:hidden"
+            className="w-full bg-card border border-border rounded-brand pl-10 pr-10 py-2.5 text-ui text-text-primary placeholder:text-text-muted outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/20 transition-colors [&::-webkit-search-cancel-button]:hidden"
           />
           {query && (
             <button
@@ -341,7 +341,7 @@ export const GradingHub: React.FC<GradingHubProps> = ({
         </div>
 
         {groups.length === 0 ? (
-          <p className="text-body text-text-muted py-10 text-center bg-surface-soft/30 rounded-xl border border-dashed border-border">
+          <p className="text-body text-text-muted py-10 text-center bg-card rounded-xl border border-dashed border-border-strong">
             {query.trim() ? `找不到符合「${query.trim()}」的班級` : '這個學期沒有班級'}
           </p>
         ) : (
@@ -352,12 +352,12 @@ export const GradingHub: React.FC<GradingHubProps> = ({
               const schoolOpen = isOpen(sid, true);
               const unassigned = g.key === UNASSIGNED_GROUP;
               return (
-                <div key={g.key} className="border border-border rounded-xl bg-card/40">
+                <div key={g.key} className="border border-border-card rounded-xl bg-card shadow-sm overflow-hidden">
                   <button
                     id={`grading-hub-school-${g.key}`}
                     onClick={() => flip(sid, true)}
                     aria-expanded={schoolOpen}
-                    className="w-full flex flex-wrap items-center gap-2 px-4 py-3 text-left"
+                    className="w-full flex flex-wrap items-center gap-2 px-4 py-3 text-left bg-primary-50 border-b border-primary-200 hover:bg-primary-100 transition-colors"
                   >
                     {schoolOpen ? (
                       <ChevronDown size={16} className="shrink-0 text-text-secondary" />
@@ -401,7 +401,7 @@ export const GradingHub: React.FC<GradingHubProps> = ({
                               id={`grading-hub-class-${c.id}`}
                               onClick={() => flip(cid, pending > 0)}
                               aria-expanded={classOpen}
-                              className="w-full flex flex-wrap items-center gap-2 px-3 py-2.5 text-left bg-surface-soft/50 hover:bg-surface-soft transition-colors"
+                              className="w-full flex flex-wrap items-center gap-2 px-3 py-2.5 text-left bg-surface-soft hover:bg-border transition-colors"
                             >
                               {classOpen ? (
                                 <ChevronDown size={14} className="shrink-0 text-text-secondary" />

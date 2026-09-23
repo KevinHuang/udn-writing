@@ -94,7 +94,14 @@ class Util {
         // 找不到結尾就取到最後，不要整段丟掉
         const end = endIndex < 0 ? content.length : endIndex;
 
-        return content.slice(startIndex, end).replace(/\*/g, '').replace(/#/g, '').trim();
+        // 老師在評語裡標的螢光筆與文字色是行內 HTML（<mark class="hl-yellow">…）。
+        // 這段會餵給期末總結的 AI，也會直接顯示在「最高分那篇」的評語，
+        // 標籤留著只是雜訊，一併剝掉。
+        return content.slice(startIndex, end)
+            .replace(/<\/?(?:mark|span)[^>]*>/gi, '')
+            .replace(/\*/g, '')
+            .replace(/#/g, '')
+            .trim();
     }
 }
 

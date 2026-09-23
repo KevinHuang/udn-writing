@@ -1,6 +1,6 @@
 import { Markdown } from './Markdown';
 
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { 
   Download, 
   Calendar, 
@@ -30,6 +30,7 @@ import { isOnLeave, type LeaveMarks } from '../lib/leave';
 import { isOverdue as isAssignmentOverdue } from '../lib/assignments';
 import { orderedAssignments, orderNumbers } from '../lib/assignmentOrder';
 import { CoursePickerModal } from './CoursePickerModal';
+import { schoolLabel, schoolScopeKey, schoolScopeValue, UNASSIGNED_GROUP } from '../lib/courseGroups';
 import { PageHeader, PAGE_CONTAINER } from './PageHeader';
 import { SemesterSelect } from './SemesterSelect';
 import { FieldSelect } from './FieldSelect';
@@ -295,10 +296,36 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
    * 換班。班級挑選視窗與預設選班都要走這一支 ——
    * 少了 setPickedAssignmentId('ALL')，換班後會停在一個新班沒有的作業上。
    */
-  const changeCourse = (courseId: string) => {
-    setPickedCourseId(courseId);
+  const changeCourse = (scope: string, fromSchool: string | null = null) => {
+    setPickedCourseId(scope);
     setPickedAssignmentId('ALL');
+    // 從全校總覽點進來的才記，直接從挑選視窗選班級就清掉
+    setDrillFromSchool(fromSchool);
   };
+
+  /**
+   * 這個班是從哪一所學校的全校總覽點進來的。
+   * 有值就在班級標題旁邊放返回鍵 —— 老師看完一班要回去看下一班，
+   * 不必再開一次班級挑選視窗。
+   */
+  const [drillFromSchool, setDrillFromSchool] = useState<string | null>(null);
+  /**
+   * 窄畫面（手機、平板）把「缺繳／請假」縮成「缺／假」。
+   *
+   * 那一格是原生 <select>，選項文字不能用 CSS 依斷點換，只能換字串。
+   * 成績表在窄畫面本來就要擠下好幾份作業，兩個字就佔掉半格。
+   */
+  const [isCompact, setIsCompact] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth < 1024,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 1023px)');
+    const onChange = (e: MediaQueryListEvent | MediaQueryList) => setIsCompact(e.matches);
+    onChange(mq);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
 
   // 從別的頁帶著 initialCourseId 重新導覽進來時，該班級要蓋掉先前的選擇。
   // 這是 React 官方的「render 階段依 prop 變化調整 state」寫法，
@@ -309,13 +336,35 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
     if (initialCourseId) setPickedCourseId(initialCourseId);
   }
 
+  /**
+   * 選到的是整間學校嗎？（班級挑選視窗的「全校總覽」）
+   *
+   * 範圍與班級共用同一個 state，值的形狀見 lib/courseGroups.ts 的 schoolScopeValue。
+   * 學校在本學期沒有班級時（例如剛換學期）就當作沒選，退回第一個班級。
+   */
+  const scopeSchoolKey = schoolScopeKey(pickedCourseId);
+  const schoolLabelOf = (c: Course) =>
+    c.schoolName ? schoolLabel(c.city, c.schoolName) : UNASSIGNED_GROUP;
+  const schoolCourses = useMemo(
+    () => (scopeSchoolKey ? semesterCourses.filter((c) => schoolLabelOf(c) === scopeSchoolKey) : []),
+    [semesterCourses, scopeSchoolKey],
+  );
+  const isSchoolScope = scopeSchoolKey !== null && schoolCourses.length > 0;
+
   // 真正生效的班級：選到的若不在本學期清單裡（例如剛換學期），退回第一個班級
-  const selectedCourseId =
-    pickedCourseId && semesterCourses.some((c) => c.id === pickedCourseId)
+  const selectedCourseId = isSchoolScope
+    ? null
+    : pickedCourseId && semesterCourses.some((c) => c.id === pickedCourseId)
       ? pickedCourseId
       : semesterCourses[0]?.id ?? null;
 
   const selectedCourse = courses.find(c => c.id === selectedCourseId);
+
+  /** 這次統計涵蓋哪些班：全校就是整間學校的班，否則就是選到的那一班 */
+  const scopeCourses = useMemo(
+    () => (isSchoolScope ? schoolCourses : selectedCourse ? [selectedCourse] : []),
+    [isSchoolScope, schoolCourses, selectedCourse],
+  );
 
   /*
     這個班的作業，依**老師在課程作業清單裡排定的順序**。
@@ -324,8 +373,8 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
     這裡不要自己 sort —— 表格欄位與下拉選單都要跟課程頁看到的一樣。
   */
   const courseAssignments = useMemo(
-    () => orderedAssignments(assignments, selectedCourseId || ''),
-    [assignments, selectedCourseId],
+    () => scopeCourses.flatMap((c) => orderedAssignments(assignments, c.id)),
+    [assignments, scopeCourses],
   );
 
   /** 作業編號。與課程作業清單上的卡片號碼是同一組數字 */
@@ -336,6 +385,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
 
   /** 真正生效的作業：選到的若不屬於這個班（換班後），退回全部 */
   const selectedAssignmentId =
+    !isSchoolScope &&
     pickedAssignmentId !== 'ALL' &&
     courseAssignments.some((a) => a.id === pickedAssignmentId)
       ? pickedAssignmentId
@@ -365,6 +415,28 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
         sub.result,
     );
   }, [submissions, scopedAssignments]);
+
+  /**
+   * 這個範圍的平均級分 —— 全校就是整校平均，單班就是全班平均。
+   * 只採計已批改的（與圖表同一份 scopedResults），沒有成績時是 null，不要顯示 0.0。
+   */
+  const scopeAverage = useMemo(() => {
+    if (!scopedResults.length) return null;
+    const total = scopedResults.reduce((sum, sub) => sum + (sub.result?.totalScore ?? 0), 0);
+    return total / scopedResults.length;
+  }, [scopedResults]);
+
+  /** 標題旁邊那顆平均級分。沒有已批改的成績就不顯示，不要印 0.0 */
+  const averageBadge = (label: string) =>
+    scopeAverage === null ? null : (
+      <span
+        id="grademanagement-scope-average"
+        className="text-caption text-primary bg-primary/10 border border-primary/20 px-1.5 sm:px-3 py-0.5 sm:py-1 rounded-full shadow-sm flex items-center gap-1 sm:gap-1.5 whitespace-nowrap"
+      >
+        <Target size={9} className="sm:size-3" />
+        {label} {scopeAverage.toFixed(1)} 級分
+      </span>
+    );
 
   /** 六級分分布：0-6 各有幾份 */
   const levelDistribution = useMemo(() => {
@@ -421,6 +493,31 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
       return a.name.localeCompare(b.name, 'zh-Hant');
     });
   }, [courseAssignments, submissions]);
+
+  /**
+   * 全校總覽的每一列：一個班一列。
+   *
+   * 各班的作業不同，沒有共用的作業欄位可以並排，所以這裡只彙總得起來的東西：
+   * 人數、已批改份數、平均級分。點一列就進到那個班的詳細表。
+   */
+  const schoolRows = useMemo(() => {
+    if (!isSchoolScope) return [];
+    return schoolCourses.map((course) => {
+      const ids = new Set(orderedAssignments(assignments, course.id).map((a) => a.id));
+      const rows = submissions.filter((sub) => ids.has(sub.assignmentId));
+      const graded = rows.filter(
+        (sub) => (sub.status === 'Graded' || sub.status === 'Published') && sub.result,
+      );
+      const total = graded.reduce((sum, sub) => sum + (sub.result?.totalScore ?? 0), 0);
+      return {
+        course,
+        students: new Set(rows.map((r) => r.studentId)).size || course.studentCount || 0,
+        assignments: ids.size,
+        graded: graded.length,
+        average: graded.length ? total / graded.length : null,
+      };
+    }).sort((a, b) => a.course.name.localeCompare(b.course.name, 'zh-Hant'));
+  }, [isSchoolScope, schoolCourses, assignments, submissions]);
 
   // Search filter
   const [searchTerm, setSearchTerm] = useState('');
@@ -601,7 +698,9 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
             </span>
             <span className="mt-0.5 flex items-center gap-2">
               <span className="flex-1 min-w-0 truncate text-ui font-bold text-text-primary">
-                {selectedCourse?.name ?? '本學期沒有課程'}
+                {isSchoolScope
+                  ? `${scopeSchoolKey}（全校 ${schoolCourses.length} 班）`
+                  : selectedCourse?.name ?? '本學期沒有課程'}
               </span>
               <Search size={14} className="shrink-0 text-primary/70" />
             </span>
@@ -611,6 +710,8 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
           <FieldSelect
             id="grademanagement-select-assignment"
             variant="field"
+            // 全校總覽跨多個班，各班作業不同，沒有共用的作業可以篩
+            disabled={isSchoolScope}
             label="作業"
             icon={ClipboardList}
             value={selectedAssignmentId}
@@ -635,7 +736,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
       {isCoursePickerOpen && (
         <CoursePickerModal
           courses={semesterCourses}
-          selectedCourseId={selectedCourseId}
+          selectedScope={pickedCourseId ?? selectedCourseId}
           onSelect={changeCourse}
           onClose={() => setIsCoursePickerOpen(false)}
         />
@@ -646,14 +747,14 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
         兩張都吃上方的「班級 × 作業」篩選，只採計已批改與已發還的成績 ——
         待批改的還沒有分數，算成 0 會把平均整個拉下來。
       */}
-      {selectedCourse && (
+      {(selectedCourse || isSchoolScope) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 mb-4 sm:mb-6 shrink-0">
           {/* 六級分分布 */}
           <div className="bg-card p-3 sm:p-6 rounded-brand border border-border shadow-sm">
             <div className="flex items-baseline justify-between gap-3 mb-2 sm:mb-4">
               <h3 className="text-title font-bold text-text-primary flex items-center gap-2">
                 <TrendingUp size={16} className="sm:size-5 text-primary shrink-0" />
-                全班會考六級分分布
+                {isSchoolScope ? '全校會考六級分分布' : '全班會考六級分分布'}
               </h3>
               <span className="text-caption text-text-muted whitespace-nowrap tabular-nums">
                 共 {scopedResults.length} 份
@@ -692,7 +793,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
           <div className="bg-card p-3 sm:p-6 rounded-brand border border-border shadow-sm">
             <h3 className="text-title font-bold text-text-primary mb-2 sm:mb-4 flex items-center gap-2">
               <Target size={16} className="sm:size-5 text-primary shrink-0" />
-              全班寫作四向度平均
+              {isSchoolScope ? '全校寫作四向度平均' : '全班寫作四向度平均'}
             </h3>
             {scopedResults.length === 0 ? (
               <div className="h-40 sm:h-56 flex items-center justify-center text-body text-text-muted">
@@ -723,19 +824,93 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
          {/* Right: Grade Table */}
          {/* 成績表的外框用實色白卡：凍結欄也是實色，兩者要同一個底色才不會看出一條色差 */}
          <div className="flex-1 w-full bg-card rounded-brand border border-border shadow-sm flex flex-col transition-all duration-300">
-             {selectedCourse ? (
+             {isSchoolScope ? (
+                 <>
+                    <div className="p-3 sm:p-6 border-b border-border bg-card">
+                        <h2 className="text-heading font-bold text-text-primary leading-none">
+                            {scopeSchoolKey}
+                        </h2>
+                        <div className="flex flex-wrap items-center gap-2 mt-1 sm:mt-2">
+                            <span className="text-caption text-text-secondary bg-surface px-1.5 sm:px-3 py-0.5 sm:py-1 rounded-full border border-border shadow-sm flex items-center gap-1 sm:gap-1.5">
+                                <Users size={9} className="sm:size-3 text-primary" />
+                                共 {schoolRows.length} 個班級
+                            </span>
+                            {averageBadge('全校平均')}
+                        </div>
+                    </div>
+                    {/*
+                      各班一列。作業欄位在這裡沒有意義（每個班派的作業都不同），
+                      所以只放彙總得起來的三個數字；要看某一班的細表就點那一列。
+                    */}
+                    <div className="overflow-x-auto rounded-b-brand">
+                        <table className="w-full text-left border-collapse">
+                            <thead className="bg-surface-soft">
+                                <tr>
+                                    <th className="p-3 sm:p-4 text-body text-text-primary border-b border-border">班級</th>
+                                    <th className="p-3 sm:p-4 text-body text-text-primary border-b border-border text-center whitespace-nowrap">學生</th>
+                                    <th className="p-3 sm:p-4 text-body text-text-primary border-b border-border text-center whitespace-nowrap">作業</th>
+                                    <th className="p-3 sm:p-4 text-body text-text-primary border-b border-border text-center whitespace-nowrap">已批改</th>
+                                    <th className="p-3 sm:p-4 text-body text-text-primary border-b border-border text-center whitespace-nowrap">平均級分</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-dashed divide-border dark:divide-border-strong/60">
+                                {schoolRows.map((row) => (
+                                    <tr
+                                        key={row.course.id}
+                                        id={`grademanagement-school-row-${row.course.id}`}
+                                        onClick={() => changeCourse(row.course.id, scopeSchoolKey)}
+                                        title="看這個班的詳細成績"
+                                        className="hover:bg-surface-soft transition-colors cursor-pointer"
+                                    >
+                                        <td className="p-3 sm:p-4 text-body text-text-primary">
+                                            <span className="flex items-center gap-2">
+                                                {row.course.className || row.course.name}
+                                                <ChevronRight size={14} className="shrink-0 text-text-muted" />
+                                            </span>
+                                        </td>
+                                        <td className="p-3 sm:p-4 text-body text-text-secondary text-center tabular-nums">{row.students}</td>
+                                        <td className="p-3 sm:p-4 text-body text-text-secondary text-center tabular-nums">{row.assignments}</td>
+                                        <td className="p-3 sm:p-4 text-body text-text-secondary text-center tabular-nums">{row.graded}</td>
+                                        <td className="p-3 sm:p-4 text-center">
+                                            {row.average !== null ? (
+                                                <span className="text-primary bg-primary/5 px-2 sm:px-3 py-0.5 sm:py-1 rounded-brand text-body tabular-nums">
+                                                    {row.average.toFixed(1)}
+                                                </span>
+                                            ) : (
+                                                <span className="text-text-muted text-body">-</span>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                 </>
+             ) : selectedCourse ? (
                  <>
                     <div className="p-3 sm:p-6 border-b border-border flex flex-col md:flex-row justify-between items-start md:items-center gap-3 sm:gap-4 bg-card">
                         <div className="flex items-center gap-2 sm:gap-4">
+                             {/* 從全校總覽點進來的才有返回鍵，直接選班級進來的沒有上一頁可回 */}
+                             {drillFromSchool && (
+                                <button
+                                  id="grademanagement-btn-back-to-school"
+                                  onClick={() => changeCourse(schoolScopeValue(drillFromSchool))}
+                                  title={`回到 ${drillFromSchool} 的班級列表`}
+                                  className="tap-target shrink-0 p-2 -ml-1 rounded-full text-text-secondary hover:bg-surface-soft hover:text-text-primary transition-colors"
+                                >
+                                    <ArrowLeft size={20} />
+                                </button>
+                             )}
                              <div>
                                 <h2 className="text-heading font-bold text-text-primary leading-none">
                                     {selectedCourse.name}
                                 </h2>
-                                 <div className="flex items-center gap-2 mt-1 sm:mt-2">
+                                 <div className="flex flex-wrap items-center gap-2 mt-1 sm:mt-2">
                                     <span className="text-caption text-text-secondary bg-surface px-1.5 sm:px-3 py-0.5 sm:py-1 rounded-full border border-border shadow-sm flex items-center gap-1 sm:gap-1.5">
                                         <Users size={9} className="sm:size-3 text-primary" />
                                         共 {students.length} 位學生
                                     </span>
+                                    {averageBadge('全班平均')}
                                 </div>
                              </div>
                         </div>
@@ -862,8 +1037,8 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                                                     : 'text-danger-700 bg-danger-100 border-danger-200 hover:bg-danger-200 hover:border-danger-400'
                                                                 }`}
                                                             >
-                                                                <option value="missing">缺繳</option>
-                                                                <option value="leave">請假</option>
+                                                                <option value="missing">{isCompact ? '缺' : '缺繳'}</option>
+                                                                <option value="leave">{isCompact ? '假' : '請假'}</option>
                                                             </select>
                                                         );
                                                     } else {

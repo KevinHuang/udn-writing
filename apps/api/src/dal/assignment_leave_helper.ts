@@ -1,4 +1,5 @@
 import { db } from './database';
+import { CourseScope, courseScopeSubquery } from '../lib/course_scope';
 
 /**
  * 請假註記。
@@ -11,28 +12,24 @@ import { db } from './database';
  */
 class AssignmentLeaveHelper {
 
-    public static async getByInstructorUserId(userId: string) {
+    public static async getByScope(scope: CourseScope) {
         const sql = `
             SELECT l.ref_assignment_id, l.ref_user_id
             FROM assignment_leave l
                 INNER JOIN assignment a ON a.id = l.ref_assignment_id
-            WHERE a.ref_course_id IN (
-                SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $1
-            )
+            WHERE a.ref_course_id IN ${courseScopeSubquery(scope)}
         `;
-        return (await db.default.manyOrNone(sql, [userId])) || [];
+        return (await db.default.manyOrNone(sql)) || [];
     }
 
-    public static async set(assignmentId: string, studentId: string, markerId: string) {
+    public static async set(assignmentId: string, studentId: string, markerId: string, scope: CourseScope) {
         const sql = `
             INSERT INTO assignment_leave (ref_assignment_id, ref_user_id, ref_marker_id)
             SELECT $1, $2, $3
             WHERE EXISTS (
                 SELECT 1 FROM assignment a
                 WHERE a.id = $1
-                  AND a.ref_course_id IN (
-                        SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $3
-                  )
+                  AND a.ref_course_id IN ${courseScopeSubquery(scope)}
             )
             ON CONFLICT (ref_assignment_id, ref_user_id) DO NOTHING
             RETURNING *;
@@ -40,16 +37,14 @@ class AssignmentLeaveHelper {
         return await db.default.oneOrNone(sql, [assignmentId, studentId, markerId]);
     }
 
-    public static async unset(assignmentId: string, studentId: string, markerId: string) {
+    public static async unset(assignmentId: string, studentId: string, markerId: string, scope: CourseScope) {
         const sql = `
             DELETE FROM assignment_leave l
             USING assignment a
             WHERE l.ref_assignment_id = $1
               AND l.ref_user_id = $2
               AND a.id = l.ref_assignment_id
-              AND a.ref_course_id IN (
-                    SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $3
-              )
+              AND a.ref_course_id IN ${courseScopeSubquery(scope)}
             RETURNING l.*;
         `;
         return await db.default.oneOrNone(sql, [assignmentId, studentId, markerId]);

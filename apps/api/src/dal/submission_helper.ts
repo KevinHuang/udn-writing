@@ -1,4 +1,5 @@
 import { db } from './database';
+import { CourseScope, courseScopeSubquery } from '../lib/course_scope';
 import AssignmentHelper from './assignment_helper';
 
 class SubmissionHelper {
@@ -114,17 +115,15 @@ class SubmissionHelper {
      * 它先用無限定版取出作文、送去 AI、才在寫入時才擋 —— 寫入是擋住了，
      * 但別班學生的作文與 AI 評語已經回給呼叫者，token 也燒掉了。
      */
-    public static async getSubmissionByIdForInstructor(submission_id: string, instructor_id: string) {
+    public static async getSubmissionByIdForInstructor(submission_id: string, scope: CourseScope) {
         const result = await db.default.oneOrNone(`
             SELECT s.id, s.ref_user_id, s.ref_assignment_id, s.content, s.pic_files,
                    s.submited_time, s.last_update, s.word_count
             FROM public.submission s
                 INNER JOIN assignment a ON a.id = s.ref_assignment_id
             WHERE s.id = $1
-              AND a.ref_course_id IN (
-                    SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $2
-              )
-        `, [submission_id, instructor_id]);
+              AND a.ref_course_id IN ${courseScopeSubquery(scope)}
+        `, [submission_id]);
         return result;
     }
 
@@ -195,18 +194,16 @@ class SubmissionHelper {
      * `ref_user_id = <正數>`，所以摘掉之後那篇在名冊、批改清單、成績、
      * 期末總結裡都會直接消失。唯一的還原是再打一次（負負得正）。
      */
-    public static async resetSubmissions(submissionId: string, instructorId: string) {
+    public static async resetSubmissions(submissionId: string, scope: CourseScope) {
         const result = await db.default.manyOrNone(`
             UPDATE submission SET ref_user_id = (0 - ref_user_id)::bigint, last_update = now()
             WHERE id = $1
               AND ref_assignment_id IN (
                     SELECT a.id FROM assignment a
-                    WHERE a.ref_course_id IN (
-                        SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $2
-                    )
+                    WHERE a.ref_course_id IN ${courseScopeSubquery(scope)}
               )
             RETURNING id
-        `, [submissionId, instructorId]);
+        `, [submissionId]);
         return result;
     }
 
@@ -226,17 +223,15 @@ class SubmissionHelper {
      *
      * 所以只要手動清 feedback，標記會自己跟著走。
      */
-    public static async deleteById(submissionId: string, userId: string) {
+    public static async deleteById(submissionId: string, scope: CourseScope) {
         return await db.default.tx(async (t) => {
             const owned = await t.oneOrNone(
                 `SELECT s.id
                  FROM submission s
                      INNER JOIN assignment a ON a.id = s.ref_assignment_id
                  WHERE s.id = $1
-                   AND a.ref_course_id IN (
-                         SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $2
-                   )`,
-                [submissionId, userId]);
+                   AND a.ref_course_id IN ${courseScopeSubquery(scope)}`,
+                [submissionId]);
             if (!owned) return null;
 
             await t.none(`DELETE FROM submission_feedback WHERE ref_submission_id = $1`, [submissionId]);

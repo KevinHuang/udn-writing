@@ -1,4 +1,5 @@
 import { db } from './database';
+import { CourseScope, courseScopeSubquery } from '../lib/course_scope';
 
 class AssignmentHelper {
 
@@ -135,7 +136,7 @@ class AssignmentHelper {
      * 但時間模型已決定以原型為準：截止日 + 教師拖拉排序，week_no 不使用。
      * NULLS LAST 讓沒排過的落在最後（與 lib/assignmentOrder.ts 一致）。
      */
-    public static async getAssignmentsByCourseId(user_id: string, courseId: string) {
+    public static async getAssignmentsByCourseId(scope: CourseScope, courseId: string) {
         const sql = `
             SELECT
                 ass.id,
@@ -157,13 +158,11 @@ class AssignmentHelper {
                 INNER JOIN task ON task.id = ass.ref_task_id
             WHERE
                 ass.ref_course_id = $1
-                AND ass.ref_course_id IN (
-                    SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $2
-                )
+                AND ass.ref_course_id IN ${courseScopeSubquery(scope)}
             ORDER BY
                 ass.sort_order ASC NULLS LAST, ass.assigned_at ASC
         `;
-        return (await db.default.manyOrNone(sql, [courseId, user_id])) || [];
+        return (await db.default.manyOrNone(sql, [courseId])) || [];
     }
 
     /**
@@ -178,18 +177,16 @@ class AssignmentHelper {
      * ⚠️ 授權進 WHERE：先前只比對 id，任何教師都能開關別人班的作業。
      *    錯誤訊息寫著 unauthorized，但 SQL 裡沒有任何 authorization。
      */
-    public static async updateStatus(assignmentId: string, body: { opened: boolean }, userId: string) {
+    public static async updateStatus(assignmentId: string, body: { opened: boolean }, scope: CourseScope) {
         const sql = `
             UPDATE assignment
             SET opened = $1,
                 opened_at = CASE WHEN $1 THEN COALESCE(opened_at, NOW()) ELSE opened_at END
             WHERE id = $2
-              AND ref_course_id IN (
-                    SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $3
-              )
+              AND ref_course_id IN ${courseScopeSubquery(scope)}
             RETURNING *;
         `;
-        return await db.default.oneOrNone(sql, [body.opened, assignmentId, userId]) || null;
+        return await db.default.oneOrNone(sql, [body.opened, assignmentId]) || null;
     }
 
     /**
@@ -212,7 +209,7 @@ class AssignmentHelper {
         deadline?: string | null;
         allow_late_submission?: boolean;
         opened?: boolean;
-    }, userId: string) {
+    }, userId: string, scope: CourseScope) {
         const sql = `
             INSERT INTO assignment (
                 ref_course_id, ref_task_id, ref_user_id, week_no, opened, opened_at, assigned_at,
@@ -221,8 +218,9 @@ class AssignmentHelper {
             SELECT
                 $1, $2, $3, $4, $7, CASE WHEN $7 THEN NOW() END, NOW(), $5, $6,
                 COALESCE((SELECT MAX(sort_order) + 1 FROM assignment WHERE ref_course_id = $1), 0)
+            -- ref_user_id（$3）記錄「誰派的」；能不能派看的是範圍
             WHERE EXISTS (
-                SELECT 1 FROM uc_instructor WHERE ref_course_id = $1 AND ref_user_id = $3
+                SELECT 1 FROM public.course WHERE id = $1 AND id IN ${courseScopeSubquery(scope)}
             )
             RETURNING *;
         `;
@@ -236,19 +234,17 @@ class AssignmentHelper {
     public static async updateConfig(assignmentId: string, data: {
         deadline?: string | null;
         allow_late_submission?: boolean;
-    }, userId: string) {
+    }, scope: CourseScope) {
         const sql = `
             UPDATE assignment
             SET deadline = $2,
                 allow_late_submission = COALESCE($3, allow_late_submission)
             WHERE id = $1
-              AND ref_course_id IN (
-                    SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $4
-              )
+              AND ref_course_id IN ${courseScopeSubquery(scope)}
             RETURNING *;
         `;
         return await db.default.oneOrNone(sql,
-            [assignmentId, data.deadline ?? null, data.allow_late_submission ?? null, userId]) || null;
+            [assignmentId, data.deadline ?? null, data.allow_late_submission ?? null]) || null;
     }
 
     /**
@@ -261,11 +257,11 @@ class AssignmentHelper {
      * 不在清單裡的作業不動（可能是別人剛新增的），也不會把別班的作業
      * 一起改到 —— WHERE 有 ref_course_id 與授權兩道。
      */
-    public static async reorder(courseId: string, orderedIds: string[], userId: string) {
+    public static async reorder(courseId: string, orderedIds: string[], scope: CourseScope) {
         return await db.default.tx(async (t) => {
             const owns = await t.oneOrNone(
-                `SELECT 1 FROM uc_instructor WHERE ref_course_id = $1 AND ref_user_id = $2`,
-                [courseId, userId]);
+                `SELECT 1 FROM public.course WHERE id = $1 AND id IN ${courseScopeSubquery(scope)}`,
+                [courseId]);
             if (!owns) return null;
 
             for (let i = 0; i < orderedIds.length; i++) {
@@ -292,15 +288,13 @@ class AssignmentHelper {
      * 孤兒資料，而統計與關心名單都會把它們算進去 —— CLAUDE.md 整整一節
      * 在講這個坑。全部在一個交易裡，中途失敗不會留下半套。
      */
-    public static async deleteById(assignmentId: string, userId: string) {
+    public static async deleteById(assignmentId: string, scope: CourseScope) {
         return await db.default.tx(async (t) => {
             const owned = await t.oneOrNone(
                 `SELECT id FROM assignment
                  WHERE id = $1
-                   AND ref_course_id IN (
-                         SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $2
-                   )`,
-                [assignmentId, userId]);
+                   AND ref_course_id IN ${courseScopeSubquery(scope)}`,
+                [assignmentId]);
             if (!owned) return null;
 
             await t.none(
@@ -334,7 +328,7 @@ class AssignmentHelper {
      *
      * @returns null＝不是你的作業；'not_swappable'＝現在不能換；否則是更新後的作業
      */
-    public static async updateTask(assignmentId: string, ref_task_id: string, userId: string) {
+    public static async updateTask(assignmentId: string, ref_task_id: string, scope: CourseScope) {
         return await db.default.tx(async (tx) => {
             const owned = await tx.oneOrNone(
                 `SELECT id,
@@ -343,11 +337,9 @@ class AssignmentHelper {
                              AND allow_late_submission IS NOT TRUE)) AS swappable
                    FROM assignment
                   WHERE id = $1
-                    AND ref_course_id IN (
-                          SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $2
-                    )
+                    AND ref_course_id IN ${courseScopeSubquery(scope)}
                   FOR UPDATE`,
-                [assignmentId, userId]);
+                [assignmentId]);
             // ⚠️ 授權進 WHERE —— 先前只比對 id，任何教師都能換掉別人班作業的題目
             if (!owned) return null;
             if (!owned.swappable) return 'not_swappable' as const;

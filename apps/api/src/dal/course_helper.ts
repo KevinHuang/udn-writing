@@ -1,4 +1,5 @@
 import { db } from './database';
+import { CourseScope, courseScopeSubquery } from '../lib/course_scope';
 
 class CourseHelper {
 
@@ -56,12 +57,13 @@ class CourseHelper {
     }
 
     /**
-     * 系統管理者（聯合報管理人員）看得到的課程：**全部**。
+     * 管理人員看得到的課程。
      *
      * 與 getByInstructorUserId() 回傳完全相同的欄位 —— 呼叫端只是換一支查詢，
-     * 不需要為兩種身分寫兩套對應。差別只在 WHERE 少了那個教師條件。
+     * 不需要為兩種身分寫兩套對應。差別只在 WHERE 換成範圍條件：
+     * 聯合報管理人員是全部，校務管理是自己管的學校（見 lib/course_scope.ts）。
      */
-    public static async getAllForAdmin() {
+    public static async getByScope(scope: CourseScope) {
         const sql = `
             WITH target_courses AS (
                 SELECT DISTINCT
@@ -74,6 +76,7 @@ class CourseHelper {
                 FROM course as crs
                     INNER JOIN org ON crs.ref_org_id = org.id
                     INNER JOIN school AS sch ON crs.ref_school_id = sch.id
+                WHERE crs.id IN ${courseScopeSubquery(scope)}
             )
             , stud_count AS (
                 SELECT count(id) AS stud_count, ref_course_id
@@ -149,7 +152,7 @@ class CourseHelper {
         course_name?: string | null;
         course_type?: string | null;
         is_active?: boolean | null;
-    }, userId: number) {
+    }, scope: CourseScope) {
         const sql = `
             UPDATE course
             SET school_year = COALESCE($2::integer, school_year),
@@ -158,9 +161,7 @@ class CourseHelper {
                 course_type = COALESCE($5::varchar, course_type),
                 is_active   = COALESCE($6::boolean, is_active)
             WHERE id=$1
-              AND id IN (
-                SELECT ref_course_id FROM uc_instructor WHERE ref_user_id=$7
-              )
+              AND id IN ${courseScopeSubquery(scope)}
             RETURNING *;
         `;
         const result = await db.default.oneOrNone(sql, [
@@ -170,19 +171,17 @@ class CourseHelper {
             data.course_name ?? null,
             data.course_type ?? null,
             data.is_active ?? null,
-            userId,
         ]);
         return result;
     }
 
-    /** 刪除課程（僅限最初建立者，並一起刪除 uc_instructor 關聯） */
-    public static async deleteById(courseId: string, userId: number) {
-        // 只允許刪除自己建立的課程（透過 uc_instructor 確認）
+    /** 刪除課程（限範圍內的課程，並一起刪除 uc_instructor 關聯） */
+    public static async deleteById(courseId: string, scope: CourseScope) {
+        // 範圍外的課程刪不動（教師＝自己的班，管理人員＝全部／自己的學校）
         const checkSql = `
-            SELECT 1 FROM uc_instructor
-            WHERE ref_course_id=$1 AND ref_user_id=$2;
+            SELECT 1 FROM public.course WHERE id=$1 AND id IN ${courseScopeSubquery(scope)};
         `;
-        const exists = await db.default.oneOrNone(checkSql, [courseId, userId]);
+        const exists = await db.default.oneOrNone(checkSql, [courseId]);
         if (!exists) return null;
 
         // 先刪掉關聯再刪課程

@@ -905,7 +905,7 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
           onContextMenu={(e) => e.preventDefault()}
           className="px-2 py-1.5 rounded-full bg-black/40 text-white text-caption tabular-nums whitespace-nowrap select-none"
         >
-          {pageCount > 0 ? `已掃 ${pageCount} 頁` : info}
+          {pageCount > 0 ? `已收 ${pageCount} 張` : info}
         </div>
       </div>
 

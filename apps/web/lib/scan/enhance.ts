@@ -341,7 +341,16 @@ export class ScanResult {
 
     // 黑白只有兩個顏色，PNG 又小又不會有 JPEG 的雜訊
     const mime = variant === 'binary' ? 'image/png' : 'image/jpeg';
-    return canvasToBlob(canvas, mime, SCAN_CONFIG.ocrJpegQuality);
+    const blob = await canvasToBlob(canvas, mime, SCAN_CONFIG.ocrJpegQuality);
+    /*
+      把 canvas 歸零，backing store 才會馬上還給系統。
+      單張時丟給 GC 慢慢收無所謂；連拍多張時這裡一張全解析度的 canvas
+      就是 3500×2475×4 ≈ 34MB，iOS Safari 不會即時釋放，會一路累積到
+      分頁被系統砍掉。
+    */
+    canvas.width = 0;
+    canvas.height = 0;
+    return blob;
   }
 
   private clearCache(): void {

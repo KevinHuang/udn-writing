@@ -32,6 +32,21 @@ export function actsAsSystemAdmin(ctx: Context): boolean {
   return allows(ctx, 'system_admin', !!ctx.session?.userInfo?.isSystemAdmin);
 }
 
+/**
+ * 目前是不是以校務管理的身分在操作。
+ *
+ * 與 actsAsSystemAdmin 同構，差別只在能看到的範圍：校務管理限定自己管的學校
+ * （見 lib/course_scope.ts 的 CourseScope）。
+ */
+export function actsAsSchoolAdmin(ctx: Context): boolean {
+  return allows(ctx, 'school_admin', !!ctx.session?.userInfo?.isSchoolAdmin);
+}
+
+/** 目前是不是以某一種管理身分在操作（兩種管理人員都算） */
+export function actsAsAdmin(ctx: Context): boolean {
+  return actsAsSystemAdmin(ctx) || actsAsSchoolAdmin(ctx);
+}
+
 // 簡單的 in-memory session 存儲（實務上應使用 Redis）
 const sessions = new Map<string, SessionUser>();
 

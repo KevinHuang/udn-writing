@@ -24,8 +24,11 @@ import {
 } from '../../lib/scan/enhance';
 import { blobToCanvas, describeSize, nextFrame } from '../../lib/scan/image';
 import { type Point } from '../../lib/scan/geometry';
+import { canAddMore, limitHint, pagesButtonLabel, trayFull } from '../../lib/scan/pages';
 import { ScannerCamera, type LiveHint } from './ScannerCamera';
 import { CornerEditor } from './CornerEditor';
+import { ScanTray } from './ScanTray';
+import { ConfirmDialog } from '../ConfirmDialog';
 
 /** 掃好的一頁 */
 export interface ScannedPage {
@@ -38,14 +41,27 @@ export interface ScannedPage {
   height: number;
 }
 
+/** 托盤裡的一張：交出去的那份，加上只給這個視窗用的縮圖 */
+interface PendingPage {
+  id: string;
+  page: ScannedPage;
+  /** 240px 縮圖的 objectURL，刪除與卸載時要 revoke */
+  thumbUrl: string;
+}
+
 interface DocumentScannerModalProps {
   /** 標題列的說明，例如「掃描稿紙 · 王小明」 */
   subtitle?: string;
-  /** 已經掃好幾頁了。作文常常是兩張稿紙 */
-  pageCount?: number;
   onClose: () => void;
-  /** 掃好一頁。回傳後畫面會回到首頁，可以接著掃下一張 */
-  onPage: (page: ScannedPage) => void | Promise<void>;
+  /**
+   * 使用者按下「使用這 N 張」。依拍攝順序，不會是空陣列。
+   *
+   * ⚠️ 這支**不會被 await** —— 按下去要馬上關窗，辨識在呼叫端自己的
+   *    進度遮罩下跑（見 StudentEssayEditor 的 isOcrLoading）。
+   *    在這裡 await 等於把掃描視窗當成辨識的載入畫面，那是舊行為：
+   *    以前一張一張送，人就得盯著「準備影像…」等網路回來才能拍下一張。
+   */
+  onPages: (pages: ScannedPage[]) => void | Promise<void>;
 }
 
 type Step = 'home' | 'camera' | 'editor' | 'result';
@@ -60,9 +76,8 @@ type Step = 'home' | 'camera' | 'editor' | 'result';
  */
 export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   subtitle,
-  pageCount = 0,
   onClose,
-  onPage,
+  onPages,
 }) => {
   const [step, setStep] = useState<Step>('home');
   const [cvState, setCvState] = useState<'loading' | 'ready' | 'error'>(
@@ -88,6 +103,35 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   const resultRef = useRef<ScanResult | null>(null);
   const previewRef = useRef<HTMLCanvasElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
+
+  /*
+    托盤：已經收下、還沒送去辨識的稿紙。
+
+    同時放在 state 與 ref —— state 給畫面用；ref 給「卸載時把 objectURL
+    全部撤掉」與 finish() 用，因為那個 cleanup 的 deps 是 []，
+    閉包裡抓到的永遠是最初的空陣列。
+  */
+  const [pending, setPending] = useState<PendingPage[]>([]);
+  const pendingRef = useRef<PendingPage[]>([]);
+  useEffect(() => {
+    pendingRef.current = pending;
+  }, [pending]);
+  /** 托盤非空時按右上角的 × 會先問一次 */
+  const [showDiscard, setShowDiscard] = useState(false);
+  /*
+    縮圖的 id。不要用 crypto.randomUUID() —— 它只在安全來源存在，
+    而這個視窗有一整條非 https 的相簿路徑（見下面的 insecure），
+    在那裡呼叫會直接 throw。
+  */
+  const nextId = useRef(0);
+
+  /*
+    首頁的兩個入口什麼時候要關掉。
+
+    用 trayFull 不用 canAddMore：從首頁拍的那張會變成「畫面上這張」，
+    托盤張數不變 —— 用 canAddMore 會在托盤 7 張時就不給拍，但第 8 張是合法的。
+  */
+  const atLimit = trayFull(pending.length);
 
   const insecure = typeof window !== 'undefined' && !window.isSecureContext;
   const inAppBrowser =
@@ -115,6 +159,21 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     () => () => {
       resultRef.current?.dispose();
       resultRef.current = null;
+    },
+    [],
+  );
+
+  /*
+    離開時撤掉所有縮圖的 objectURL。
+
+    只有縮圖走 createObjectURL —— **絕對不要對 ocrBlob／fullBlob 這麼做**，
+    那兩份會交給上層，撤銷時機就會變成跨元件的合約，撤早了圖就破、
+    撤晚了等於沒撤。
+  */
+  useEffect(
+    () => () => {
+      pendingRef.current.forEach((p) => URL.revokeObjectURL(p.thumbUrl));
+      pendingRef.current = [];
     },
     [],
   );
@@ -245,39 +304,78 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     }
   };
 
-  /** 這一頁完成：產生兩份影像交給上層（辨識用的縮圖、保存用的全圖） */
   /**
-   * 收下目前這一張。
+   * 把托盤裡的全部交出去，然後關窗。
+   *
+   * 刻意**不 await onPages** —— 按下去視窗就要消失，辨識在呼叫端的
+   * 進度遮罩底下跑（「正在辨識第 N / M 張」）。呼叫端的 handler 會在
+   * 第一個 await 之前就打開遮罩，跟這裡的 onClose 是同一批 render，
+   * 所以不會出現「視窗關了但什麼都沒發生」的空窗。
+   */
+  const finish = (pages: PendingPage[]) => {
+    if (!pages.length) {
+      onClose();
+      return;
+    }
+    void onPages(pages.map((p) => p.page));
+    onClose();
+  };
+
+  /**
+   * 收下目前這一張放進托盤。**不送辨識**。
+   *
+   * ⚠️ 三份影像都要在 dispose() 之前榨出來（Mat 還活著），而且要**序列**產生：
+   *    三個一起 Promise.all 會同時存在三個 canvas，其中全解析度那個
+   *    就是 34MB，手機上很容易被系統砍掉分頁。
+   *
+   * ⚠️ 榨完就 dispose：托盤裡只留 blob（瀏覽器可以換頁到磁碟），
+   *    不留 ScanResult。這是「連拍八張也不會比拍一張更吃記憶體」的關鍵 ——
+   *    同一時間只有一個 ScanResult 與一個 source canvas 活著。
    *
    * @param next 收完之後去哪：
    *   'camera' 直接回相機拍下一張（一篇作文常常兩三張稿紙，
    *            拍完被丟回首頁、還要再點一次「開啟相機掃描」很惱人）；
-   *   'done'   關掉掃描器，回去繼續打字。
+   *   'done'   送出托盤裡的全部，關掉掃描器。
    */
-  const addPage = async (next: 'camera' | 'done') => {
+  const acceptCurrent = async (next: 'camera' | 'done') => {
     const result = resultRef.current;
     if (!result || adding) return;
     setAdding(true);
-    setBusy('準備影像…');
+    setBusy('收下這一張…');
     await nextFrame();
     try {
       const ocrBlob = await result.toBlob(variant, SCAN_CONFIG.ocrLongSide);
       const fullBlob = await result.toBlob(variant, 0);
-      await onPage({
-        ocrBlob,
-        fullBlob,
-        variant,
-        width: result.width,
-        height: result.height,
-      });
+      const thumbBlob = await result.toBlob(variant, SCAN_CONFIG.thumbLongSide);
+      /*
+        ⚠️ 尺寸要在 dispose() **之前**讀完。
+           result.width 讀的是 warped.cols，而 dispose() 會把那個 Mat delete 掉 ——
+           在之後讀等於碰已經釋放的 WASM 記憶體，會直接 throw，
+           整張就被 catch 吞進「處理失敗」，托盤永遠是空的（實測踩過）。
+      */
+      const width = result.width;
+      const height = result.height;
+
       result.dispose();
       resultRef.current = null;
       sourceRef.current = null;
       setSource(null);
       detectedRef.current = null;
       setDetected(null);
+
+      const taken: PendingPage = {
+        id: `p${nextId.current++}`,
+        page: { ocrBlob, fullBlob, variant, width, height },
+        thumbUrl: URL.createObjectURL(thumbBlob),
+      };
+      // setPending 是非同步的，所以自己組出新陣列，不要等 state 更新
+      const all = [...pendingRef.current, taken];
+      pendingRef.current = all;
+      setPending(all);
+      setMessage('');
+
       if (next === 'done') {
-        onClose();
+        finish(all);
         return;
       }
       // 不能開相機的環境（非 https、沒給權限）回首頁，那裡還有「從相簿選擇」
@@ -289,6 +387,26 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
       setBusy('');
       setAdding(false);
     }
+  };
+
+  /** 刪掉托盤裡的某一張。還沒送出，所以不問第二次，只在訊息列說一聲 */
+  const removePage = (id: string) => {
+    const i = pendingRef.current.findIndex((p) => p.id === id);
+    if (i < 0) return;
+    URL.revokeObjectURL(pendingRef.current[i].thumbUrl);
+    const rest = pendingRef.current.filter((p) => p.id !== id);
+    pendingRef.current = rest;
+    setPending(rest);
+    setMessage(`已刪掉第 ${i + 1} 張，可以再拍一張補上`);
+  };
+
+  /** 右上角的 ×。托盤裡有東西就先問 —— 關掉就真的沒了，blob 還沒交給任何人 */
+  const requestClose = () => {
+    if (pendingRef.current.length > 0) {
+      setShowDiscard(true);
+      return;
+    }
+    onClose();
   };
 
   const cvBadge = {
@@ -325,14 +443,14 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {pageCount > 0 && (
+            {pending.length > 0 && (
               <span className="px-2.5 py-1 rounded-lg bg-success-100 text-success-700 border border-success-200 text-caption whitespace-nowrap">
-                已掃 {pageCount} 頁
+                已收 {pending.length} 張
               </span>
             )}
             <button
               id="scanner-btn-close"
-              onClick={onClose}
+              onClick={requestClose}
               title="關閉掃描"
               className="tap-target p-2 rounded-full text-text-secondary hover:bg-surface-soft transition-colors"
             >
@@ -369,7 +487,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
               <button
                 id="scanner-btn-open-camera"
                 onClick={() => setStep('camera')}
-                disabled={insecure}
+                disabled={insecure || atLimit}
                 className="inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-brand bg-primary text-on-accent text-ui shadow-sm hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
               >
                 <Camera size={18} />
@@ -387,20 +505,36 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
                   className="hidden"
+                  disabled={atLimit}
                   onChange={onPickFile}
                 />
               </label>
             </div>
 
-            {/* 掃到一半回到這裡時，要有一條明確的路走掉，不是只能按右上角的 × */}
-            {pageCount > 0 && (
+            {atLimit && (
+              <p className="text-caption text-warning-700 bg-warning-100 border border-warning-200 rounded-brand px-3.5 py-2.5">
+                {limitHint(pending.length)}
+              </p>
+            )}
+
+            <ScanTray pages={pending} onRemove={removePage} />
+
+            {/*
+              掃到一半回到這裡時的出口。
+
+              ⚠️ 這顆以前是 onClose ——「完成，回去繼續打字」其實什麼都沒做，
+                 因為那時候每一張早就各自送出去了。現在張數留在托盤裡，
+                 按 onClose 等於把學生拍的全部丟掉，所以一定要走 finish()。
+                 非 https 的環境只能用相簿一張一張累積，**這是那條路唯一的出口**。
+            */}
+            {pending.length > 0 && (
               <button
-                id="scanner-btn-finish"
-                onClick={onClose}
+                id="scanner-btn-use-pages-home"
+                onClick={() => finish(pending)}
                 className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-brand bg-secondary text-on-accent text-ui shadow-sm hover:opacity-90 transition-opacity"
               >
                 <Check size={16} />
-                完成，回去繼續打字（共 {pageCount} 張）
+                {pagesButtonLabel(pending.length)}
               </button>
             )}
 
@@ -435,7 +569,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
         {/* ── 相機 ── */}
         {step === 'camera' && (
           <ScannerCamera
-            pageCount={pageCount}
+            pageCount={pending.length}
             autoCapture={autoCapture}
             onToggleAuto={() => setAutoCapture((v) => !v)}
             onCapture={(canvas, live) => void openCaptured(canvas, live)}
@@ -513,6 +647,8 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
             </div>
             <p className="text-caption text-text-muted tabular-nums">{resultInfo}</p>
 
+            <ScanTray pages={pending} onRemove={removePage} />
+
             <div className="flex flex-wrap items-center gap-2">
               <button
                 id="scanner-btn-result-retake"
@@ -520,7 +656,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-brand border border-border text-text-secondary text-body hover:bg-surface-soft transition-colors whitespace-nowrap"
               >
                 <RotateCcw size={15} />
-                重拍
+                這張重拍
               </button>
               <button
                 id="scanner-btn-result-adjust"
@@ -533,24 +669,28 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
               {/*
                 兩個出口都要明擺著。一篇作文常常不只一張稿紙，
                 只給一顆「使用這一張」的話，人不知道還能不能再拍。
+
+                「再拍下一張」只是把這張收進托盤 —— **不送辨識**。
+                整批要等按下右邊那顆才一起送。
               */}
               <button
                 id="scanner-btn-add-more"
-                onClick={() => void addPage('camera')}
-                disabled={adding}
+                onClick={() => void acceptCurrent('camera')}
+                disabled={adding || !canAddMore(pending.length)}
+                title={limitHint(pending.length) || undefined}
                 className="ml-auto inline-flex items-center gap-1.5 px-4 py-2.5 rounded-brand border border-border-strong text-text-primary text-body hover:bg-surface-soft disabled:opacity-50 transition-colors whitespace-nowrap"
               >
                 <Plus size={15} />
                 再拍下一張
               </button>
               <button
-                id="scanner-btn-add-page"
-                onClick={() => void addPage('done')}
+                id="scanner-btn-use-pages"
+                onClick={() => void acceptCurrent('done')}
                 disabled={adding}
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-brand bg-secondary text-on-accent text-ui shadow-sm hover:opacity-90 disabled:opacity-50 transition-opacity whitespace-nowrap"
               >
                 {adding ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-                {pageCount > 0 ? `完成（共 ${pageCount + 1} 張）` : '使用這一張'}
+                {pagesButtonLabel(pending.length + 1)}
               </button>
             </div>
           </div>
@@ -572,6 +712,24 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
             {message}
           </p>
         </div>
+      )}
+
+      {/*
+        托盤裡還有東西就按了 ×。關掉是真的丟掉 —— 那些 blob 還沒交給任何人。
+
+        ⚠️ ConfirmDialog 與這個視窗**都是 z-[1100] 且都 portal 到 body**，
+           同層級時靠 DOM 掛載順序決勝負：它是在掃描視窗之後才掛上去的，
+           所以蓋得住。成立，但不是自動成立的 —— 誰動了掛載順序就會壞。
+      */}
+      {showDiscard && (
+        <ConfirmDialog
+          title={`要丟掉已經拍好的 ${pending.length} 張嗎？`}
+          message={`這 ${pending.length} 張還沒有送去辨識，關掉就沒有了。\n\n想留下的話請按「取消」，再按「${pagesButtonLabel(pending.length)}」。`}
+          confirmLabel="丟掉並關閉"
+          danger
+          onConfirm={onClose}
+          onCancel={() => setShowDiscard(false)}
+        />
       )}
     </div>,
     document.body,

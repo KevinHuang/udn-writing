@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Camera,
   Check,
@@ -23,6 +23,7 @@ import { fileToBase64 } from '../lib/fileToBase64';
 import { extractTextFromImage } from '../api/ai';
 import { blobToBase64 } from '../lib/scan/image';
 import { DocumentScannerModal, type ScannedPage } from './scan/DocumentScannerModal';
+import { summarizeBatchOcr, batchOcrMessages, type PageOcrOutcome } from '../lib/scan/pages';
 
 interface ProxySubmitModalProps {
   assignment: Assignment;
@@ -80,6 +81,15 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
 
   const active = pendingStudents.find((s) => s.studentId === activeStudentId);
 
+  /*
+    非同步流程（整批辨識）跑完時要知道「現在選的還是不是同一位」。
+    render 之外讀不到最新的 state，所以另外放一份 ref。
+  */
+  const activeStudentIdRef = useRef(activeStudentId);
+  useEffect(() => {
+    activeStudentIdRef.current = activeStudentId;
+  }, [activeStudentId]);
+
   const selectStudent = (studentId: string) => {
     setActiveStudentId(studentId);
     setContent('');
@@ -88,29 +98,57 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
   };
 
   /**
-   * 掃好一頁：辨識出來的文字接在內容後面，全解析度原稿由後端存進 GCS。
-   * 這一張已經拉正、去陰影過，辨識率比直接拍照好很多。
+   * 掃描視窗交出來的整批稿紙：逐張辨識，文字依拍攝順序接在內容後面，
+   * 全解析度原稿由後端存進 GCS。這些影像已經拉正、去陰影過，辨識率比直接拍照好很多。
+   *
+   * ⚠️ 每張各自 try/catch：第 2 張失敗不該讓第 3、4 張白掃，
+   *    而且第 1 張的原稿此時已經存進 GCS，整批 throw 會留下孤兒檔。
    */
-  const handleScannedPage = async (page: ScannedPage) => {
+  const handleScannedPages = async (pages: ScannedPage[]) => {
+    if (!pages.length) return;
+    /*
+      ⚠️ 記下這一批是掃給誰的。
+
+      辨識跑完要好幾十秒，老師很可能中途就點了下一位 —— selectStudent 會
+      清空 content／picFiles，但這個迴圈結束時還是會把結果寫進去，
+      **等於把前一位的作文灌到後一位身上**。單張時這個時間窗只有幾秒，
+      改成整批之後會長到一分多鐘，等於必然會發生。
+    */
+    const forStudent = activeStudentId;
     setIsOcrLoading(true);
-    setOcrProgress({ current: 1, total: 1 });
+    setOcrProgress({ current: 0, total: pages.length });
+    const outcomes: PageOcrOutcome[] = [];
     try {
-      const [ocrBase64, fullBase64] = await Promise.all([
-        blobToBase64(page.ocrBlob),
-        blobToBase64(page.fullBlob),
-      ]);
-      const ocr = await extractTextFromImage(ocrBase64, page.ocrBlob.type, assignment.id, {
-        base64Image: fullBase64,
-        mimeType: page.fullBlob.type,
-      });
-      if (ocr.files.length) setPicFiles((prev) => [...prev, ...ocr.files]);
-      if (ocr.text) {
-        setContent((prev) => (prev ? prev + '\n\n' + ocr.text : ocr.text));
-      } else {
-        setFileIssues(['這一張沒有辨識出文字。可以重掃，或直接在下方打字。']);
+      for (let i = 0; i < pages.length; i++) {
+        setOcrProgress({ current: i + 1, total: pages.length });
+        const p = pages[i];
+        try {
+          const [ocrBase64, fullBase64] = await Promise.all([
+            blobToBase64(p.ocrBlob),
+            blobToBase64(p.fullBlob),
+          ]);
+          const ocr = await extractTextFromImage(ocrBase64, p.ocrBlob.type, assignment.id, {
+            base64Image: fullBase64,
+            mimeType: p.fullBlob.type,
+          });
+          outcomes.push({ index: i + 1, text: ocr.text, files: ocr.files });
+        } catch {
+          outcomes.push({ index: i + 1, text: '', files: [], failed: true });
+        }
       }
-    } catch {
-      setFileIssues(['辨識失敗，請稍後再試，或直接在下方打字。']);
+
+      if (forStudent !== activeStudentIdRef.current) {
+        setFileIssues(['已經換了學生，這一批辨識結果沒有寫入。請回到原本那一位重掃。']);
+        return;
+      }
+
+      const summary = summarizeBatchOcr(outcomes);
+      // 老師可能先「直接拍照」再「掃描稿紙」，兩批原稿都要留住
+      if (summary.files.length) setPicFiles((prev) => [...prev, ...summary.files]);
+      if (summary.text) {
+        setContent((prev) => (prev ? prev + '\n\n' + summary.text : summary.text));
+      }
+      setFileIssues(batchOcrMessages(summary, 'list'));
     } finally {
       setIsOcrLoading(false);
       setOcrProgress({ current: 0, total: 0 });
@@ -396,9 +434,8 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
       {scannerOpen && (
         <DocumentScannerModal
           subtitle={active ? `${seatText(active.seatNo)} ${active.studentName}` : undefined}
-          pageCount={picFiles.length}
           onClose={() => setScannerOpen(false)}
-          onPage={handleScannedPage}
+          onPages={handleScannedPages}
         />
       )}
     </div>

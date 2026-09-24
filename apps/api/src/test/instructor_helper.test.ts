@@ -13,6 +13,7 @@
 import { test, before, after, beforeEach, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import InstructorHelper from '../dal/instructor_helper';
+import { CourseScope } from '../lib/course_scope';
 import {
   resetDb, rawDb, seedUser, seedSchool, seedCourse, seedInstructor,
   seedLearner, seedTask, seedAssignment, seedSubmission,
@@ -34,15 +35,19 @@ async function scenario() {
   return { teacher, student, school, course, task, assignment };
 }
 
+
+/** 教師的範圍。改成 CourseScope 之後，DAL 收的不再是 id（見 lib/course_scope.ts） */
+const asTeacher = (userId: string | number): CourseScope => ({ kind: 'instructor', userId: Number(userId) });
+
 describe('getAssignments', () => {
   test('沒有任何課程的教師拿到空陣列', async () => {
-    const rows = await InstructorHelper.getAssignments('999999');
+    const rows = await InstructorHelper.getAssignments(asTeacher('999999'));
     assert.deepEqual(rows, []);
   });
 
   test('回傳自己班級的作業，欄位齊全', async () => {
     const s = await scenario();
-    const rows = await InstructorHelper.getAssignments(s.teacher.id);
+    const rows = await InstructorHelper.getAssignments(asTeacher(s.teacher.id));
     assert.equal(rows.length, 1);
     const a = rows[0];
     assert.equal(a.assignment_id, s.assignment);
@@ -57,14 +62,14 @@ describe('getAssignments', () => {
   test('看不到別人班級的作業', async () => {
     const s = await scenario();
     const other = await seedUser('other@test.edu.tw', '別的老師');
-    const rows = await InstructorHelper.getAssignments(other.id);
+    const rows = await InstructorHelper.getAssignments(asTeacher(other.id));
     assert.deepEqual(rows, []);
   });
 
   test('學生繳交後 submission_count 跟著增加', async () => {
     const s = await scenario();
     await seedSubmission(s.assignment, s.student.id);
-    const rows = await InstructorHelper.getAssignments(s.teacher.id);
+    const rows = await InstructorHelper.getAssignments(asTeacher(s.teacher.id));
     assert.equal(Number(rows[0].submission_count), 1);
     assert.equal(Number(rows[0].graded_count), 0);
   });
@@ -73,7 +78,7 @@ describe('getAssignments', () => {
 describe('getSubmissions', () => {
   test('沒繳交的學生也要出現在名單裡（否則老師看不到缺繳）', async () => {
     const s = await scenario();
-    const rows = await InstructorHelper.getSubmissions(s.assignment);
+    const rows = await InstructorHelper.getSubmissions(s.assignment, asTeacher(s.teacher.id));
     assert.equal(rows.length, 1);
     assert.equal(rows[0].user_id, s.student.id);
     assert.equal(rows[0].student_name, '林同學');
@@ -84,7 +89,7 @@ describe('getSubmissions', () => {
   test('繳交後帶出作文內容', async () => {
     const s = await scenario();
     const sub = await seedSubmission(s.assignment, s.student.id, '春天來了');
-    const rows = await InstructorHelper.getSubmissions(s.assignment);
+    const rows = await InstructorHelper.getSubmissions(s.assignment, asTeacher(s.teacher.id));
     assert.equal(rows[0].submission_id, sub);
     assert.equal(rows[0].content, '春天來了');
     assert.ok(rows[0].submited_time);
@@ -95,7 +100,7 @@ describe('saveFeedback', () => {
   test('寫入一筆有效的批改結果', async () => {
     const s = await scenario();
     const sub = await seedSubmission(s.assignment, s.student.id);
-    await InstructorHelper.saveFeedback(sub, 5, { summary: '寫得很好' }, s.teacher.id);
+    await InstructorHelper.saveFeedback(sub, 5, { summary: '寫得很好' }, s.teacher.id, asTeacher(s.teacher.id));
 
     const rows = await rawDb.manyOrNone(
       `SELECT score, content, is_valid, is_ai, is_returned FROM submission_feedback WHERE ref_submission_id = $1`, [sub]);
@@ -113,8 +118,8 @@ describe('saveFeedback', () => {
     const s = await scenario();
     const sub = await seedSubmission(s.assignment, s.student.id);
 
-    await InstructorHelper.saveFeedback(sub, 3, { summary: '第一次' }, s.teacher.id);
-    await InstructorHelper.saveFeedback(sub, 6, { summary: '重批' }, s.teacher.id);
+    await InstructorHelper.saveFeedback(sub, 3, { summary: '第一次' }, s.teacher.id, asTeacher(s.teacher.id));
+    await InstructorHelper.saveFeedback(sub, 6, { summary: '重批' }, s.teacher.id, asTeacher(s.teacher.id));
 
     const all = await rawDb.manyOrNone(
       `SELECT score, is_valid FROM submission_feedback WHERE ref_submission_id = $1 ORDER BY id`, [sub]);
@@ -127,7 +132,7 @@ describe('saveFeedback', () => {
   test('教師手動修改可以標記成非 AI 產生', async () => {
     const s = await scenario();
     const sub = await seedSubmission(s.assignment, s.student.id);
-    await InstructorHelper.saveFeedback(sub, 4, { summary: '老師改的' }, s.teacher.id, 0, 0, false);
+    await InstructorHelper.saveFeedback(sub, 4, { summary: '老師改的' }, s.teacher.id, asTeacher(s.teacher.id), 0, 0, false);
     const row = await rawDb.one(
       `SELECT is_ai FROM submission_feedback WHERE ref_submission_id = $1 AND is_valid = true`, [sub]);
     assert.equal(row.is_ai, false);
@@ -136,8 +141,8 @@ describe('saveFeedback', () => {
   test('批改後 getAssignments 的 graded_count 增加', async () => {
     const s = await scenario();
     const sub = await seedSubmission(s.assignment, s.student.id);
-    await InstructorHelper.saveFeedback(sub, 5, { summary: 'ok' }, s.teacher.id);
-    const rows = await InstructorHelper.getAssignments(s.teacher.id);
+    await InstructorHelper.saveFeedback(sub, 5, { summary: 'ok' }, s.teacher.id, asTeacher(s.teacher.id));
+    const rows = await InstructorHelper.getAssignments(asTeacher(s.teacher.id));
     assert.equal(Number(rows[0].graded_count), 1);
   });
 });

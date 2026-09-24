@@ -1,11 +1,19 @@
 import { db } from './database';
+import { CourseScope, courseScopeSubquery } from '../lib/course_scope';
 
 class InstructorHelper {
 
     /**
      * 取得該教師所屬課程的派發任務清單
      */
-    public static async getAssignments(teacher_id: string) {
+    public static async getAssignments(scope: CourseScope) {
+        const courseScope = courseScopeSubquery(scope);
+        /*
+          「我自己派的作業」只對授課教師成立 —— 管理人員沒有這一層，
+          範圍全由 courseScope 決定，這裡就放一個恆假條件不去干擾它。
+        */
+        const scopeCondition =
+            scope.kind === 'instructor' ? `a.ref_user_id = ${scope.userId}` : 'false';
         const sql = `
             with current_semester AS (
                 -- 找出目前學年期
@@ -57,13 +65,16 @@ class InstructorHelper {
             -- JOIN current_semester sem ON c.school_year = sem.school_year
             --                        AND c.semester = sem.semester 
             -- 篩選條件：1. 教師本人指派 或是 2. 教師所屬班級的作業
-            WHERE (a.ref_user_id = $1 OR c.id IN (SELECT ref_course_id FROM public.uc_instructor WHERE ref_user_id = $1))
+            -- 範圍依身分而定（見 lib/course_scope.ts）：教師是自己的班，
+            -- 管理人員是全部／自己管的學校。a.ref_user_id 那一段只對教師有意義，
+            -- 留著是為了「自己派、但已經不在班上」的作業仍然看得見。
+            WHERE (${scopeCondition} OR c.id IN ${courseScope})
             
             -- 與單一班級的查詢用同一套排序（sort_order，NULLS LAST）——
             -- 兩個畫面列同一班的作業卻出現兩種順序，老師會覺得系統在跟他鬧
             ORDER BY a.sort_order ASC NULLS LAST, a.assigned_at DESC;
         `;
-        return await db.default.manyOrNone(sql, [teacher_id]);
+        return await db.default.manyOrNone(sql);
     }
 
     /**
@@ -79,7 +90,7 @@ class InstructorHelper {
      * 一樣 LEFT JOIN 名冊 —— 未繳交的學生也要在結果裡，
      * 否則前端算不出 Unsubmitted（見 @udn/shared 的 submissionStatusOf）。
      */
-    public static async getSubmissionSummary(userId: string) {
+    public static async getSubmissionSummary(scope: CourseScope) {
         const sql = `
             SELECT
                 a.id AS assignment_id,
@@ -105,18 +116,21 @@ class InstructorHelper {
                     WHERE is_valid = true
                     ORDER BY ref_submission_id, created_time DESC, id DESC
                 ) sf ON sf.ref_submission_id = s.id
-            WHERE a.ref_course_id IN (
-                SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $1
-            )
+            WHERE a.ref_course_id IN ${courseScopeSubquery(scope)}
             ORDER BY a.id, ul.seat_no NULLS LAST, u.name
         `;
-        return (await db.default.manyOrNone(sql, [userId])) || [];
+        return (await db.default.manyOrNone(sql)) || [];
     }
 
     /**
-     * 取得某份作業的修課學生繳交狀況與成績
+     * 取得某份作業的修課學生繳交狀況與成績。
+     *
+     * ⚠️ **這支以前完全沒有把關**（只比對 assignment id）——
+     *    任何教師只要換掉網址上的數字，就讀得到別人班學生的作文全文與評語。
+     *    改成吃範圍之後，教師是自己的班、校務管理是自己的學校、
+     *    聯合報管理人員才是全部。範圍外回空陣列（不是 404，與其他查詢一致）。
      */
-    public static async getSubmissions(assignment_id: string) {
+    public static async getSubmissions(assignment_id: string, scope: CourseScope) {
         const sql = `
             SELECT 
                 u.id as user_id, 
@@ -163,6 +177,7 @@ class InstructorHelper {
                         AND bps1.created_at = bps2.max_time
             ) AS proxy_s ON proxy_s.ref_user_id = u.id AND proxy_s.ref_assignment_id = a.id
             WHERE a.id = $1
+              AND a.ref_course_id IN ${courseScopeSubquery(scope)}
             ORDER BY u.id ASC;
         `;
         return await db.default.manyOrNone(sql, [assignment_id]);
@@ -182,15 +197,19 @@ class InstructorHelper {
      * ⚠️ **先前完全沒有授權檢查** —— 任何教師都能批改任何一份作品。
      *    現在整包在一個交易裡，第一件事就是確認這份繳交屬於你教的班。
      */
-    public static async saveFeedback(submission_id: string, score: number, analysis_content: any, instructor_id: string, inputTokens: number = 0, outputTokens: number = 0, is_ai: boolean = true) {
+    public static async saveFeedback(submission_id: string, score: number, analysis_content: any, instructor_id: string, scope: CourseScope, inputTokens: number = 0, outputTokens: number = 0, is_ai: boolean = true) {
+        /*
+          instructor_id 與 scope 是兩件事，不要合併：
+          前者記錄「誰批的」（會寫進 submission_feedback.ref_user_id），
+          後者決定「可不可以批」。管理人員批改時兩者不同 ——
+          範圍是整個學校，但署名還是他本人。
+        */
         const owned = await db.default.oneOrNone(
             `SELECT s.id FROM submission s
                  INNER JOIN assignment a ON a.id = s.ref_assignment_id
              WHERE s.id = $1
-               AND a.ref_course_id IN (
-                     SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $2
-               )`,
-            [submission_id, instructor_id]);
+               AND a.ref_course_id IN ${courseScopeSubquery(scope)}`,
+            [submission_id]);
         if (!owned) return null;
 
         /*
@@ -256,7 +275,7 @@ class InstructorHelper {
      * 取得某課程的修課學生名單，
      * 要檢查是否是這位教師的班級才可以取得
      */
-    public static async getStudents(course_id: string, teacher_id: string) {
+    public static async getStudents(course_id: string, scope: CourseScope) {
         const sql = `
             SELECT 
                 u.id ,
@@ -264,13 +283,11 @@ class InstructorHelper {
                 ul.seat_no
             FROM public.uc_learner ul
             JOIN public."user" u ON u.id = ul.ref_user_id
-            WHERE ul.ref_course_id = $1 
-                AND ul.ref_course_id IN (
-                    SELECT ref_course_id FROM public.uc_instructor WHERE ref_user_id = $2
-                )
+            WHERE ul.ref_course_id = $1
+                AND ul.ref_course_id IN ${courseScopeSubquery(scope)}
             ORDER BY ul.seat_no ASC;
         `;
-        return await db.default.manyOrNone(sql, [course_id, teacher_id]);
+        return await db.default.manyOrNone(sql, [course_id]);
     }
 }
 

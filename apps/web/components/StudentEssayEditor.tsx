@@ -29,6 +29,12 @@ import {
   canStudentSubmit,
 } from '../lib/assignments';
 import { DocumentScannerModal, type ScannedPage } from './scan/DocumentScannerModal';
+import {
+  summarizeBatchOcr,
+  batchOcrMessages,
+  mergePicFiles,
+  type PageOcrOutcome,
+} from '../lib/scan/pages';
 import { ConfirmDialog } from './ConfirmDialog';
 import { blobToBase64 } from '../lib/scan/image';
 import { countWords } from '../lib/wordCount';
@@ -94,8 +100,6 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
    * 用 ref 不用 state —— 連掃兩頁時第二頁的回呼要馬上讀得到。
    */
   const scannedThisSession = React.useRef(false);
-  /** 這次掃了幾頁。給掃描視窗顯示「第 N 頁」用（render 裡不能讀 ref） */
-  const [sessionScanCount, setSessionScanCount] = useState(0);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showClearModal, setShowClearModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -176,41 +180,38 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
     setIsOcrLoading(true);
     setOcrProgress({ current: 0, total: fileArray.length });
     
-    let combinedText = '';
-    let successCount = 0;
-
+    const outcomes: PageOcrOutcome[] = [];
     try {
       for (let i = 0; i < fileArray.length; i++) {
         setOcrProgress({ current: i + 1, total: fileArray.length });
         const file = fileArray[i];
-        
-        const base64 = await fileToBase64(file);
-        /*
-          ⚠️ 帶 assignment.id 進去，後端才會把原圖存進 GCS。
-             回傳的是 { text, files } —— 以前這裡當成字串直接串接，
-             TypeScript 不會擋（string + object 合法），但作文裡會被塞進
-             「[object Object]」。
-        */
-        const ocr = await extractTextFromImage(base64, file.type, assignment.id);
-        if (ocr.files.length) setPicFiles((prev) => [...prev, ...ocr.files]);
-        if (ocr.text) {
-          combinedText += (combinedText ? '\n\n' : '') + ocr.text;
-          successCount++;
+        try {
+          const base64 = await fileToBase64(file);
+          /*
+            ⚠️ 帶 assignment.id 進去，後端才會把原圖存進 GCS。
+               回傳的是 { text, files } —— 以前這裡當成字串直接串接，
+               TypeScript 不會擋（string + object 合法），但作文裡會被塞進
+               「[object Object]」。
+          */
+          const ocr = await extractTextFromImage(base64, file.type, assignment.id);
+          outcomes.push({ index: i + 1, text: ocr.text, files: ocr.files });
+        } catch (err) {
+          // 單張失敗不該讓整批停下來 —— 以前整段只有一層 try，
+          // 第一張炸掉後面幾張就完全不跑了
+          console.error(`OCR failed (第 ${i + 1} 張):`, err);
+          outcomes.push({ index: i + 1, text: '', files: [], failed: true });
         }
       }
 
-      if (combinedText) {
-        setContent(prev => prev ? prev + '\n\n' + combinedText : combinedText);
+      const summary = summarizeBatchOcr(outcomes);
+      // 相簿上傳一律累加：這不是「重掃」，沒有整份覆蓋的語意
+      if (summary.files.length) setPicFiles((prev) => [...prev, ...summary.files]);
+      if (summary.text) {
+        setContent((prev) => (prev ? prev + '\n\n' + summary.text : summary.text));
         setShowMethodSelector(false);
-        if (successCount < fileArray.length) {
-          alert(`部分圖片辨識失敗。成功提取了 ${successCount}/${fileArray.length} 張圖片的文字。`);
-        }
-      } else {
-        alert('無法從圖片中提取文字，請嘗試更清晰的照片。');
       }
-    } catch (error) {
-      console.error('OCR failed:', error);
-      alert('文字提取失敗，請稍後再試。');
+      const messages = batchOcrMessages(summary, 'alert');
+      if (messages.length) alert(messages.join('\n'));
     } finally {
       setIsOcrLoading(false);
       setOcrProgress({ current: 0, total: 0 });
@@ -223,40 +224,58 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
   };
 
   /**
-   * 掃好一頁：辨識出來的文字接在作文後面，全解析度原稿由後端存進 GCS。
+   * 掃描視窗交出來的整批稿紙：逐張辨識，文字依拍攝順序接在作文後面，
+   * 全解析度原稿由後端存進 GCS。
    *
-   * 一頁有兩份影像：縮到 2000px 的送辨識（傳得快、AI 讀得夠），
+   * 一張有兩份影像：縮到 2000px 的送辨識（傳得快、AI 讀得夠），
    * 全解析度的留給老師對照 —— 同一個請求一起送，不會辨識成功卻沒存到原稿。
+   *
+   * ⚠️ **逐張序列，而且每張各自 try/catch**：第 2 張逾時不該讓第 3、4 張白拍；
+   *    更要緊的是第 1 張的原稿此時已經存進 GCS 了，整批 throw 會留下
+   *    沒有任何作文指向它的孤兒檔。
    */
-  const handleScannedPage = async (page: ScannedPage) => {
-    if (isLocked) return;
+  const handleScannedPages = async (pages: ScannedPage[]) => {
+    if (isLocked || !pages.length) return;
     setIsOcrLoading(true);
-    setOcrProgress({ current: 1, total: 1 });
+    setOcrProgress({ current: 0, total: pages.length });
+    /*
+      ⚠️ 覆蓋規則在**迴圈之前**讀、**迴圈之後**一次結算。
+         每張各讀各寫的話，「這次第一次掃描」會落在「第一張成功的那張」上 ——
+         第 1 張失敗、第 2 張成功時又覆蓋一次，行為變成取決於哪一張失敗。
+    */
+    const replace = !scannedThisSession.current;
+    const outcomes: PageOcrOutcome[] = [];
     try {
-      const [ocrBase64, fullBase64] = await Promise.all([
-        blobToBase64(page.ocrBlob),
-        blobToBase64(page.fullBlob),
-      ]);
-      const ocr = await extractTextFromImage(ocrBase64, page.ocrBlob.type, assignment.id, {
-        base64Image: fullBase64,
-        mimeType: page.fullBlob.type,
-      });
-      if (ocr.files.length) {
-        // 這次第一次掃描：換掉先前留存的原稿（見 scannedThisSession）
-        const first = !scannedThisSession.current;
+      for (let i = 0; i < pages.length; i++) {
+        setOcrProgress({ current: i + 1, total: pages.length });
+        const p = pages[i];
+        try {
+          const [ocrBase64, fullBase64] = await Promise.all([
+            blobToBase64(p.ocrBlob),
+            blobToBase64(p.fullBlob),
+          ]);
+          const ocr = await extractTextFromImage(ocrBase64, p.ocrBlob.type, assignment.id, {
+            base64Image: fullBase64,
+            mimeType: p.fullBlob.type,
+          });
+          outcomes.push({ index: i + 1, text: ocr.text, files: ocr.files });
+        } catch (err) {
+          console.error(`OCR failed (第 ${i + 1} 張):`, err);
+          outcomes.push({ index: i + 1, text: '', files: [], failed: true });
+        }
+      }
+
+      const summary = summarizeBatchOcr(outcomes);
+      if (summary.files.length) {
         scannedThisSession.current = true;
-        setPicFiles((prev) => [...(first ? [] : prev), ...ocr.files]);
-        setSessionScanCount((n) => n + 1);
+        setPicFiles((prev) => mergePicFiles(prev, summary.files, replace));
       }
-      if (ocr.text) {
-        setContent((prev) => (prev ? prev + '\n\n' + ocr.text : ocr.text));
+      if (summary.text) {
+        setContent((prev) => (prev ? prev + '\n\n' + summary.text : summary.text));
         setShowMethodSelector(false);
-      } else {
-        alert('這一張沒有辨識出文字，可以重掃一次或直接打字。');
       }
-    } catch (err) {
-      console.error('OCR failed:', err);
-      alert('文字提取失敗，請稍後再試。');
+      const messages = batchOcrMessages(summary, 'alert');
+      if (messages.length) alert(messages.join('\n'));
     } finally {
       setIsOcrLoading(false);
       setOcrProgress({ current: 0, total: 0 });
@@ -288,7 +307,6 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
     setContent('');
     setPicFiles([]);
     scannedThisSession.current = false;
-    setSessionScanCount(0);
     setShowMethodSelector(true);
     setError(null);
   };
@@ -338,9 +356,8 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
       {scannerOpen && (
         <DocumentScannerModal
           subtitle={assignment.title}
-          pageCount={sessionScanCount}
           onClose={() => setScannerOpen(false)}
-          onPage={handleScannedPage}
+          onPages={handleScannedPages}
         />
       )}
       {/* Confirmation Modal */}

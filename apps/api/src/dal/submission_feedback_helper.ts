@@ -1,4 +1,5 @@
 import { db } from './database';
+import { CourseScope, courseScopeSubquery } from '../lib/course_scope';
 import AssignmentHelper from './assignment_helper';
 
 class SubmissionFeedbackHelper {
@@ -12,7 +13,7 @@ class SubmissionFeedbackHelper {
      *    最嚴重的一個，因為它的副作用是不可逆的（學生已經看到了）。
      *    現在只會動到呼叫者教的班。
      */
-    public static async returnFeedback(submissionIds: string[], userId: string) {
+    public static async returnFeedback(submissionIds: string[], scope: CourseScope) {
         const result = await db.default.manyOrNone(`
             UPDATE submission_feedback SET is_returned = true, returned_time = now()
             WHERE ref_submission_id = ANY($1::bigint[])
@@ -20,12 +21,10 @@ class SubmissionFeedbackHelper {
               AND ref_submission_id IN (
                     SELECT s.id FROM submission s
                         INNER JOIN assignment a ON a.id = s.ref_assignment_id
-                    WHERE a.ref_course_id IN (
-                        SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $2
-                    )
+                    WHERE a.ref_course_id IN ${courseScopeSubquery(scope)}
               )
             RETURNING id
-        `, [submissionIds, userId]);
+        `, [submissionIds]);
         return result;
     }
 
@@ -50,7 +49,7 @@ class SubmissionFeedbackHelper {
      *
      * ⚠️ 同樣補上授權：先前任何教師都能重置任何一份作品的批改。
      */
-    public static async resetBySubmissionId(submission_id: string, userId: string) {
+    public static async resetBySubmissionId(submission_id: string, scope: CourseScope) {
         const sql = `
             UPDATE submission_feedback SET is_valid = false
             WHERE ref_submission_id = $1
@@ -58,13 +57,11 @@ class SubmissionFeedbackHelper {
               AND ref_submission_id IN (
                     SELECT s.id FROM submission s
                         INNER JOIN assignment a ON a.id = s.ref_assignment_id
-                    WHERE a.ref_course_id IN (
-                        SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $2
-                    )
+                    WHERE a.ref_course_id IN ${courseScopeSubquery(scope)}
               )
             RETURNING id
         `;
-        return (await db.default.manyOrNone(sql, [submission_id, userId])) || [];
+        return (await db.default.manyOrNone(sql, [submission_id])) || [];
     }
 
     public static async saveSubscores(feedback_id: string, inputTokens: number = 0, outputTokens: number = 0, sub_scores: any = undefined) {

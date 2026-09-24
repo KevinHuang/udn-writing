@@ -4,7 +4,8 @@ import SubmissionHelper from '../dal/submission_helper';
 import GenAIHelper from '../dal/genai_helper';
 import { isAiConfigured, simulateGrading, simulatedDelayMs } from '../dal/simulated_grading';
 import type { Context } from 'koa';
-import { OAuthMiddleware, actsAsSystemAdmin } from '../middleware/oauth';
+import { OAuthMiddleware, actsAsSystemAdmin, actsAsAdmin } from '../middleware/oauth';
+import { courseScopeOf } from '../lib/scope_of';
 import SubmissionFeedbackHelper from '../dal/submission_feedback_helper';
 import TaskHelper from '../dal/task_helper';
 import StorageHelper from '../dal/storage_helper';
@@ -39,6 +40,15 @@ router.use(OAuthMiddleware.requireLogin);
 const QUESTION_BANK_PATH = /\/instructor\/(tasks|folders)(\/|$)/;
 router.use(async (ctx, next) => {
     if (QUESTION_BANK_PATH.test(ctx.path) && actsAsSystemAdmin(ctx)) return next();
+    /*
+      兩種管理人員與授課教師做一樣的事，差別只在看得到的範圍（見 lib/course_scope.ts）：
+        聯合報管理人員 → 全部班級
+        校務管理      → 自己管的學校
+      ⚠️ 以前這裡只認授課教師，管理人員切過身分之後整組 API 一律 403 ——
+         前端卻照樣把教師的畫面給他們看，於是批改頁開起來是空白的
+         （作文、評語、標記、請假全部載不到）。
+    */
+    if (actsAsAdmin(ctx)) return next();
     return OAuthMiddleware.isInstructor(ctx, next);
 });
 
@@ -81,7 +91,7 @@ router.get('/school-courses', async (ctx) => {
 router.get('/assignments', async (ctx) => {
     try {
         const userId = ctx.session.userInfo.id;
-        const assignments = await InstructorHelper.getAssignments(userId);
+        const assignments = await InstructorHelper.getAssignments(await courseScopeOf(ctx));
         ctx.body = assignments;
     } catch (error) {
         console.error('Error fetching assignments:', error);
@@ -100,7 +110,7 @@ router.get('/assignments', async (ctx) => {
 router.get('/assignments/:assignmentId/submissions', async (ctx) => {
     try {
         const { assignmentId } = ctx.params;
-        const submissions = await InstructorHelper.getSubmissions(assignmentId);
+        const submissions = await InstructorHelper.getSubmissions(assignmentId, await courseScopeOf(ctx));
 
         // Parse JSON content if it's stored as string
         const parsedSubmissions = submissions.map(s => {
@@ -158,7 +168,7 @@ router.post('/submissions/:submissionId/feedback', async (ctx) => {
             return;
         }
 
-        const feedback = await InstructorHelper.saveFeedback(submissionId, score, analysis_content, userId, 0, 0, false);
+        const feedback = await InstructorHelper.saveFeedback(submissionId, score, analysis_content, userId, await courseScopeOf(ctx), 0, 0, false);
         if (!feedback) { ctx.status = 403; ctx.body = { error: 'Not yours' }; return; }
         ctx.body = { success: true, feedback };
     } catch (error) {
@@ -192,14 +202,14 @@ router.post('/submissions/:submissionId/reset', async (ctx) => {
           一定要 return：底下的 resetBySubmissionId 是另一個破壞性動作，
           第一支被擋卻讓第二支跑下去，會留下不一致的狀態。
         */
-        const result = await SubmissionHelper.resetSubmissions(submissionId, userId);
+        const result = await SubmissionHelper.resetSubmissions(submissionId, await courseScopeOf(ctx));
         if (result.length === 0) {
             ctx.status = 404;
             ctx.body = { error: 'Submission not found or unauthorized' };
             return;
         }
 
-        const result2 = await SubmissionFeedbackHelper.resetBySubmissionId(submissionId, userId);
+        const result2 = await SubmissionFeedbackHelper.resetBySubmissionId(submissionId, await courseScopeOf(ctx));
         ctx.body = { success: true, result, result2 };
     } catch (error) {
         console.error('Error resetting submission:', error);
@@ -217,7 +227,7 @@ router.post('/submissions/:submissionId/reset', async (ctx) => {
 router.get('/courses/:courseId/students', async (ctx) => {
     try {
         const { courseId } = ctx.params;
-        const students = await InstructorHelper.getStudents(courseId, ctx.session.userInfo.id);
+        const students = await InstructorHelper.getStudents(courseId, await courseScopeOf(ctx));
         ctx.body = students;
     } catch (error) {
         console.error('Error fetching students:', error);
@@ -246,7 +256,7 @@ router.post('/grading/:submissionId', async (ctx) => {
 
           404 同時涵蓋「沒這一筆」與「不是你的班」，刻意不區分。
         */
-        const submission = await SubmissionHelper.getSubmissionByIdForInstructor(submissionId, userId);
+        const submission = await SubmissionHelper.getSubmissionByIdForInstructor(submissionId, await courseScopeOf(ctx));
         if (!submission) {
             ctx.status = 404;
             ctx.body = { error: 'Submission not found' };
@@ -290,7 +300,7 @@ router.post('/grading/:submissionId', async (ctx) => {
             result = { score: sim.totalScore, response };
         }
 
-        const feedback = await InstructorHelper.saveFeedback(submissionId, result.score, result, userId, inputTokens, outputTokens);
+        const feedback = await InstructorHelper.saveFeedback(submissionId, result.score, result, userId, await courseScopeOf(ctx), inputTokens, outputTokens);
 
         ctx.body = { success: true, result, feedback };
     } catch (error) {
@@ -311,7 +321,7 @@ router.post('/grading/reset/:submissionId', async (ctx) => {
         const userId = ctx.session.userInfo.id;
 
         // 回 404 同時涵蓋「沒有批改可以重置」與「不是你的班」——刻意不區分
-        const result = await SubmissionFeedbackHelper.resetBySubmissionId(submissionId, userId);
+        const result = await SubmissionFeedbackHelper.resetBySubmissionId(submissionId, await courseScopeOf(ctx));
         if (result.length === 0) {
             ctx.status = 404;
             ctx.body = { error: 'No feedback found' };
@@ -444,7 +454,7 @@ router.post('/submission_feedback/return', async (ctx) => {
         }
 
         // 只會發還呼叫者教的班 —— 別班的 id 混進陣列裡會被安靜略過
-        const feedback = await SubmissionFeedbackHelper.returnFeedback(submissionIds, ctx.session.userInfo.id);
+        const feedback = await SubmissionFeedbackHelper.returnFeedback(submissionIds, await courseScopeOf(ctx));
 
         // const feedback = await InstructorHelper.saveFeedback(submissionId, score, analysis_content, userId, 0, 0, false);
         ctx.body = { success: true, feedback };
@@ -573,7 +583,7 @@ router.put('/tasks/:id', async (ctx) => {
  */
 router.get('/submissions', async (ctx) => {
     try {
-        ctx.body = await InstructorHelper.getSubmissionSummary(ctx.session.userInfo.id);
+        ctx.body = await InstructorHelper.getSubmissionSummary(await courseScopeOf(ctx));
     } catch (error) {
         console.error('Error fetching submission summary:', error);
         ctx.status = 500; ctx.body = { error: 'Internal Server Error' };
@@ -587,7 +597,7 @@ router.get('/submissions', async (ctx) => {
  */
 router.delete('/submissions/:submissionId', async (ctx) => {
     try {
-        const removed = await SubmissionHelper.deleteById(ctx.params.submissionId, ctx.session.userInfo.id);
+        const removed = await SubmissionHelper.deleteById(ctx.params.submissionId, await courseScopeOf(ctx));
         if (!removed) { ctx.status = 403; ctx.body = { error: 'Not yours' }; return; }
         ctx.body = removed;
     } catch (error) {
@@ -606,7 +616,7 @@ router.delete('/submissions/:submissionId', async (ctx) => {
  */
 router.get('/marks', async (ctx) => {
     try {
-        ctx.body = await SubmissionMarkHelper.getByInstructorUserId(ctx.session.userInfo.id);
+        ctx.body = await SubmissionMarkHelper.getByScope(await courseScopeOf(ctx));
     } catch (error) {
         console.error('Error fetching marks:', error);
         ctx.status = 500; ctx.body = { error: 'Internal Server Error' };
@@ -623,9 +633,10 @@ router.put('/submissions/:submissionId/marks/:kind', async (ctx) => {
             ctx.status = 400; ctx.body = { error: 'Invalid kind or marked' }; return;
         }
         const userId = ctx.session.userInfo.id;
+        const scope = await courseScopeOf(ctx);
         const row = marked
-            ? await SubmissionMarkHelper.set(submissionId, kind, userId)
-            : await SubmissionMarkHelper.unset(submissionId, kind, userId);
+            ? await SubmissionMarkHelper.set(submissionId, kind, userId, scope)
+            : await SubmissionMarkHelper.unset(submissionId, kind, userId, scope);
         // 取消一個本來就不存在的章不是錯誤，所以只有「蓋章失敗」才回 403
         if (marked && !row) { ctx.status = 403; ctx.body = { error: 'Not yours' }; return; }
         ctx.body = row ?? { ok: true };
@@ -642,7 +653,7 @@ router.put('/submissions/:submissionId/marks/:kind', async (ctx) => {
  */
 router.get('/leaves', async (ctx) => {
     try {
-        ctx.body = await AssignmentLeaveHelper.getByInstructorUserId(ctx.session.userInfo.id);
+        ctx.body = await AssignmentLeaveHelper.getByScope(await courseScopeOf(ctx));
     } catch (error) {
         console.error('Error fetching leaves:', error);
         ctx.status = 500; ctx.body = { error: 'Internal Server Error' };
@@ -657,9 +668,10 @@ router.put('/assignments/:assignmentId/leaves/:studentId', async (ctx) => {
             ctx.status = 400; ctx.body = { error: 'onLeave must be a boolean' }; return;
         }
         const userId = ctx.session.userInfo.id;
+        const scope = await courseScopeOf(ctx);
         const row = onLeave
-            ? await AssignmentLeaveHelper.set(assignmentId, studentId, userId)
-            : await AssignmentLeaveHelper.unset(assignmentId, studentId, userId);
+            ? await AssignmentLeaveHelper.set(assignmentId, studentId, userId, scope)
+            : await AssignmentLeaveHelper.unset(assignmentId, studentId, userId, scope);
         // ON CONFLICT DO NOTHING：本來就已經請假時 row 是 null，那不是錯誤
         ctx.body = row ?? { ok: true };
     } catch (error) {
@@ -837,7 +849,7 @@ router.put('/courses/:id', async (ctx) => {
             course_name: body.course_name,
             course_type: body.course_type,
             is_active: typeof body.is_active === 'boolean' ? body.is_active : undefined,
-        }, userId);
+        }, await courseScopeOf(ctx));
         if (!course) {
             ctx.status = 404;
             ctx.body = { error: 'Course not found or unauthorized' };
@@ -855,7 +867,7 @@ router.delete('/courses/:id', async (ctx) => {
     try {
         const userId = ctx.session.userInfo.id;
         const { id } = ctx.params;
-        const result = await CourseHelper.deleteById(id, userId);
+        const result = await CourseHelper.deleteById(id, await courseScopeOf(ctx));
         if (!result) {
             ctx.status = 404;
             ctx.body = { error: 'Course not found or unauthorized' };
@@ -873,7 +885,7 @@ router.get('/courses/:id/assignments', async (ctx) => {
     try {
         const userId = ctx.session.userInfo.id;
         const { id } = ctx.params;
-        const assignments = await AssignmentHelper.getAssignmentsByCourseId(userId, id);
+        const assignments = await AssignmentHelper.getAssignmentsByCourseId(await courseScopeOf(ctx), id);
         ctx.body = assignments;
     } catch (error) {
         console.error('Error fetching assignments:', error);
@@ -911,7 +923,7 @@ router.get('/courses/:course_id/finalReports', async (ctx) => {
     try {
         const userId = ctx.session.userInfo.id;
         const { course_id } = ctx.params;
-        ctx.body = await FinalReportHelper.getFinalReport(course_id, userId);
+        ctx.body = await FinalReportHelper.getFinalReport(course_id, await courseScopeOf(ctx));
     } catch (error) {
         console.error('Error fetching final reports:', error);
         ctx.status = 500;
@@ -938,7 +950,7 @@ router.post('/courses/:course_id/finalReports', async (ctx) => {
         const userId = ctx.session.userInfo.id;
         const { course_id } = ctx.params;
 
-        if (!await FinalReportHelper.isTaughtBy(course_id, userId)) {
+        if (!await FinalReportHelper.isInScope(course_id, await courseScopeOf(ctx))) {
             ctx.status = 404;
             ctx.body = { error: 'Course not found or unauthorized' };
             return;
@@ -961,7 +973,7 @@ router.put('/assignments/:assignmentId/status', async (ctx) => {
         const body = ctx.request.body as {
             opened: boolean;
         };
-        const assignment = await AssignmentHelper.updateStatus(assignmentId, body, userId);
+        const assignment = await AssignmentHelper.updateStatus(assignmentId, body, await courseScopeOf(ctx));
         if (!assignment) {
             ctx.status = 404;
             ctx.body = { error: 'Assignment not found or unauthorized' };
@@ -996,7 +1008,8 @@ router.post('/courses/:id/assignments', async (ctx) => {
                 allow_late_submission: body.allow_late_submission ?? false,
                 opened: body.opened === true,
             },
-            userId
+            userId,
+            await courseScopeOf(ctx),
         );
         if (!assignment) {
             // 派不進去只有一個原因：這不是你教的班
@@ -1021,7 +1034,7 @@ router.put('/assignments/:assignmentId/config', async (ctx) => {
     try {
         const userId = ctx.session.userInfo.id;
         const body = ctx.request.body as { deadline?: string | null; allow_late_submission?: boolean };
-        const assignment = await AssignmentHelper.updateConfig(ctx.params.assignmentId, body, userId);
+        const assignment = await AssignmentHelper.updateConfig(ctx.params.assignmentId, body, await courseScopeOf(ctx));
         if (!assignment) { ctx.status = 403; ctx.body = { error: 'Not yours' }; return; }
         ctx.body = assignment;
     } catch (error) {
@@ -1042,7 +1055,7 @@ router.put('/courses/:id/assignments/order', async (ctx) => {
         if (!Array.isArray(orderedIds) || orderedIds.some((x) => typeof x !== 'string')) {
             ctx.status = 400; ctx.body = { error: 'orderedIds must be an array of ids' }; return;
         }
-        const result = await AssignmentHelper.reorder(ctx.params.id, orderedIds as string[], userId);
+        const result = await AssignmentHelper.reorder(ctx.params.id, orderedIds as string[], await courseScopeOf(ctx));
         if (!result) { ctx.status = 403; ctx.body = { error: 'You do not teach this course' }; return; }
         ctx.body = result;
     } catch (error) {
@@ -1062,7 +1075,7 @@ router.put('/courses/:id/assignments/order', async (ctx) => {
 router.delete('/assignments/:assignmentId', async (ctx) => {
     try {
         const userId = ctx.session.userInfo.id;
-        const removed = await AssignmentHelper.deleteById(ctx.params.assignmentId, userId);
+        const removed = await AssignmentHelper.deleteById(ctx.params.assignmentId, await courseScopeOf(ctx));
         if (!removed) { ctx.status = 403; ctx.body = { error: 'Not yours' }; return; }
         ctx.body = removed;
     } catch (error) {
@@ -1076,7 +1089,7 @@ router.put('/assignments/:assignmentId/task', async (ctx) => {
         const userId = ctx.session.userInfo.id;
         const { assignmentId } = ctx.params;
         const body = ctx.request.body as { ref_task_id: string };
-        const assignment = await AssignmentHelper.updateTask(assignmentId, body.ref_task_id, userId);
+        const assignment = await AssignmentHelper.updateTask(assignmentId, body.ref_task_id, await courseScopeOf(ctx));
         if (!assignment) {
             ctx.status = 404;
             ctx.body = { error: 'Assignment not found' };

@@ -2,6 +2,7 @@
 
 import Util from '../util/util';
 import { db } from './database';
+import { CourseScope, courseScopeSubquery } from '../lib/course_scope';
 import GenAIHelper from './genai_helper';
 import SubmissionFeedbackHelper from './submission_feedback_helper';
 import SubmissionHelper from './submission_helper';
@@ -21,7 +22,7 @@ class FinalReportHelper {
      * 一併帶出姓名與座號：final_report 只存 ref_user_id，畫面上要印的是人。
      * 座號可能是空的（校務系統沒給），排序時排到最後而不是被當成 0 排到最前。
      */
-    public static async getFinalReport(courseId: string, instructorId: string) {
+    public static async getFinalReport(courseId: string, scope: CourseScope) {
         const sql = `
             SELECT
                 rpt.*,
@@ -33,20 +34,18 @@ class FinalReportHelper {
                     ON l.ref_user_id = rpt.ref_user_id
                    AND l.ref_course_id = rpt.ref_course_id
             WHERE rpt.ref_course_id = $1
-              AND rpt.ref_course_id IN (
-                    SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $2
-              )
+              AND rpt.ref_course_id IN ${courseScopeSubquery(scope)}
             ORDER BY l.seat_no NULLS LAST, u.name
         `;
-        const result = await db.default.manyOrNone(sql, [courseId, instructorId]);
+        const result = await db.default.manyOrNone(sql, [courseId]);
         return result || [];
     }
 
-    /** 這堂課是不是呼叫者教的。產生總結之前要先問過。 */
-    public static async isTaughtBy(courseId: string, instructorId: string): Promise<boolean> {
+    /** 這堂課在不在呼叫者的範圍內（教師是自己的班，管理人員是全部／自己的學校）。產生總結之前要先問過。 */
+    public static async isInScope(courseId: string, scope: CourseScope): Promise<boolean> {
         const row = await db.default.oneOrNone(
-            `SELECT 1 FROM uc_instructor WHERE ref_course_id = $1 AND ref_user_id = $2 LIMIT 1`,
-            [courseId, instructorId]);
+            `SELECT 1 FROM public.course WHERE id = $1 AND id IN ${courseScopeSubquery(scope)} LIMIT 1`,
+            [courseId]);
         return !!row;
     }
 

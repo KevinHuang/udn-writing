@@ -1,7 +1,8 @@
 import Router from '@koa/router';
 import { Context } from 'koa';
-import { OAuthMiddleware } from '../middleware/oauth';
+import { OAuthMiddleware, actsAsAdmin } from '../middleware/oauth';
 import CourseHelper from '../dal/course_helper';
+import { courseScopeOf } from '../lib/scope_of';
 
 const router = new Router({ prefix: '/courses' });
 
@@ -10,7 +11,8 @@ const router = new Router({ prefix: '/courses' });
  * @description **目前身分看得到的課程。**
  *
  * 可視範圍的規則收在這裡一處，而不是散在前端：
- *   - 系統管理者（聯合報管理人員）：全部課程
+ *   - 聯合報管理人員：全部課程
+ *   - 校務管理：自己管的學校底下的課程
  *   - 授課教師：只有掛在自己名下的（uc_instructor）
  *
  * 前端的 lib/access.ts 有一支 visibleCourses()，但它自己就註明
@@ -27,14 +29,14 @@ router.get('/', OAuthMiddleware.requireLogin, async (ctx: Context) => {
         const user = ctx.session.userInfo;
         const active = ctx.session.activeIdentity;
 
-        // explicit=false（舊前端，沒有身分切換 UI）時退回看擁有的身分，
-        // 管理者優先。舊前端退場後這個分支跟著拿掉。
-        const asAdmin = active?.explicit
-            ? active.type === 'system_admin'
-            : !!user?.isSystemAdmin;
-
-        if (asAdmin) {
-            ctx.body = await CourseHelper.getAllForAdmin();
+        /*
+          ⚠️ 兩種管理人員都走範圍查詢（actsAsAdmin 已經處理「目前選的身分」與
+             舊前端的寬鬆判斷）。以前只認 system_admin，校務管理會掉到下面的
+             教師分支 —— 於是班級列表是「他自己教的班」、作業列表卻是
+             「他管的學校」，兩份清單互相對不上。
+        */
+        if (actsAsAdmin(ctx)) {
+            ctx.body = await CourseHelper.getByScope(await courseScopeOf(ctx));
             return;
         }
         if (!user?.isInstructor) {

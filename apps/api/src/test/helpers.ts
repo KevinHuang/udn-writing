@@ -64,6 +64,20 @@ export async function seedSystemAdmin(account: string): Promise<void> {
   await db.default.none(`INSERT INTO system_admin (account) VALUES ($1)`, [account]);
 }
 
+/**
+ * 校務管理。
+ *
+ * ⚠️ 用 **account** 綁定，不是 ref_user_id —— `UserHelper.getIdentity()` 就是用
+ *    account 比對的（見那支的 school_admin CTE）。用 ref_user_id 會出現
+ *    「身分選單上有校務管理、但一所學校都查不到」的錯位。
+ */
+export async function seedSchoolAdmin(schoolId: string, account: string, name = '校務管理者'): Promise<void> {
+  await db.default.none(
+    `INSERT INTO school_admin (ref_school_id, account, name, role_type) VALUES ($1, $2, $3, 'admin')`,
+    [schoolId, account, name],
+  );
+}
+
 export async function seedSchool(name = '測試中學', dsns = 'test.edu.tw'): Promise<string> {
   const row = await db.default.one(
     `INSERT INTO school (dsns, school_name, school_type) VALUES ($1, $2, '國中') RETURNING id::text`,

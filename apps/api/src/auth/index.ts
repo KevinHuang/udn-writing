@@ -10,6 +10,8 @@ import { SchoolAdminHelper } from '../dal/school_admin_helper';
 import SystemAdminHelper from '../dal/system_admin_helper';
 import sessionStore from '../dal/session_store';
 import { availableIdentities, defaultIdentity, identityOptions, isIdentityType } from '../lib/identity';
+// ⚠️ 開發專用登入，測完就整段移除（見 auth/dev_login.ts）
+import { mountDevLogin } from './dev_login';
 
 const router = new Router({ prefix: '/auth' });
 
@@ -303,5 +305,8 @@ const handleLogout = (ctx: Context) => {
 router.post('/logout', handleLogout);
 /** @deprecated 舊前端相容用，apps/web 接上後移除 */
 router.get('/logout', handleLogout);
+
+// ⚠️ 開發專用登入，測完就整段移除（見 auth/dev_login.ts）
+mountDevLogin(router);
 
 export default router;

@@ -1,4 +1,5 @@
 import { db } from './database';
+import { CourseScope, courseScopeSubquery } from '../lib/course_scope';
 
 /**
  * 作品標記（教師蓋在作文上的佳作／預選章）。
@@ -10,7 +11,7 @@ import { db } from './database';
 class SubmissionMarkHelper {
 
     /** 這位教師所有班級的作品標記 */
-    public static async getByInstructorUserId(userId: string) {
+    public static async getByScope(scope: CourseScope) {
         const sql = `
             SELECT
                 m.ref_submission_id,
@@ -19,18 +20,16 @@ class SubmissionMarkHelper {
             FROM submission_mark m
                 INNER JOIN submission s ON s.id = m.ref_submission_id
                 INNER JOIN assignment a ON a.id = s.ref_assignment_id
-            WHERE a.ref_course_id IN (
-                SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $1
-            )
+            WHERE a.ref_course_id IN ${courseScopeSubquery(scope)}
         `;
-        return (await db.default.manyOrNone(sql, [userId])) || [];
+        return (await db.default.manyOrNone(sql)) || [];
     }
 
     /**
      * 蓋章。同一份作品同一種章只能有一個 —— 靠
      * `UNIQUE (ref_submission_id, kind)` 保證，重複蓋就更新時間。
      */
-    public static async set(submissionId: string, kind: string, userId: string) {
+    public static async set(submissionId: string, kind: string, userId: string, scope: CourseScope) {
         const sql = `
             INSERT INTO submission_mark (ref_submission_id, kind, ref_user_id)
             SELECT $1, $2, $3
@@ -38,9 +37,7 @@ class SubmissionMarkHelper {
                 SELECT 1 FROM submission s
                     INNER JOIN assignment a ON a.id = s.ref_assignment_id
                 WHERE s.id = $1
-                  AND a.ref_course_id IN (
-                        SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $3
-                  )
+                  AND a.ref_course_id IN ${courseScopeSubquery(scope)}
             )
             ON CONFLICT (ref_submission_id, kind)
             DO UPDATE SET marked_at = now(), ref_user_id = EXCLUDED.ref_user_id
@@ -50,7 +47,7 @@ class SubmissionMarkHelper {
     }
 
     /** 取消蓋章。整列刪掉，不留旗標。 */
-    public static async unset(submissionId: string, kind: string, userId: string) {
+    public static async unset(submissionId: string, kind: string, userId: string, scope: CourseScope) {
         const sql = `
             DELETE FROM submission_mark m
             USING submission s, assignment a
@@ -58,9 +55,7 @@ class SubmissionMarkHelper {
               AND m.kind = $2
               AND s.id = m.ref_submission_id
               AND a.id = s.ref_assignment_id
-              AND a.ref_course_id IN (
-                    SELECT ref_course_id FROM uc_instructor WHERE ref_user_id = $3
-              )
+              AND a.ref_course_id IN ${courseScopeSubquery(scope)}
             RETURNING m.*;
         `;
         return await db.default.oneOrNone(sql, [submissionId, kind, userId]);

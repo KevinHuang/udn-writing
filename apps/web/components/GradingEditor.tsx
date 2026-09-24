@@ -210,7 +210,18 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
   };
 
   return (
-    <div className="h-screen flex flex-col bg-surface relative z-50 overflow-hidden w-full">
+    /*
+      ⚠️ 這裡**不要給 z-index**。
+
+      原本是 `relative z-50`，而教師端的導覽列是 `sticky top-0 z-40` ——
+      整個批改頁因此蓋在導覽列上面，帳號選單一拉開就被切掉，
+      只露出最上面那一條「帳號類型」（實測 1440×900）。
+      選單自己的 z-50 救不了：它在導覽列的堆疊脈絡裡面，對外仍然只有 40。
+
+      拿掉之後還有一個好處：`relative` 不帶 z-index 就不會建立堆疊脈絡，
+      底下那個手寫原稿視窗（z-[60]）才能真的蓋過導覽列。
+    */
+    <div className="h-screen flex flex-col bg-surface relative overflow-hidden w-full">
       {/* Top Navigation Bar - Glass */}
       <div className="h-16 md:h-20 bg-card/70 backdrop-blur-xl border-b border-border px-2 md:px-8 flex items-center justify-between shrink-0 shadow-sm z-20">
         <div className="flex items-center gap-1.5 md:gap-4 overflow-hidden mr-2">

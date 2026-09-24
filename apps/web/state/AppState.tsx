@@ -96,7 +96,8 @@ function useAppStateValue() {
   }, []);
 
   /** 前端角色由後端的「目前身分」推導，不是獨立的一份狀態 */
-  const userRole = toUserRole(session?.activeIdentity ?? null);
+  const activeIdentity = session?.activeIdentity ?? null;
+  const userRole = toUserRole(activeIdentity);
 
   /**
    * **載哪一組資料，由目前身分決定。**
@@ -111,18 +112,11 @@ function useAppStateValue() {
   const isStudentRole = userRole === UserRole.STUDENT;
   const teacherDataReady = sessionStatus === 'ready' && !isStudentRole;
   const studentDataReady = sessionStatus === 'ready' && isStudentRole;
-
-  /**
-   * 切換身分。
-   *
-   * 後端會驗這個人是不是真的擁有它 —— 前端這裡不做判斷，
-   * 拿回來的結果才是真的（切換失敗時 session 不會變）。
-   */
-  const switchIdentityTo = async (type: IdentityType) => {
-    const active = await switchIdentity(type);
-    setSession((prev) => (prev ? { ...prev, activeIdentity: active } : prev));
-    return toUserRole(active);
-  };
+  /*
+    ⚠️ 授課教師與聯合報管理人員都是教師端，互切時 teacherDataReady 不會變。
+       所以教師端的每一份清單都要拿 activeIdentity 當 reloadKey（見 useApiList），
+       否則切成管理人員之後畫面仍然只有自己的班。
+  */
 
   /**
    * 登出。
@@ -252,7 +246,7 @@ function useAppStateValue() {
   const loadCourses = useCallback(() => fetchCourses(), []);
   const {
     items: courses, setItems: setCourses, reload: reloadCourses,
-  } = useApiList<Course>(loadCourses, teacherDataReady);
+  } = useApiList<Course>(loadCourses, teacherDataReady, activeIdentity);
 
   /**
    * 班級名冊，依課程 id 快取。
@@ -271,6 +265,23 @@ function useAppStateValue() {
       console.error(`載入名冊失敗 (course ${courseId}):`, e);
     }
   }, []);
+
+  /**
+   * 切換身分。
+   *
+   * 後端會驗這個人是不是真的擁有它 —— 前端這裡不做判斷，
+   * 拿回來的結果才是真的（切換失敗時 session 不會變）。
+   *
+   * 名冊是依需要才載的快取（ensureRoster），不會跟著 reloadKey 重抓，
+   * 所以在這裡清掉 —— 從管理人員切回教師時，別班的名冊不該還留在記憶體裡。
+   */
+  const switchIdentityTo = async (type: IdentityType) => {
+    const active = await switchIdentity(type);
+    setRosters({});
+    setSession((prev) => (prev ? { ...prev, activeIdentity: active } : prev));
+    return toUserRole(active);
+  };
+
   /**
    * 題目與題庫資料夾。
    *
@@ -281,12 +292,12 @@ function useAppStateValue() {
   const loadQuestions = useCallback(() => fetchQuestions(), []);
   const {
     items: questions, reload: reloadQuestions,
-  } = useApiList<Question>(loadQuestions, teacherDataReady);
+  } = useApiList<Question>(loadQuestions, teacherDataReady, activeIdentity);
 
   const loadFolders = useCallback(() => fetchFolders(), []);
   const {
     items: folders, reload: reloadFolders,
-  } = useApiList<Folder>(loadFolders, teacherDataReady);
+  } = useApiList<Folder>(loadFolders, teacherDataReady, activeIdentity);
 
   /**
    * 題目與資料夾的異動。
@@ -433,7 +444,7 @@ function useAppStateValue() {
   const loadAssignments = useCallback(() => fetchAssignments(), []);
   const {
     items: assignments, reload: reloadAssignments,
-  } = useApiList<Assignment>(loadAssignments, teacherDataReady);
+  } = useApiList<Assignment>(loadAssignments, teacherDataReady, activeIdentity);
   /**
    * 請假註記（作業 × 學生）。逾期未繳分成真的沒寫和請假兩種，
    * 只有老師知道差別 —— 見 lib/leave.ts。
@@ -448,7 +459,7 @@ function useAppStateValue() {
   const loadSubmissions = useCallback(() => fetchSubmissionSummary(), []);
   const {
     items: submissions, setItems: setSubmissions, reload: reloadSubmissions,
-  } = useApiList<Submission>(loadSubmissions, teacherDataReady);
+  } = useApiList<Submission>(loadSubmissions, teacherDataReady, activeIdentity);
 
   /**
    * 學生端的全部資料。
@@ -486,7 +497,7 @@ function useAppStateValue() {
       })
       .catch((e) => console.error('載入標記／請假失敗:', e));
     return () => { cancelled = true; };
-  }, [teacherDataReady, loadMarks, loadLeaves]);
+  }, [teacherDataReady, activeIdentity, loadMarks, loadLeaves]);
 
   /**
    * 設定／取消請假註記。

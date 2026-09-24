@@ -16,7 +16,7 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     
     "deploy": "npm run deploy:build && npm run deploy:run",
-    "deploy:build": "gcloud builds submit --config cloudbuild.yaml --project=writing-classroom-672f8",
+    "deploy:build": "gcloud builds submit --config cloudbuild.yaml --project=writing-classroom-672f8 --substitutions=_TAG=$(git rev-parse --short HEAD)",
     "deploy:run": "gcloud run deploy udn-writing-test --project=writing-classroom-672f8 --region=asia-east1 --image=asia-east1-docker.pkg.dev/writing-classroom-672f8/writing-classroom-repo/udn-writing-test:latest --platform=managed --allow-unauthenticated --memory=1Gi --cpu=1 --timeout=300 --max-instances=3",
     "deploy:smoke": "gcloud run services describe udn-writing-test --project=writing-classroom-672f8 --region=asia-east1 --format='value(status.url)' | xargs -I{} bash scripts/smoke.sh {}"
   },

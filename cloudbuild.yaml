@@ -8,14 +8,18 @@ steps:
     args:
       - build
       - --file=apps/api/Dockerfile
-      - --tag=asia-east1-docker.pkg.dev/$PROJECT_ID/writing-classroom-repo/udn-writing-test:$SHORT_SHA
+      - --tag=asia-east1-docker.pkg.dev/$PROJECT_ID/writing-classroom-repo/udn-writing-test:$_TAG
       - --tag=asia-east1-docker.pkg.dev/$PROJECT_ID/writing-classroom-repo/udn-writing-test:latest
       - .
 
 images:
-  - asia-east1-docker.pkg.dev/$PROJECT_ID/writing-classroom-repo/udn-writing-test:$SHORT_SHA
+  - asia-east1-docker.pkg.dev/$PROJECT_ID/writing-classroom-repo/udn-writing-test:$_TAG
   - asia-east1-docker.pkg.dev/$PROJECT_ID/writing-classroom-repo/udn-writing-test:latest
 
 options:
   logging: CLOUD_LOGGING_ONLY
   machineType: E2_HIGHCPU_8
+
+# 手動 `gcloud builds submit` 不會帶入 $SHORT_SHA，改用自訂變數；npm run deploy:build 會傳入 git short sha。
+substitutions:
+  _TAG: manual

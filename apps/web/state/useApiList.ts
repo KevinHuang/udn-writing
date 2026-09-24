@@ -10,10 +10,15 @@ export type LoadStatus = 'loading' | 'ready' | 'error';
  *
  * `enabled` 是給登入狀態用的 —— 還沒登入就打 API 只會拿到 401，
  * 徒增一次失敗的請求與一行沒必要的錯誤訊息。
+ *
+ * `reloadKey` 變了就重新載入。給「enabled 沒變、但資料範圍變了」的情形用 ——
+ * 授課教師切到聯合報管理人員時兩邊都是教師端，enabled 一直是 true，
+ * 不靠這個的話畫面會停在切換前那個身分看得到的資料。
  */
 export function useApiList<T>(
   load: () => Promise<T[]>,
   enabled: boolean,
+  reloadKey?: unknown,
 ): {
   items: T[];
   setItems: React.Dispatch<React.SetStateAction<T[]>>;
@@ -52,7 +57,7 @@ export function useApiList<T>(
         setStatus('error');
       });
     return () => { cancelled = true; };
-  }, [enabled, load]);
+  }, [enabled, load, reloadKey]);
 
   return { items, setItems, status, reload };
 }

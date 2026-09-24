@@ -11,6 +11,7 @@ import {
   ChevronDown,
   LogOut,
   Settings,
+  ShieldCheck,
   Check } from 'lucide-react';
 import type { IdentityOption, IdentityType } from '../api/auth';
 import { IDENTITY_LABEL } from '../lib/identityLabels';
@@ -55,6 +56,17 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
 
   const navigate = useNavigate();
   const { pathname } = useLocation();
+
+  /*
+    是不是系統管理者（/auth/me 的 isSystemAdmin）。
+    不另外打一次 /auth/me —— 後端的 identities 就是由那幾個旗標算出來的，
+    isSystemAdmin 為 true 時裡面一定有 system_admin（apps/api/src/lib/identity.ts）。
+
+    系統管理者有自己一顆按鈕，所以從下面的身分清單拿掉，免得同一個選項出現兩次。
+  */
+  const isSystemAdmin = identities.some((i) => i.type === 'system_admin');
+  const listedIdentities = identities.filter((i) => i.type !== 'system_admin');
+  const isActingAsSystemAdmin = activeIdentity === 'system_admin';
 
   /**
    * id 就是路徑。一律走 lib/routes.ts，不要寫死字串 ——
@@ -179,7 +191,7 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
                         <p className="px-4 pt-1 pb-1.5 text-caption text-text-primary opacity-50">
                           切換身分
                         </p>
-                        {identities.map((identity) => (
+                        {listedIdentities.map((identity) => (
                           <button
                             key={identity.type}
                             id={`nav-btn-switch-role-${identity.type}`}
@@ -209,6 +221,37 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
                           </button>
                         ))}
                       </>
+                    )}
+
+                    {/*
+                      切換到系統管理者：與授課教師同一套畫面，只是看得到所有課程
+                      （範圍由後端依目前身分決定，見 apps/api/src/lib/scope_of.ts）。
+
+                      與上面的清單一樣，只有一種身分時不顯示 —— 那時他本來就是系統管理者，
+                      按鈕沒有東西可切。
+                    */}
+                    {isSystemAdmin && identities.length > 1 && (
+                      <button
+                        id="nav-btn-switch-role-system_admin"
+                        onClick={() => {
+                          if (!isActingAsSystemAdmin) onSwitchIdentity('system_admin');
+                          setIsProfileOpen(false);
+                        }}
+                        className={`w-full px-4 py-2 text-left text-caption flex items-center gap-3 transition-colors ${
+                          isActingAsSystemAdmin
+                            ? 'text-primary bg-primary/5'
+                            : 'text-mauve-600 hover:bg-mauve-50'
+                        }`}
+                      >
+                        <ShieldCheck size={16} className="shrink-0" />
+                        <span className="min-w-0">
+                          {IDENTITY_LABEL.system_admin}
+                          <span className="block text-text-muted truncate">可查看所有課程</span>
+                        </span>
+                        {isActingAsSystemAdmin && (
+                          <Check size={14} className="ml-auto shrink-0" />
+                        )}
+                      </button>
                     )}
 
                     <div className="h-px bg-border/30 my-2"></div>

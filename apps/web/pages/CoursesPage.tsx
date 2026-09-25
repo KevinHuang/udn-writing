@@ -12,6 +12,7 @@ export const CoursesPage: React.FC = () => {
     currentUser, myCourses, assignments, submissions, currentSemester,
     semesterOptions, todaySemester,
     setCurrentSemester, handleUpdateCourse, handleSyncCourses, handleDeleteCourse,
+    reloadCourses, ensureRoster,
   } = useAppState();
 
   return (
@@ -31,6 +32,11 @@ export const CoursesPage: React.FC = () => {
       onUpdateCourse={handleUpdateCourse}
       onAddCourses={handleSyncCourses}
       onDeleteCourse={handleDeleteCourse}
+      onRosterSynced={async (courseId) => {
+        // 人數在課程清單上、名冊在另一份快取，兩邊都要重讀
+        await reloadCourses();
+        await ensureRoster(courseId);
+      }}
     />
   );
 };

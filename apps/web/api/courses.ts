@@ -117,3 +117,20 @@ export async function setCourseArchived(id: string, archived: boolean): Promise<
 export async function deleteCourse(id: string): Promise<void> {
   await api.del(`/service/instructor/courses/${id}`);
 }
+
+/** 名單同步的結果。要講得出「動了誰」，老師才知道剛剛發生了什麼事 */
+export interface RosterSyncResult {
+  added: Array<{ userId: string; name: string; account: string }>;
+  removed: Array<{ userId: string; name: string; account: string }>;
+  total: number;
+}
+
+/**
+ * 重新從校務系統讀這一班的名單。
+ *
+ * 只有從校務系統匯入的班（`Course.code` 非空）才有得同步 ——
+ * 手動建立的班後端會回 400，呼叫端應該先把按鈕停用。
+ */
+export async function syncCourseRoster(courseId: string): Promise<RosterSyncResult> {
+  return await api.post<RosterSyncResult>(`/service/instructor/courses/${courseId}/sync-roster`, {});
+}

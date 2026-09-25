@@ -96,6 +96,27 @@ class CourseHelper {
         return (await db.default.manyOrNone(sql)) || [];
     }
 
+    /**
+     * 同步名單需要的最小資料：班級代碼與學校的 dsns。
+     *
+     * 一次查完才有辦法在 route 裡分辨「沒有權限」與「這班不是匯入來的」——
+     * 兩者要給不一樣的訊息，老師才知道是自己的問題還是這個班的問題。
+     */
+    public static async getForRosterSync(courseId: string, scope: CourseScope) {
+        return await db.default.oneOrNone<{
+            id: string;
+            course_name: string;
+            source_index: string | null;
+            dsns: string | null;
+        }>(
+            `SELECT c.id::text, c.course_name, c.source_index::text, s.dsns
+               FROM public.course c
+               LEFT JOIN public.school s ON s.id = c.ref_school_id
+              WHERE c.id = $1 AND c.id IN ${courseScopeSubquery(scope)}`,
+            [courseId],
+        );
+    }
+
     /** 建立新課程，並自動建立 uc_instructor 關聯 */
     public static async create(data: {
         ref_school_id: number;

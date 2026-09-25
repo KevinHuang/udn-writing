@@ -8,8 +8,8 @@ import {
   Archive,
   Bot,
   RefreshCcw,
-  Edit,
-  Users,
+  RefreshCw,
+  Loader2,
   Trash2,
   ClipboardList,
   School,
@@ -28,6 +28,8 @@ import { CourseMappingModal } from "./CourseMappingModal";
 import { DeleteCourseModal } from "./DeleteCourseModal";
 import { courseFootprint, isOverdue } from "../lib/assignments";
 import { filterCoursesByQuery } from "../lib/courseSearch";
+import { syncCourseRoster, type RosterSyncResult } from "../api/courses";
+import { ApiError } from "../api/client";
 import { SHOW_AI_MODEL_PICKER } from "../lib/features";
 import {
   groupCoursesBySchool,
@@ -38,7 +40,6 @@ import {
 
 import { SyncSchoolModal } from "./SyncSchoolModal";
 
-import { EditCourseModal } from "./EditCourseModal";
 import { PageHeader, PAGE_CONTAINER } from "./PageHeader";
 import { SemesterSelect } from "./SemesterSelect";
 
@@ -58,6 +59,7 @@ export const CourseList = ({
   onOpenCourse,
   user,
   onDeleteCourse,
+  onRosterSynced,
 }: {
   courses: Course[];
   assignments: Assignment[];
@@ -78,9 +80,10 @@ export const CourseList = ({
   onDeleteCourse: (courseId: string) => void;
   /** 進入該班級的作業工作台（獨立頁面） */
   onOpenCourse: (course: Course) => void;
+  /** 名單同步完成後重讀課程與名冊（人數會變） */
+  onRosterSynced?: (courseId: string) => Promise<void> | void;
 }) => {
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
-  const [editingCourse, setEditingCourse] = useState<Course | null>(null);
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"active" | "archived">("active");
   const [cityFilter, setCityFilter] = useState<string>("all");
@@ -89,6 +92,34 @@ export const CourseList = ({
   const [isMappingOpen, setIsMappingOpen] = useState(false);
   /** 正在確認刪除的課程 */
   const [deletingCourse, setDeletingCourse] = useState<Course | null>(null);
+  /** 正在同步名單的課程 id。同一時間只讓一個班在跑 */
+  const [syncingCourseId, setSyncingCourseId] = useState<string | null>(null);
+  /** 同步完成後要給老師看的結果（或失敗訊息） */
+  const [syncReport, setSyncReport] = useState<
+    { course: Course; result?: RosterSyncResult; error?: string } | null
+  >(null);
+
+  /**
+   * 重新從校務系統讀這一班的名單。
+   *
+   * 結果一定要講出來 —— 同步是會刪人的動作（轉出的學生會從名冊上移除），
+   * 只回一句「完成」的話，老師不會知道剛剛班上少了誰。
+   */
+  const handleSyncRoster = async (course: Course) => {
+    if (!course.code || syncingCourseId) return;
+    setSyncingCourseId(course.id);
+    try {
+      const result = await syncCourseRoster(course.id);
+      setSyncReport({ course, result });
+      // 卡片上的人數與名冊都會變，兩邊都要重讀
+      await onRosterSynced?.(course.id);
+    } catch (e) {
+      const message = e instanceof ApiError ? e.message : '同步失敗，請稍後再試';
+      setSyncReport({ course, error: message });
+    } finally {
+      setSyncingCourseId(null);
+    }
+  };
 
   React.useEffect(() => {
     const handleClickOutside = () => {
@@ -184,19 +215,28 @@ export const CourseList = ({
                       className="absolute right-0 mt-2 w-48 bg-card rounded-xl shadow-lg border border-border overflow-hidden z-20 py-1"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <button id="course-menu-btn-set-ai-model"
+                      {/*
+                        同步學生名單：重新去校務系統讀這一班最新的名冊。
+                        轉入、轉出、換座號都靠這個更新，不必等整校的批次同步。
+
+                        ⚠️ 手動建立的班沒有校務系統的班級代碼（course.code 是空的），
+                           同步只會失敗，所以停用並說明原因 —— 直接藏起來的話，
+                           老師會以為這個功能壞了。
+                      */}
+                      <button
+                        id="course-menu-btn-sync-roster"
+                        disabled={!course.code || syncingCourseId === course.id}
+                        title={course.code ? undefined : '這個班不是從校務系統匯入的，沒有可同步的名單'}
                         onClick={() => {
-                          setEditingCourse(course);
                           setActiveDropdown(null);
+                          void handleSyncRoster(course);
                         }}
-                        className="w-full text-left px-4 py-3 text-body font-normal text-text-primary hover:bg-surface-soft flex items-center gap-3 transition-colors"
+                        className="w-full text-left px-4 py-3 text-body font-normal text-text-primary hover:bg-surface-soft flex items-center gap-3 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                       >
-                        <Edit size={18} className="text-text-secondary" />
-                        設定批改模型
-                      </button>
-                      <button id="course-menu-btn-manage-students" className="w-full text-left px-4 py-3 text-body font-normal text-text-primary hover:bg-surface-soft flex items-center gap-3 transition-colors">
-                        <Users size={18} className="text-text-secondary" />
-                        管理學生名單
+                        {syncingCourseId === course.id
+                          ? <Loader2 size={18} className="text-text-secondary animate-spin" />
+                          : <RefreshCw size={18} className="text-text-secondary" />}
+                        {syncingCourseId === course.id ? '同步中…' : '同步學生名單'}
                       </button>
                       <button id="course-menu-btn-archive-course"
                         onClick={() => {
@@ -375,15 +415,73 @@ export const CourseList = ({
 
   return (
     <div className={`${PAGE_CONTAINER} space-y-6 pb-12`}>
-      {editingCourse && (
-        <EditCourseModal
-          course={editingCourse}
-          onClose={() => setEditingCourse(null)}
-          onSave={(updatedCourse) => {
-            onUpdateCourse(updatedCourse);
-            setEditingCourse(null);
-          }}
-        />
+      {/*
+        同步結果。用自己的小視窗而不是 alert：要列出「加了誰、移了誰」，
+        而且移除的人要附一句「作文還在」，否則老師會以為資料被刪掉了。
+      */}
+      {syncReport && (
+        <div
+          id="course-roster-sync-report"
+          className="fixed inset-0 z-[1100] flex items-center justify-center p-4 sm:p-6"
+        >
+          <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm" onClick={() => setSyncReport(null)} />
+          <div className="relative w-full max-w-md bg-surface rounded-2xl shadow-2xl border border-border overflow-hidden flex flex-col max-h-[80vh]">
+            <div className="p-5 border-b border-border">
+              <h2 className="text-title font-bold text-text-primary">
+                {syncReport.error ? '名單沒有更新' : '名單已同步'}
+              </h2>
+              <p className="text-caption text-text-secondary mt-1 truncate">{syncReport.course.name}</p>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4">
+              {syncReport.error ? (
+                <p className="text-body text-danger-600">{syncReport.error}</p>
+              ) : (
+                <>
+                  <p className="text-body text-text-primary">
+                    目前共 {syncReport.result?.total ?? 0} 位學生
+                    {!syncReport.result?.added.length && !syncReport.result?.removed.length && (
+                      <span className="text-text-secondary">（名單沒有變動）</span>
+                    )}
+                  </p>
+                  {!!syncReport.result?.added.length && (
+                    <div>
+                      <p className="text-caption text-success-700 mb-1">
+                        新加入 {syncReport.result.added.length} 位
+                      </p>
+                      <p className="text-body text-text-secondary">
+                        {syncReport.result.added.map((s) => s.name || s.account).join('、')}
+                      </p>
+                    </div>
+                  )}
+                  {!!syncReport.result?.removed.length && (
+                    <div>
+                      <p className="text-caption text-warning-700 mb-1">
+                        移出 {syncReport.result.removed.length} 位
+                      </p>
+                      <p className="text-body text-text-secondary">
+                        {syncReport.result.removed.map((s) => s.name || s.account).join('、')}
+                      </p>
+                      <p className="text-caption text-text-secondary mt-1">
+                        他們已經繳交的作文仍然留著，只是不再出現在這一班的名單與統計裡。
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-border bg-surface-soft/50 flex justify-end">
+              <button
+                id="course-roster-sync-report-close"
+                onClick={() => setSyncReport(null)}
+                className="px-4 py-2 rounded-xl bg-primary text-on-accent font-bold hover:opacity-90 transition-opacity"
+              >
+                知道了
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {isSyncModalOpen && (
         <SyncSchoolModal
@@ -431,19 +529,26 @@ export const CourseList = ({
         </>}
       />
 
-      <div className="flex border-b border-border mb-6 overflow-x-auto scrollbar-hide">
-        <button id="dashboard-tab-active-courses"
-          onClick={() => setActiveTab("active")}
-          className={`px-4 md:px-6 py-2.5 md:py-3 font-bold text-body border-b-2 transition-colors whitespace-nowrap ${activeTab === "active" ? "border-primary text-primary" : "border-transparent text-text-secondary hover:text-text-primary"}`}
-        >
-          進行中課程
-        </button>
-        <button id="dashboard-tab-archived-courses"
-          onClick={() => setActiveTab("archived")}
-          className={`px-4 md:px-6 py-2.5 md:py-3 font-bold text-body border-b-2 transition-colors whitespace-nowrap ${activeTab === "archived" ? "border-primary text-primary" : "border-transparent text-text-secondary hover:text-text-primary"}`}
-        >
-          已封存課程
-        </button>
+      {/*
+        分頁改成實色的分段切換器（與題庫中心的「共用／個人題庫」同一套語彙）。
+        原本是「底線 + 文字」浮在頁面底色上 —— 未選的那一個對底色幾乎沒有對比，
+        看起來不像可以按的東西，也看不出目前在哪一頁。
+      */}
+      <div className="flex items-center gap-3 mb-6 flex-wrap">
+        <div className="inline-flex bg-surface-soft p-1 rounded-2xl border border-border-strong shadow-sm">
+          <button id="dashboard-tab-active-courses"
+            onClick={() => setActiveTab("active")}
+            className={`px-4 md:px-6 py-2 md:py-2.5 font-bold text-body rounded-xl transition-all whitespace-nowrap ${activeTab === "active" ? "bg-primary text-on-accent shadow-sm" : "text-text-secondary hover:text-text-primary"}`}
+          >
+            進行中課程
+          </button>
+          <button id="dashboard-tab-archived-courses"
+            onClick={() => setActiveTab("archived")}
+            className={`px-4 md:px-6 py-2 md:py-2.5 font-bold text-body rounded-xl transition-all whitespace-nowrap ${activeTab === "archived" ? "bg-primary text-on-accent shadow-sm" : "text-text-secondary hover:text-text-primary"}`}
+          >
+            已封存課程
+          </button>
+        </div>
 
         {isAdmin(user) && needsReview.length > 0 && (
           <button
@@ -502,7 +607,7 @@ export const CourseList = ({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="搜尋學校、縣市、班級、課程代碼或授課教師"
-            className="w-full bg-surface/60 border border-border rounded-brand pl-10 pr-10 py-2.5 text-ui text-text-primary placeholder:text-text-muted outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/20 transition-colors [&::-webkit-search-cancel-button]:hidden"
+            className="w-full bg-card border border-border-strong shadow-sm rounded-brand pl-10 pr-10 py-2.5 text-ui text-text-primary placeholder:text-text-muted outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors [&::-webkit-search-cancel-button]:hidden"
           />
           {searchQuery && (
             <button
@@ -525,8 +630,8 @@ export const CourseList = ({
               onClick={() => setCityFilter(chip)}
               className={`px-3 py-1.5 rounded-lg text-caption whitespace-nowrap transition-colors ${
                 cityFilter === chip
-                  ? "bg-primary text-on-accent"
-                  : "text-text-secondary hover:bg-surface-soft border border-border"
+                  ? "bg-primary text-on-accent shadow-sm"
+                  : "bg-card text-text-secondary hover:bg-surface-soft border border-border-strong"
               }`}
             >
               {chip === "all" ? "全部" : chip}
@@ -544,9 +649,13 @@ export const CourseList = ({
             const students = group.courses.reduce((n, c) => n + c.studentCount, 0);
             return (
               <section key={group.key} id={`course-group-${group.key}`}>
-                <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border flex-wrap">
+                {/*
+                  學校那一層一律是淡藍色橫帶 —— 批改作業頁與班級挑選視窗都是這個語彙。
+                  原本只有一行文字加一條細線，整條浮在頁面底色上，分不出這是一個分組。
+                */}
+                <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-xl bg-primary-50 border border-primary-200 flex-wrap">
                   <School size={15} className="text-primary shrink-0" />
-                  <h3 className="text-ui text-text-primary">{group.label}</h3>
+                  <h3 className="text-ui text-text-primary font-bold">{group.label}</h3>
                   <span className="text-caption text-text-secondary whitespace-nowrap">
                     {group.courses.length} 班・{students} 位學生
                   </span>

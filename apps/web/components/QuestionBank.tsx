@@ -1147,7 +1147,17 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
 
   // --- RENDER LIST VIEW ---
   return (
-    <div className={`bg-transparent h-full flex flex-col ${PAGE_CONTAINER} pb-10`}>
+    /*
+      ⚠️ 這一頁**不要自己再開一個捲動區**。
+
+      外層的 <main>（TeacherLayout）已經是捲動容器了。這裡原本是
+      `h-full` + 內層 `flex-1 overflow-auto`，等於把清單塞進一個只有
+      幾百 px 高的小視窗裡：畫面上出現兩條捲軸，捲到底之後面板下緣
+      還留著一段空白，而最後一排卡片看起來像被切掉一半（實測 1372×760：
+      內層只有 461px 高，面板底下還有 73px 沒人用的空間）。
+      改成讓整頁一起捲，最後一排就有 main 的 pb-8／pb-24 當緩衝。
+    */
+    <div className={`bg-transparent flex flex-col ${PAGE_CONTAINER} pb-10`}>
       {/* Modals */}
       <NewFolderModal 
         isOpen={isNewFolderModalOpen}
@@ -1177,7 +1187,21 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
         onBack={onBack}
         backId="questionbank-list-btn-back"
         wideActions
-        className="mb-6 sm:mb-10"
+        /*
+          整頁一起捲之後，標題與分頁／搜尋列會跟著捲掉。釘在上緣保留原本的好處：
+          題目很多時仍然切換得了題庫、搜尋得到東西。
+
+          ⚠️ 三組數字要成套，少一個就露餡：
+            -mx/px  —— 實色底延伸到容器邊緣，卡片不會從左右的縫隙透出來
+            -mt/pt  —— 往上吃掉 main 的內距，卡片不會從上緣的縫隙透出來
+            top-[-2rem] —— **必須等於那個負的 margin**。sticky 的吸附點算的是
+                        margin box，負 margin 會讓實際的底色往下掉同樣的距離，
+                        top 補回來才會真的貼齊上緣（實測差了 32px，卡片頭一直露出來）。
+
+          手機（md 以下）刻意**不釘**：標題＋分頁＋搜尋＋三顆按鈕疊起來將近 290px，
+          釘住等於 844px 的畫面只剩三分之一在看題目。那邊讓它跟著捲走。
+        */
+        className="mb-6 sm:mb-10 md:sticky md:top-[-2rem] md:z-20 md:bg-surface md:-mx-8 md:px-8 md:-mt-8 md:pt-8 md:pb-3"
         actions={
         <div className="flex flex-col md:flex-row gap-3 w-full lg:w-auto items-stretch md:items-center">
            {/* Tab Switcher */}
@@ -1308,10 +1332,10 @@ export const QuestionBank: React.FC<QuestionBankProps> = ({ onBack, questions, q
         />
       )}
 
-      <div className="bg-surface/60 backdrop-blur-2xl rounded-brand border border-border shadow-[0_20px_40px_-12px_rgba(0,0,0,0.05)] ring-1 ring-surface/60 flex flex-col flex-1 overflow-hidden">
-        
-        {/* Content Area */}
-        <div className="flex-1 overflow-auto p-4 sm:p-6">
+      <div className="bg-surface/60 backdrop-blur-2xl rounded-brand border border-border shadow-[0_20px_40px_-12px_rgba(0,0,0,0.05)] ring-1 ring-surface/60 flex flex-col">
+
+        {/* Content Area —— 跟著整頁捲，不要 overflow-auto（見上面的說明） */}
+        <div className="p-4 sm:p-6">
             {searchTerm && (
                 <div className="mb-4 sm:mb-6 flex items-center gap-2 text-body text-primary bg-primary/5 px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl w-fit border border-primary/10">
                     <Search size={14} className="sm:size-4" />

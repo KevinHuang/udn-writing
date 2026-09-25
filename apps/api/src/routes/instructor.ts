@@ -15,6 +15,8 @@ import BatchProxySubmissionHelper from '../dal/batch_proxy_submission_helper';
 import CloudRunJobsHelper from '../dal/cloud_run_jobs_helper';
 import FinalReportHelper from '../dal/final_report_helper';
 import { SchoolHelper } from '../dal/school_helper';
+import RosterSyncHelper from '../dal/roster_sync_helper';
+import DevapiJasmineHelper from './../dal/devapi/devapi_helper';
 import FolderHelper from '../dal/folder_helper';
 import SubmissionMarkHelper from '../dal/submission_mark_helper';
 import AssignmentLeaveHelper from '../dal/assignment_leave_helper';
@@ -233,6 +235,70 @@ router.get('/courses/:courseId/students', async (ctx) => {
         console.error('Error fetching students:', error);
         ctx.status = 500;
         ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/**
+ * @route POST /service/instructor/courses/:courseId/sync-roster
+ * @description 重新從校務系統讀取這一班的學生名單並更新本地名冊。
+ *
+ * 課程管理卡片的「同步學生名單」走這一支。名單有異動（轉入、轉出、換座號）時
+ * 老師自己按一下就好，不必等整校的批次同步。
+ *
+ * 範圍與其他教師端 API 一樣（自己的班／自己的學校／全部，見 lib/course_scope.ts）。
+ *
+ * ⚠️ 兩道保護，都是「寧可不同步，也不要弄壞名單」：
+ *    1. 沒有 source_index 的班（手動建立、不是匯入來的）直接回 400 ——
+ *       校務系統那邊沒有對應的班級，同步只會把整班清空。
+ *    2. 校務系統回傳空名單時**不動任何資料**。那多半是 API 暫時出問題或
+ *       班級代碼對不上；照著同步下去會把全班學生從名冊上抹掉。
+ */
+router.post('/courses/:courseId/sync-roster', async (ctx) => {
+    try {
+        const { courseId } = ctx.params;
+        const scope = await courseScopeOf(ctx);
+
+        const course = await CourseHelper.getForRosterSync(courseId, scope);
+        if (!course) {
+            ctx.status = 404;
+            ctx.body = { error: '找不到這個班級，或你沒有權限' };
+            return;
+        }
+        if (!course.source_index || String(course.source_index) === '-1') {
+            ctx.status = 400;
+            ctx.body = { error: '這個班不是從校務系統匯入的，沒有可以同步的名單' };
+            return;
+        }
+
+        /*
+          dsns 從學校那一列拿；拿不到就退回設定值。
+          ⚠️ 校務同步流程（DsaSyncHelper.syncSchools）從來沒有寫過 school.dsns，
+             所以現有資料多半是 NULL —— 整校同步那一支也是把 dsns 寫死的。
+             在補上那一欄之前，這裡只能用同一個預設值。
+        */
+        const dsns = course.dsns || process.env.DSA_DSNS || 'udncollege.plus';
+
+        const raw = await DevapiJasmineHelper.getStudentsByCourseId(dsns, String(course.source_index));
+        const roster = (raw ?? [])
+            .filter((s: { studentAcc?: string }) => !!s?.studentAcc)
+            .map((s: { studentAcc: string; studentName?: string; seatNo?: number | string }) => ({
+                account: String(s.studentAcc).trim(),
+                name: (s.studentName ?? '').trim(),
+                seatNo: Number.isFinite(Number(s.seatNo)) ? Number(s.seatNo) : null,
+            }));
+
+        if (roster.length === 0) {
+            ctx.status = 502;
+            ctx.body = { error: '校務系統沒有回傳任何學生，為了安全起見沒有更動名單' };
+            return;
+        }
+
+        const result = await RosterSyncHelper.syncCourseRoster(courseId, roster);
+        ctx.body = result;
+    } catch (error) {
+        console.error('Error syncing roster:', error);
+        ctx.status = 502;
+        ctx.body = { error: '無法連上校務系統，名單沒有更動' };
     }
 });
 

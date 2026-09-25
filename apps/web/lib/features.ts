@@ -35,7 +35,9 @@ export const SHOW_CATEGORY_SCORES = false;
  *   1. 批改作業頁的「AI 批改模型設定」卡片（App.tsx）
  *   2. 批改面板標頭的模型下拉（GradingEditor）
  *   3. 建題表單的「預設批改模型」（QuestionBank）
- *   4. 編輯課程時勾選啟用哪些模型（EditCourseModal）
- *   5. 題目預覽裡顯示的預選模型（QuestionPreviewModal，唯讀）
+ *   4. 題目預覽裡顯示的預選模型（QuestionPreviewModal，唯讀）
+ *
+ * （課程卡片上的「設定批改模型」與它專用的 EditCourseModal 已依需求移除 ——
+ *   那個視窗除了挑模型之外只剩唯讀的課名，開關關掉後整個是空的。）
  */
 export const SHOW_AI_MODEL_PICKER = false;

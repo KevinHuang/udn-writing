@@ -23,8 +23,11 @@ export const VARIANT_LABEL: Record<ScanVariant, string> = {
 /**
  * 透視變換：把四邊形拉正成矩形。
  *
- * A3／B4 橫式稿紙的長邊要轉成水平；照片是直的時把右緣當上緣，
- * 與相機畫面提示的「請橫持」方向一致。
+ * ⚠️ **一律轉成橫的**：長邊擺水平，直的稿紙就把右緣當上緣轉 90°。
+ *    這是為 A3／B4 橫式稿紙寫的，直式作文稿紙拍完會變成躺著的
+ *    —— 使用者得自己按結果頁的旋轉鍵轉正。要改的是這裡的假設
+ *    （改成保留原方向），但那會動到既有橫式稿紙的裁切與 OCR 輸入，
+ *    所以先留著，畫面上以旋轉鍵補救。
  */
 export function warpDocument(srcMat: Mat, points: Point[]): Mat {
   const cv = getCv();

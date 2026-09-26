@@ -962,10 +962,14 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
         手機寬度（390px）兩者直接疊在一起，鏡頭名稱被蓋掉一半。
       */}
       <div className="absolute inset-x-3 bottom-24 flex flex-col items-center gap-2 pointer-events-none">
-        {/* 橫持提示：A3 稿紙橫拍才有足夠解析度 */}
+        {/*
+          取景提示。原本寫「稿紙請橫持拍攝」—— 那只對橫式稿紙成立，
+          直式作文稿紙橫握反而只佔畫面 29.7%（直握 63%），解析度更差。
+          要求的其實一直是「填滿畫面」，不是某一種握法（同 DocumentScannerModal 的拍攝提醒）。
+        */}
         <span className="sm:hidden inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/55 text-white text-caption whitespace-nowrap">
           <Camera size={12} />
-          稿紙請橫持拍攝
+          讓稿紙填滿畫面
         </span>
         {/*
           切換鏡頭。以前只寫「偵測到 N 顆鏡頭」，挑錯了（例如筆電的虛擬鏡頭）也換不了。

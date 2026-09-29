@@ -1,6 +1,6 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Save, CheckCircle2, PenTool, Highlighter, FileText, Layout, PanelLeftClose, PanelLeftOpen, BookOpen, Image as ImageIcon, X, Sparkles, Bot, ChevronDown, RotateCcw, Send, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Save, CheckCircle2, PenTool, Highlighter, FileText, Layout, PanelLeftClose, PanelLeftOpen, BookOpen, Image as ImageIcon, X, Sparkles, Bot, ChevronDown, RotateCcw, Send, ChevronLeft, ChevronRight, AlertTriangle, Loader2 } from 'lucide-react';
 import { Submission, GradingResult } from '../types';
 /*
   評語編輯器延後載入。它背後是 TipTap／ProseMirror（兩百多 KB），
@@ -74,6 +74,17 @@ interface GradingEditorProps {
   /** 上一位／下一位。到頭或到尾時不給，按鈕會自動變成停用 */
   onPrevStudent?: () => void;
   onNextStudent?: () => void;
+  /**
+   * 這篇是批次代繳交時 AI 從手寫稿辨識出來的，**還沒有人校對過**。
+   *
+   * 有給就顯示提示條與「校對文字」：左邊原稿、右邊可改的文字，
+   * 存檔後這一批就退役（批改清單的「AI 辨識未校對」徽章消失）。
+   * 以前「OCR 文字一定要老師確認才存檔」擋在代繳交視窗裡；改成背景辨識後，
+   * 這一道搬到批改之前 —— 會造成傷害的是拿錯字連篇的文本去打分數。
+   */
+  ocrReview?: {
+    onConfirm: (content: string) => Promise<void>;
+  };
 }
 
 export const GradingEditor: React.FC<GradingEditorProps> = ({ 
@@ -95,6 +106,7 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
   queuePosition,
   onPrevStudent,
   onNextStudent,
+  ocrReview,
 }) => {
   const [result, setResult] = useState<GradingResult | undefined>(submission.result);
   /**
@@ -106,8 +118,37 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
   // AI Grading State
   const [isGrading, setIsGrading] = useState(false);
   
-  // 控制手寫原稿視窗的開關
+  // 控制手寫原稿視窗（全螢幕燈箱）的開關
   const [showHandwritten, setShowHandwritten] = useState(false);
+  /** 校對模式：作文區換成可以改的文字框 */
+  const [proofreading, setProofreading] = useState(false);
+  const [proofText, setProofText] = useState('');
+  const [proofSaving, setProofSaving] = useState(false);
+  const [proofError, setProofError] = useState<string | null>(null);
+
+  /*
+    校對時原稿直接排在文字框上面，不開燈箱 —— 燈箱是全螢幕的，
+    會把要改的文字蓋掉，老師得開開關關地對照。
+  */
+  const startProofreading = () => {
+    setProofText(submission.content);
+    setProofError(null);
+    setProofreading(true);
+  };
+
+  const saveProofreading = async () => {
+    if (!ocrReview || !proofText.trim()) return;
+    setProofSaving(true);
+    setProofError(null);
+    try {
+      await ocrReview.onConfirm(proofText.trim());
+      setProofreading(false);
+    } catch (e) {
+      setProofError(e instanceof Error ? e.message : '存檔失敗，請再試一次。');
+    } finally {
+      setProofSaving(false);
+    }
+  };
 
   // Mobile Tab State: 'essay' or 'grading'
   const [mobileTab, setMobileTab] = useState<'essay' | 'grading'>('essay');
@@ -542,6 +583,98 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                       但專案沒裝那個外掛，等於完全沒有作用，已移除。
                       leading-7 md:leading-9 也拿掉 —— 會和 text-essay 自帶的行高打架。
                     */}
+                    {ocrReview && !proofreading && (
+                        <div
+                            id="gradingeditor-ocr-review"
+                            className="mx-auto max-w-[38em] mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-amber-200 bg-amber-100 px-4 py-3"
+                        >
+                            <AlertTriangle size={18} className="shrink-0 text-amber-600" />
+                            <p className="flex-1 text-caption text-amber-700">
+                                這篇是 AI 從手寫稿辨識出來的，還沒有人校對過。辨識一定會有錯字 ——
+                                請先對照原稿校對，再批改。
+                            </p>
+                            <button
+                                id="gradingeditor-btn-proofread"
+                                onClick={startProofreading}
+                                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-amber-200 text-body text-amber-700 hover:bg-amber-50 whitespace-nowrap"
+                            >
+                                <PenTool size={14} className="shrink-0" />
+                                校對文字
+                            </button>
+                        </div>
+                    )}
+
+                    {proofreading ? (
+                        <div className="mx-auto max-w-[38em] space-y-3">
+                            <p className="text-caption text-text-secondary">
+                                對照原稿，把辨識錯的字改掉。存檔後就不再標示「未校對」。
+                            </p>
+                            {hasDraft && (
+                                <div className="rounded-xl border border-border bg-surface-soft p-2 space-y-2">
+                                    <img
+                                        key={draftImages[draftPage]}
+                                        src={imageUrlOf(draftImages[draftPage])}
+                                        alt={`手寫原稿第 ${draftPage + 1} 頁`}
+                                        onClick={() => setShowHandwritten(true)}
+                                        title="點一下放大"
+                                        className="w-full max-h-[55vh] object-contain cursor-zoom-in rounded-lg"
+                                    />
+                                    {draftImages.length > 1 && (
+                                        <div className="flex items-center justify-center gap-3 text-caption text-text-secondary">
+                                            <button
+                                                onClick={() => setDraftIndex(Math.max(0, draftPage - 1))}
+                                                disabled={draftPage === 0}
+                                                className="p-1 rounded-lg hover:bg-card disabled:opacity-30"
+                                                title="上一頁"
+                                            >
+                                                <ChevronLeft size={16} />
+                                            </button>
+                                            原稿 {draftPage + 1} / {draftImages.length}
+                                            <button
+                                                onClick={() => setDraftIndex(Math.min(draftImages.length - 1, draftPage + 1))}
+                                                disabled={draftPage >= draftImages.length - 1}
+                                                className="p-1 rounded-lg hover:bg-card disabled:opacity-30"
+                                                title="下一頁"
+                                            >
+                                                <ChevronRight size={16} />
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            <textarea
+                                id="gradingeditor-textarea-proofread"
+                                value={proofText}
+                                onChange={(e) => setProofText(e.target.value)}
+                                rows={18}
+                                className="w-full px-4 py-3 rounded-xl bg-card border border-border text-essay font-essay text-text-primary outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 resize-y"
+                            />
+                            {proofError && (
+                                <p className="text-caption text-danger-700 bg-danger-100 border border-danger-200 rounded-lg px-3 py-2">
+                                    {proofError}
+                                </p>
+                            )}
+                            <div className="flex items-center justify-end gap-2">
+                                <span className="mr-auto text-caption text-text-muted">{proofText.trim().length} 字</span>
+                                <button
+                                    onClick={() => setProofreading(false)}
+                                    disabled={proofSaving}
+                                    className="px-3 py-2 rounded-xl text-body text-text-secondary hover:bg-surface-soft"
+                                >
+                                    取消
+                                </button>
+                                <button
+                                    id="gradingeditor-btn-proofread-save"
+                                    onClick={saveProofreading}
+                                    disabled={proofSaving || !proofText.trim()}
+                                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-on-accent text-body hover:opacity-90 disabled:opacity-50"
+                                >
+                                    {proofSaving ? <Loader2 size={14} className="animate-spin shrink-0" /> : <CheckCircle2 size={14} className="shrink-0" />}
+                                    校對完成，存檔
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
                     <div className="mx-auto max-w-[38em] text-essay font-essay text-text-primary selection:bg-primary/10 selection:text-text-primary">
                         {submission.content
                             .split('\n')
@@ -553,6 +686,7 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                                 </p>
                             ))}
                     </div>
+                    )}
                 </div>
             </div>
         </div>

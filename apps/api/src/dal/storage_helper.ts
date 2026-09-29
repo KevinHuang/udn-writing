@@ -1,5 +1,6 @@
 import { Storage } from '@google-cloud/storage';
 import crypto from 'crypto';
+import { fakeUpload, isStorageFake } from './simulated_storage';
 
 class StorageHelper {
     private static storage = new Storage();
@@ -25,6 +26,12 @@ class StorageHelper {
 
         const extension = match[1] === 'jpeg' ? 'jpg' : match[1];
         const base64Data = match[2];
+
+        // 測試與本機（STORAGE_FAKE=1）：不打 GCS，回一個形狀一樣的檔名（見 simulated_storage.ts）
+        if (isStorageFake()) {
+            return fakeUpload(folder || this.folderPath, fileNamePrefix || '', extension,
+                Math.floor(base64Data.length * 3 / 4));
+        }
 
         // 產生唯一檔名
         const fileName = `${fileNamePrefix || ''}${crypto.randomUUID()}.${extension}`;

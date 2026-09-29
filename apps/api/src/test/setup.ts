@@ -76,3 +76,11 @@ process.env.GOOGLE_GENAI_USE_VERTEXAI = 'false';
 process.env.GOOGLE_CLOUD_PROJECT = '';
 
 process.env.NODE_ENV = 'test';
+
+/*
+  代繳交的照片上傳與背景辨識也不能打真的 GCP（本機沒有憑證，而且會真的存檔、真的開 job）。
+  兩個 fake 都要**明確開啟**才會生效（見 dal/simulated_storage.ts、dal/simulated_ocr_job.ts）——
+  反過來「沒設定就走 fake」的話，正式環境少一個環境變數，照片就會安靜地消失。
+*/
+process.env.STORAGE_FAKE = '1';
+process.env.OCR_JOB_FAKE = '1';

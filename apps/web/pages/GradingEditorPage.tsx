@@ -6,6 +6,9 @@ import { useGoBack } from "../lib/useGoBack";
 import { routes } from "../lib/routes";
 import { NotFoundPage } from "./NotFoundPage";
 import { rosterOf, gradableQueue, neighbours } from "../lib/gradingQueue";
+import { useProxyStatus } from "../lib/proxy/useProxyStatus";
+import { originalsFor } from "../lib/proxy/paths";
+import { proxySubmit } from "../api/submissions";
 
 export const GradingEditorPage: React.FC = () => {
   const navigate = useNavigate();
@@ -25,6 +28,11 @@ export const GradingEditorPage: React.FC = () => {
   useEffect(() => {
     if (assignmentId) void ensureSubmissions(assignmentId);
   }, [assignmentId, ensureSubmissions]);
+
+  /** 批次代繳交的辨識狀態：這一篇是不是「AI 辨識、還沒校對」、原稿在哪 */
+  const proxy = useProxyStatus(assignmentId, () => {
+    if (assignmentId) void ensureSubmissions(assignmentId);
+  });
 
   /**
    * 要批改的那一份，**從網址現查**。
@@ -51,6 +59,27 @@ export const GradingEditorPage: React.FC = () => {
   const queue = assign ? gradableQueue(rosterOf(assign.id, submissions)) : [];
   const { prev, next, index, total } = neighbours(queue, submission.id);
 
+  /*
+    原稿：submission 自己有就用它的，沒有才退回批次的照片。
+    背景的 ocr-job 有沒有把 pic_files 寫回 submission 是未知數（原始碼不在這個 repo），
+    不要因為它少寫一欄，老師校對時就看不到原稿。
+  */
+  const batchRow = proxy.rows.find((r) => r.userId === submission.studentId);
+  const originals = originalsFor(submission.assignmentId, submission.picFiles, batchRow?.imgFiles);
+  const shown = originals === submission.picFiles ? submission : { ...submission, picFiles: originals };
+
+  const ocrReview = proxy.isUnproofread(submission.studentId)
+    ? {
+        onConfirm: async (content: string) => {
+          // 走代繳交那一支：已經批改過的會回 409（不會把分數接到新的文字上）
+          await proxySubmit(submission.assignmentId, submission.studentId, content, originals, {
+            confirmOcr: true,
+          });
+          await Promise.all([ensureSubmissions(submission.assignmentId), proxy.refresh()]);
+        },
+      }
+    : undefined;
+
   /** 換人用 replace —— 批改一個班會按幾十次，每按一次留一筆歷史，返回鍵就廢了。 */
   const goTo = (id: string) =>
     navigate(routes.gradingEditor(assignmentId ?? submission.assignmentId, id), { replace: true });
@@ -66,7 +95,8 @@ export const GradingEditorPage: React.FC = () => {
   return (
     <GradingEditor
       key={`${submission.id}:${gradingResetSeq}`}
-      submission={submission}
+      submission={shown}
+      ocrReview={ocrReview}
       queuePosition={index >= 0 ? { index: index + 1, total } : undefined}
       onPrevStudent={prev ? () => goTo(prev.id) : undefined}
       onNextStudent={next ? () => goTo(next.id) : undefined}

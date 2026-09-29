@@ -1,12 +1,16 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ChevronRight, Bot, ChevronDown, Wand2, Loader2, Send, RotateCcw,
-  Check, Camera, Image as ImageIcon,
+  Check, Camera, Image as ImageIcon, ListChecks,
 } from "lucide-react";
 import { StatusBadge } from "../components/StatusBadge";
 import { SubmissionStampRow } from "../components/SubmissionStamp";
 import { ProxySubmitModal } from "../components/ProxySubmitModal";
+import { ProxyOcrBadge } from "../components/ProxyOcrBadge";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { useProxyStatus } from "../lib/proxy/useProxyStatus";
+import { countStatuses, proxyBatchSummary } from "../lib/proxy/status";
 import { GradingHub } from "../components/GradingHub";
 import { PageHeader, PAGE_CONTAINER } from "../components/PageHeader";
 import { useAppState } from "../state/appStateContext";
@@ -71,6 +75,20 @@ export const GradingListPage: React.FC = () => {
   useEffect(() => {
     if (selectedAssignmentId) void ensureSubmissions(selectedAssignmentId);
   }, [selectedAssignmentId, ensureSubmissions]);
+
+  /**
+   * 批次代繳交的背景辨識進度。
+   *
+   * 老師關掉代繳交視窗之後辨識還在跑 —— 清單要看得到進度（上方的 pill、
+   * 每一列的徽章），有人辨識完成時重載作文，否則那一列會一直是空的。
+   */
+  const proxy = useProxyStatus(selectedAssignmentId, () => {
+    if (selectedAssignmentId) void ensureSubmissions(selectedAssignmentId);
+  });
+  /** 從 pill 打開代繳交視窗時直接停在進度分頁 */
+  const [proxyInitialTab, setProxyInitialTab] = useState<"register" | "progress">("register");
+  /** 批次批改前發現有未校對的作品 → 先問一聲 */
+  const [unproofreadGate, setUnproofreadGate] = useState<number | null>(null);
   const setSelectedAssignmentId = (id: string) =>
     navigate(routes.gradingList({ assignmentId: id }), { replace: true });
 
@@ -154,6 +172,27 @@ export const GradingListPage: React.FC = () => {
                   s.status === "Pending",
               ).length
             : pending;
+        /*
+          這次批次批改會打到的作品裡，有幾篇是 AI 辨識、還沒有人校對過。
+          規則與上面的 selectedPendingCount 一致（有勾選看勾選，沒勾選看全部待批改）。
+
+          以前代繳交時老師一定得先確認辨識文字才能存檔；改成背景辨識之後，
+          文字會先進資料庫 —— 真正會造成傷害的是「拿錯字連篇的文本去打分數」，
+          所以擋在這裡。
+        */
+        const unproofreadInBatch = filteredSubmissions.filter(
+          (s) =>
+            s.status === "Pending" &&
+            (selectedSubmissionIds.length === 0 || selectedSubmissionIds.includes(s.id)) &&
+            proxy.isUnproofread(s.studentId),
+        ).length;
+        const proxySummary = proxyBatchSummary(
+          countStatuses(proxy.rows.map((r) => proxy.statusOf(r.userId))),
+        );
+        const startBatchGrade = () => {
+          if (unproofreadInBatch > 0) setUnproofreadGate(unproofreadInBatch);
+          else handleBatchGrade(selectedAssignmentId);
+        };
         /*
           兩顆按鈕的目標都是「已批改、還沒發還」（status === 'Graded'），
           但啟動條件刻意不同：
@@ -331,8 +370,25 @@ export const GradingListPage: React.FC = () => {
                   用朱砂與旁邊三顆區隔 —— 它是「把紙本變成資料」，
                   和批改／發還／重置不是同一類動作。
                 */}
+                {proxySummary && (
+                  <button
+                    id="gradinglist-btn-proxy-progress"
+                    onClick={() => {
+                      setProxyInitialTab("progress");
+                      setIsProxySubmitOpen(true);
+                    }}
+                    className="flex-1 lg:flex-none flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-caption bg-info-100 text-info-700 border border-info-200 hover:bg-info-200 transition-colors whitespace-nowrap"
+                    title="打開批次代繳交的辨識進度"
+                  >
+                    <ListChecks size={14} className="shrink-0" />
+                    {proxySummary}
+                  </button>
+                )}
                 <button id="gradinglist-btn-proxy-submit"
-                  onClick={() => setIsProxySubmitOpen(true)}
+                  onClick={() => {
+                    setProxyInitialTab("register");
+                    setIsProxySubmitOpen(true);
+                  }}
                   disabled={isBatchGrading}
                   className="flex-1 lg:flex-none flex items-center justify-center gap-2 bg-secondary hover:bg-text-primary text-on-accent px-3 md:px-4 py-2 md:py-2.5 rounded-xl text-body shadow-lg shadow-secondary/30 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                 >
@@ -340,7 +396,7 @@ export const GradingListPage: React.FC = () => {
                   批次代繳交
                 </button>
                 <button id="gradinglist-btn-batch-grade"
-                  onClick={() => handleBatchGrade(selectedAssignmentId)}
+                  onClick={startBatchGrade}
                   disabled={isBatchGrading || selectedPendingCount === 0}
                   className="flex-1 lg:flex-none flex items-center justify-center gap-2 bg-primary hover:bg-text-primary text-on-accent px-3 md:px-4 py-2 md:py-2.5 rounded-xl text-body shadow-lg shadow-primary/30 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                 >
@@ -390,10 +446,29 @@ export const GradingListPage: React.FC = () => {
               <ProxySubmitModal
                 assignment={assignment}
                 rosterSubmissions={sortedSubmissions}
-                onClose={() => setIsProxySubmitOpen(false)}
-                onProxySubmit={(studentId, studentName, content, picFiles) =>
-                  handleProxySubmit(selectedAssignmentId, studentId, studentName, content, picFiles)
+                initialTab={proxyInitialTab}
+                onClose={() => {
+                  setIsProxySubmitOpen(false);
+                  // 視窗裡可能剛送出辨識 —— 清單的 pill 與徽章要跟上
+                  void proxy.refresh();
+                }}
+                onProxySubmit={(studentId, studentName, content, picFiles, opts) =>
+                  handleProxySubmit(selectedAssignmentId, studentId, studentName, content, picFiles, opts)
                 }
+                onBatchChanged={() => void ensureSubmissions(selectedAssignmentId)}
+              />
+            )}
+
+            {unproofreadGate !== null && (
+              <ConfirmDialog
+                title="有作品還沒校對"
+                message={`這次要批改的作品裡，有 ${unproofreadGate} 篇是 AI 從手寫稿辨識出來的，還沒有人對照原稿校對過。\n辨識一定會有錯字 —— 直接批改的話，分數會建立在錯的文字上。\n建議先點進去對照原稿校對，再批改。`}
+                confirmLabel="照樣批改"
+                onConfirm={() => {
+                  setUnproofreadGate(null);
+                  handleBatchGrade(selectedAssignmentId);
+                }}
+                onCancel={() => setUnproofreadGate(null)}
               />
             )}
 
@@ -483,8 +558,9 @@ export const GradingListPage: React.FC = () => {
                                 #{seatText(s.seatNo)}
                               </span>
                             </div>
-                            <div className="flex items-center gap-2 mt-1.5">
+                            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                               <StatusBadge status={s.status} />
+                              <ProxyOcrBadge status={proxy.statusOf(s.studentId)} />
                             </div>
                           </div>
                         </div>
@@ -665,6 +741,7 @@ export const GradingListPage: React.FC = () => {
                           </td>
                           <td className="py-2 px-4">
                             <div className="flex flex-col gap-1.5">
+                              <ProxyOcrBadge status={proxy.statusOf(s.studentId)} />
                               {s.status === "Pending" && (
                                 <span className="inline-block px-3 py-1 rounded-lg bg-warning-100 text-warning-700 text-caption border border-warning-200 shadow-sm w-fit whitespace-nowrap">
                                   待批改

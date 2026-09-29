@@ -20,6 +20,7 @@ import DevapiJasmineHelper from './../dal/devapi/devapi_helper';
 import FolderHelper from '../dal/folder_helper';
 import SubmissionMarkHelper from '../dal/submission_mark_helper';
 import AssignmentLeaveHelper from '../dal/assignment_leave_helper';
+import { checkImageList } from '../lib/image_input';
 // 建立授課教師專用的 Router 實例
 
 const router = new Router();
@@ -413,12 +414,14 @@ router.post('/grading/reset/:submissionId', async (ctx) => {
  */
 router.post('/submissions/proxy', async (ctx) => {
     try {
-        const { assignment_id, user_id, content, word_count, files } = ctx.request.body as {
+        const { assignment_id, user_id, content, word_count, files, confirm_ocr } = ctx.request.body as {
             assignment_id: string;
             user_id: string;
             content: string;
             word_count: number;
             files: string[];
+            /** 老師校對完背景辨識的文字了 —— 存檔之後把那一批退役（徽章消失） */
+            confirm_ocr?: boolean;
         };
 
         if (!assignment_id || !user_id || !content || !files) {
@@ -458,6 +461,16 @@ router.post('/submissions/proxy', async (ctx) => {
             return;
         }
 
+        /*
+          校對完成：把這一位的辨識批次退役。
+          「AI 辨識、還沒有人校對過」就是 is_valid = true 且 ocr_time 有值的那一批 ——
+          退役之後批改清單的「未校對」徽章消失，每小時的自動 OCR 也不會再撿走它。
+          作文與原稿都在 submission 上，不受影響。
+        */
+        if (confirm_ocr) {
+            await BatchProxySubmissionHelper.retire(assignment_id, user_id, scope);
+        }
+
         ctx.body = { success: true, result };
     } catch (error) {
         console.error('Error in proxy submission:', error);
@@ -467,20 +480,26 @@ router.post('/submissions/proxy', async (ctx) => {
 });
 
 /**
- * @route POST /api/instructor/submissions/ocr_proxy
- * @description 教師使用批次代繳交上傳學生的作業圖片，並進行 OCR 辨識文字（適用學生未繳交但教師代為上傳手寫作業的情境）。
- * @body {string} assignmentId - 目標作業的 ID
- * @body {string} studentId - 被代繳的學生 user ID
- * @body {string} images - 作業圖片的 base64 字串陣列
- * @body {string} batchUUID - 這批次作業的 uuid
- * @returns {Object} 操作結果
+ * @route POST /service/instructor/submissions/ocr_proxy
+ * @description 批次代繳交：收下一位學生的紙本作文照片。**只上傳，不辨識。**
+ *
+ * 以前這一支上傳完就立刻觸發背景辨識。拆開的理由：
+ *   1. 老師要能一位接一位地拍，全部收完再一次送去辨識
+ *   2. 重試時**不該重傳照片** —— 照片早就在 GCS 了，重傳只是再燒一次流量、
+ *      多一批孤兒檔。所以「觸發」與「重試」是另一支（/ocr_proxy/start）。
+ *
+ * @body {string} assignmentId
+ * @body {string} studentId
+ * @body images - `[{ base64Image, mimeType }]`；相容舊的 `string[]`（當 JPEG）
+ * @returns `{ success, batchId, batchUUID, folder, files }`
+ *          files 是 GCS 上的**裸檔名**（與 batch_proxy_submission.img_files 一致，不含資料夾）
  */
 router.post('/submissions/ocr_proxy', async (ctx) => {
     try {
         const { assignmentId, studentId, images } = ctx.request.body as {
             assignmentId: string;
             studentId: string;
-            images: string[];
+            images: unknown;
         };
 
         if (!assignmentId || !studentId || !images) {
@@ -500,21 +519,21 @@ router.post('/submissions/ocr_proxy', async (ctx) => {
             return;
         }
 
+        // 格式、大小、張數（以前一律當 JPEG 寫進 GCS，什麼都不檢查）
+        const checked = checkImageList(images);
+        if (!checked.ok) {
+            ctx.status = checked.status;
+            ctx.body = { error: checked.message };
+            return;
+        }
+
         // 將 base64 圖片存成 cloud storage 檔案
         const bucketFolder = `submit/assign_${assignmentId}`;
         const dt = new Date();
-        const fileNames = await Promise.all(images.map(async img => {
-            const base64Data = `data:image/jpeg;base64,${img}`;
-            const fileName = await StorageHelper.uploadImageIfBase64(base64Data, bucketFolder, `sub_${assignmentId}_${studentId}_${String(dt.getMonth() + 1).padStart(2, '0')}${String(dt.getDay()).padStart(2, '0')}-${String(dt.getHours()).padStart(2, '0')}${String(dt.getMinutes()).padStart(2, '0')}_`);
-            return fileName;
-        }));
-
-        // // 將 base64 圖片轉為檔案
-        // const fileNames = await Promise.all(images.map(async img => {
-        //     const base64Data = `data:image/jpeg;base64,${img}`;
-        //     const fileName = await StorageHelper.uploadImageIfBase64(base64Data, 'batch_proxy_submission');
-        //     return fileName;
-        // }));
+        const prefix = `sub_${assignmentId}_${studentId}_${String(dt.getMonth() + 1).padStart(2, '0')}${String(dt.getDay()).padStart(2, '0')}-${String(dt.getHours()).padStart(2, '0')}${String(dt.getMinutes()).padStart(2, '0')}_`;
+        const fileNames = await Promise.all(checked.images.map((img) =>
+            StorageHelper.uploadImageIfBase64(
+                `data:${img.mimeType};base64,${img.base64Image}`, bucketFolder, prefix)));
 
         const submitterId = ctx.session.userInfo.id;
 
@@ -523,15 +542,125 @@ router.post('/submissions/ocr_proxy', async (ctx) => {
           batch_uuid **由 helper 產生**，不再收 client 傳來的值 ——
           那個值以前是字串內插進 SQL 的（注入點），而且兩個分頁同時開就可能撞號。
         */
-        const batch = await BatchProxySubmissionHelper.submit(
-            studentId, assignmentId, submitterId, fileNames);
+        let batch: { id: string; batch_uuid: string };
+        try {
+            batch = await BatchProxySubmissionHelper.submit(
+                studentId, assignmentId, submitterId, fileNames);
+        } catch (e) {
+            // 照片已經進 GCS 了、資料列卻沒寫進去 —— 留下檔名，日後的清理腳本才找得到
+            console.error('[ocr_proxy] 照片已上傳但批次寫入失敗，孤兒檔：', { bucketFolder, fileNames });
+            throw e;
+        }
 
-        // 呼叫 job 進行 ocr
-        await CloudRunJobsHelper.startOCRJob(studentId, assignmentId, batch.batch_uuid);
-
-        ctx.body = { success: true, batchId: batch.id, batchUUID: batch.batch_uuid };
+        /*
+          ⚠️ 這裡**刻意不觸發**辨識（以前會呼叫 CloudRunJobsHelper.startOCRJob）。
+             老師還在拍下一位；等他按「開始辨識」才送（/submissions/ocr_proxy/start）。
+        */
+        ctx.body = {
+            success: true,
+            batchId: batch.id,
+            batchUUID: batch.batch_uuid,
+            folder: bucketFolder,
+            files: fileNames,
+        };
     } catch (error) {
         console.error('Error in proxy submission:', error);
+        ctx.status = 500;
+        ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/**
+ * 同時觸發幾個 Cloud Run execution。
+ *
+ * 一位學生一個 execution —— 一班三十人就是三十個。全部同時打，
+ * 很容易撞到 Cloud Run Jobs 的並行配額，而且某一位失敗時分不出是誰。
+ */
+const OCR_START_CONCURRENCY = 3;
+
+/**
+ * @route POST /service/instructor/submissions/ocr_proxy/start
+ * @description 批次代繳交：把收好的照片送去背景辨識。**重試也是這一支。**
+ *
+ * @body {string} assignmentId
+ * @body {string[]} [studentIds] 省略＝這份作業所有「有照片、還沒辨識」的
+ * @body {boolean} [force] 已經辨識完成的也重跑（重試「辨識出來是空的」那種失敗）
+ * @returns `{ started, failed, skipped }` —— 逐位回報，一位失敗不影響其他人
+ */
+router.post('/submissions/ocr_proxy/start', async (ctx) => {
+    try {
+        const { assignmentId, studentIds, force } = ctx.request.body as {
+            assignmentId: string;
+            studentIds?: unknown;
+            force?: boolean;
+        };
+        if (!assignmentId) {
+            ctx.status = 400;
+            ctx.body = { error: 'Missing assignmentId' };
+            return;
+        }
+        const wanted = Array.isArray(studentIds) ? studentIds.map(String) : undefined;
+
+        // 範圍檢查在查詢裡：範圍外的 studentId 自然查不到，下面會回 not_found
+        const scope = await courseScopeOf(ctx);
+        const batches = await BatchProxySubmissionHelper.latestValidFor(assignmentId, scope, wanted);
+
+        const started: Array<{ studentId: string; batchUUID: string }> = [];
+        const failed: Array<{ studentId: string; error: string }> = [];
+        const skipped: Array<{ studentId: string; reason: 'not_found' | 'already_done' }> = [];
+
+        const found = new Set(batches.map((b) => b.user_id));
+        for (const id of wanted ?? []) {
+            if (!found.has(id)) skipped.push({ studentId: id, reason: 'not_found' });
+        }
+
+        const toRun = batches.filter((b) => {
+            if (b.ocr_time && !force) {
+                skipped.push({ studentId: b.user_id, reason: 'already_done' });
+                return false;
+            }
+            return true;
+        });
+
+        /*
+          先記下觸發時間，再送出去。逾時是從 last_update 算的 ——
+          反過來做的話，job 很快失敗時會看到「還沒觸發就已經逾時」。
+        */
+        await BatchProxySubmissionHelper.touchTriggered(toRun.map((b) => b.id));
+
+        for (let i = 0; i < toRun.length; i += OCR_START_CONCURRENCY) {
+            const chunk = toRun.slice(i, i + OCR_START_CONCURRENCY);
+            const results = await Promise.all(chunk.map((b) =>
+                CloudRunJobsHelper.startOCRJob(b.user_id, assignmentId, b.batch_uuid)));
+            results.forEach((r, j) => {
+                const b = chunk[j];
+                if (r.started) started.push({ studentId: b.user_id, batchUUID: b.batch_uuid });
+                else failed.push({ studentId: b.user_id, error: r.error ?? '無法啟動辨識' });
+            });
+        }
+
+        ctx.body = { started, failed, skipped };
+    } catch (error) {
+        console.error('Error starting OCR jobs:', error);
+        ctx.status = 500;
+        ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/**
+ * @route GET /service/instructor/assignments/:assignmentId/proxy_status
+ * @description 批次代繳交的辨識進度。輪詢用，**不含作文全文**。
+ *
+ * 只回原始欄位，「算不算失敗」由前端的 lib/proxy/status.ts 判斷。
+ * 回傳 `now`（伺服器時間）—— 逾時要用它算，不能信老師電腦的時鐘。
+ */
+router.get('/assignments/:assignmentId/proxy_status', async (ctx) => {
+    try {
+        const scope = await courseScopeOf(ctx);
+        const rows = await BatchProxySubmissionHelper.statusOf(ctx.params.assignmentId, scope);
+        ctx.body = { now: new Date().toISOString(), rows };
+    } catch (error) {
+        console.error('Error reading proxy status:', error);
         ctx.status = 500;
         ctx.body = { error: 'Internal Server Error' };
     }

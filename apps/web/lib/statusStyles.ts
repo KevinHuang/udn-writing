@@ -14,6 +14,7 @@
  */
 
 import { SubmissionStatus } from '../types';
+import type { ProxyOcrStatus } from './proxy/status';
 
 export interface StatusStyle {
   /** 顯示文字 */
@@ -71,3 +72,73 @@ export const OVERDUE_STYLE: StatusStyle = {
 export function statusStyle(status: SubmissionStatus | undefined): StatusStyle {
   return (status && SUBMISSION_STATUS[status]) || SUBMISSION_STATUS.Unsubmitted;
 }
+
+/**
+ * 批次代繳交的辨識狀態（lib/proxy/status.ts）。
+ *
+ * 和上面的繳交狀態是**不同維度** —— 一位學生可以同時是「待批改」
+ * 又是「AI 辨識未校對」，所以不塞進 SubmissionStatus，另外一組。
+ *
+ *   未登錄  淡墨 ink      —— 還沒發生的事
+ *   上傳中／辨識中  花青 info  —— 系統正在處理，不用老師動手
+ *   待辨識  赭石 warning  —— 等老師按「開始辨識」
+ *   已完成  石綠 success
+ *   失敗    朱砂 danger   —— 要老師處理（重試或改用打字）
+ */
+export const PROXY_OCR_STYLE: Record<ProxyOcrStatus, StatusStyle> = {
+  idle: {
+    label: '未登錄',
+    badge: 'bg-ink-100 text-ink-600 border border-ink-200',
+    text: 'text-ink-500',
+    dot: 'bg-ink-400',
+  },
+  uploading: {
+    label: '上傳中',
+    badge: 'bg-info-100 text-info-700 border border-info-200',
+    text: 'text-info-600',
+    dot: 'bg-info-500',
+  },
+  upload_failed: {
+    label: '上傳失敗',
+    badge: 'bg-danger-100 text-danger-700 border border-danger-200',
+    text: 'text-danger-600',
+    dot: 'bg-danger-500',
+  },
+  queued: {
+    label: '待辨識',
+    badge: 'bg-warning-100 text-warning-700 border border-warning-200',
+    text: 'text-warning-600',
+    dot: 'bg-warning-500',
+  },
+  running: {
+    label: '辨識中',
+    badge: 'bg-info-100 text-info-700 border border-info-200',
+    text: 'text-info-600',
+    dot: 'bg-info-500',
+  },
+  done: {
+    label: '已辨識',
+    badge: 'bg-success-100 text-success-700 border border-success-200',
+    text: 'text-success-600',
+    dot: 'bg-success-500',
+  },
+  failed: {
+    label: '辨識失敗',
+    badge: 'bg-danger-100 text-danger-700 border border-danger-200',
+    text: 'text-danger-600',
+    dot: 'bg-danger-500',
+  },
+};
+
+/**
+ * 「AI 辨識、還沒有人校對過」—— 疊加維度，跟 OVERDUE_STYLE 一樣。
+ *
+ * 用琥珀，刻意不用赭石：它常常就疊在「待批改」（赭石）旁邊，
+ * 同色的兩顆徽章看起來像同一件事。
+ */
+export const UNPROOFREAD_STYLE: StatusStyle = {
+  label: 'AI 辨識未校對',
+  badge: 'bg-amber-100 text-amber-700 border border-amber-200',
+  text: 'text-amber-600',
+  dot: 'bg-amber-500',
+};

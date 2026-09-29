@@ -5,6 +5,7 @@ import GenAIHelper from '../dal/genai_helper';
 import { isAiConfigured, simulateGrading, simulatedDelayMs } from '../dal/simulated_grading';
 import Util from '../util/util';
 import StorageHelper from '../dal/storage_helper';
+import { checkImage } from '../lib/image_input';
 
 const router = new Router({ prefix: '/gemini' });
 
@@ -64,33 +65,25 @@ router.post('/ocr', OAuthMiddleware.requireLogin, async (ctx: Context) => {
  * ─────────────────────────────────────────────
  */
 
-/** 圖片 base64 的上限。約 8 MB 的原始資料，避免有人拿超大檔案打 AI 額度 */
-const MAX_IMAGE_BASE64 = 11 * 1024 * 1024;
-
 /** 取出並檢查 { base64Image, mimeType }。不合法就回 400 並回傳 null */
 function readImageBody(ctx: Context): { base64Image: string; mimeType: string } | null {
   return readImage(ctx, ctx.request.body as { base64Image?: string; mimeType?: string });
 }
 
-/** 檢查一組 { base64Image, mimeType }。請求本體與 ocr_text 的 original 共用同一套規則 */
+/**
+ * 檢查一組 { base64Image, mimeType }。請求本體與 ocr_text 的 original 共用同一套規則。
+ * 規則本身在 lib/image_input.ts（代繳交的上傳端點也用同一套），這裡只負責回錯誤。
+ */
 function readImage(
   ctx: Context,
   source: { base64Image?: string; mimeType?: string } | undefined,
 ): { base64Image: string; mimeType: string } | null {
-  const { base64Image, mimeType } = source ?? {};
-  if (!base64Image || !mimeType) {
-    Util.returnError(ctx, 400, 'Missing base64Image or mimeType.');
+  const checked = checkImage(source);
+  if (!checked.ok) {
+    Util.returnError(ctx, checked.status, checked.message);
     return null;
   }
-  if (!/^image\//.test(mimeType)) {
-    Util.returnError(ctx, 400, 'mimeType must be an image type.');
-    return null;
-  }
-  if (base64Image.length > MAX_IMAGE_BASE64) {
-    Util.returnError(ctx, 413, 'Image too large.');
-    return null;
-  }
-  return { base64Image, mimeType };
+  return checked.image;
 }
 
 /**

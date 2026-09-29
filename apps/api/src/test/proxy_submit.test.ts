@@ -21,6 +21,8 @@ import {
   type TestServer,
 } from './helpers';
 import BatchProxySubmissionHelper from '../dal/batch_proxy_submission_helper';
+import { storageCalls, resetStorageCalls } from '../dal/simulated_storage';
+import { ocrJobCalls, resetOcrJobCalls } from '../dal/simulated_ocr_job';
 
 const ACCOUNT = 'me@test.edu.tw';
 let srv: TestServer;
@@ -31,7 +33,11 @@ before(async () => {
   srv = await startServer();
 });
 after(async () => { await srv.close(); await idp.close(); await rawDb.$pool.end(); });
-beforeEach(resetDb);
+beforeEach(async () => {
+  await resetDb();
+  resetStorageCalls();
+  resetOcrJobCalls();
+});
 
 const post = (cookie: string, path: string, body: unknown) =>
   req(srv, path, cookie, {
@@ -158,6 +164,7 @@ describe('POST /submissions/ocr_proxy 的授權', () => {
     });
     assert.equal(res.status, 404);
     assert.equal(await countBatches(), 0, '擋下來就不該留下 batch 列');
+    assert.equal(storageCalls.length, 0, '⚠️ 不能先把照片寫進 GCS 再擋');
   });
 
   test('⚠️ 自己班的作業，但學生不在名冊上 → 404', async () => {
@@ -168,6 +175,7 @@ describe('POST /submissions/ocr_proxy 的授權', () => {
     });
     assert.equal(res.status, 404);
     assert.equal(await countBatches(), 0);
+    assert.equal(storageCalls.length, 0);
   });
 });
 
@@ -324,5 +332,206 @@ describe('範圍查詢', () => {
     const rows = await BatchProxySubmissionHelper.statusOf(
       s.assignA, { kind: 'instructor', userId: s.me.id });
     assert.equal(rows.length, 0, '退役之後就不算「未校對」了');
+  });
+});
+
+// ─────────────────────────────────────────────
+// 先收照片、後台辨識
+// ─────────────────────────────────────────────
+
+const JPEG = { base64Image: '/9j/4AAQSkZJRg==', mimeType: 'image/jpeg' };
+
+const upload = (cookie: string, assignmentId: string, studentId: string, images: unknown) =>
+  post(cookie, '/service/instructor/submissions/ocr_proxy', { assignmentId, studentId, images });
+
+const startOcr = (cookie: string, body: Record<string, unknown>) =>
+  post(cookie, '/service/instructor/submissions/ocr_proxy/start', body);
+
+describe('POST /submissions/ocr_proxy：只上傳，不辨識', () => {
+  test('收下照片、寫一筆批次，而且**不會**觸發辨識', async () => {
+    const s = await twoClasses();
+    const cookie = await login(srv);
+    const res = await upload(cookie, s.assignA, s.mine.id, [JPEG, JPEG]);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+
+    assert.equal(body.files.length, 2);
+    assert.equal(body.folder, `submit/assign_${s.assignA}`);
+    assert.ok(body.files.every((f: string) => !f.includes('/')), 'files 是裸檔名，與 img_files 一致');
+    assert.equal(storageCalls.length, 2);
+    assert.equal(await countBatches(), 1);
+    assert.equal(ocrJobCalls.length, 0, '⚠️ 上傳不可以順便觸發辨識 —— 老師還在拍下一位');
+  });
+
+  test('舊的形狀 images: string[] 照樣收（當成 JPEG）', async () => {
+    const s = await twoClasses();
+    const cookie = await login(srv);
+    const res = await upload(cookie, s.assignA, s.mine.id, IMAGES);
+    assert.equal(res.status, 200);
+    assert.equal(storageCalls.length, 1);
+  });
+
+  test('不是圖片 → 400，什麼都沒存', async () => {
+    const s = await twoClasses();
+    const cookie = await login(srv);
+    const res = await upload(cookie, s.assignA, s.mine.id, [{ base64Image: 'aGVsbG8=', mimeType: 'text/plain' }]);
+    assert.equal(res.status, 400);
+    assert.equal(storageCalls.length, 0);
+    assert.equal(await countBatches(), 0);
+  });
+
+  test('一次太多張 → 400', async () => {
+    const s = await twoClasses();
+    const cookie = await login(srv);
+    const res = await upload(cookie, s.assignA, s.mine.id, Array.from({ length: 9 }, () => JPEG));
+    assert.equal(res.status, 400);
+    assert.equal(storageCalls.length, 0);
+  });
+
+  test('同一位重拍：舊的那批退役，只剩新的一批是現行的', async () => {
+    const s = await twoClasses();
+    const cookie = await login(srv);
+    await upload(cookie, s.assignA, s.mine.id, [JPEG]);
+    await upload(cookie, s.assignA, s.mine.id, [JPEG, JPEG]);
+    const valid = await rawDb.one<{ n: number }>(
+      `SELECT count(*)::int AS n FROM batch_proxy_submission WHERE is_valid = true`);
+    assert.equal(valid.n, 1);
+  });
+});
+
+describe('POST /submissions/ocr_proxy/start：觸發與重試', () => {
+  test('不帶 studentIds → 這份作業所有待辨識的都送出去', async () => {
+    const s = await twoClasses();
+    const second = await seedUser('a2@test.edu.tw', '學生甲二');
+    await seedLearner(s.courseA, second.id, 2);
+    const cookie = await login(srv);
+    await upload(cookie, s.assignA, s.mine.id, [JPEG]);
+    await upload(cookie, s.assignA, second.id, [JPEG]);
+
+    const res = await startOcr(cookie, { assignmentId: s.assignA });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.started.length, 2);
+    assert.equal(body.failed.length, 0);
+    assert.equal(ocrJobCalls.length, 2, '一位學生一個 execution');
+    assert.ok(ocrJobCalls.every((c) => c.assignmentId === s.assignA && c.batchUUID));
+  });
+
+  test('送出去之後 last_update 晚於 created_at —— 前端靠這個分辨「待辨識」與「辨識中」', async () => {
+    const s = await twoClasses();
+    const cookie = await login(srv);
+    await upload(cookie, s.assignA, s.mine.id, [JPEG]);
+    const before = await rawDb.one<{ same: boolean }>(
+      `SELECT created_at = last_update AS same FROM batch_proxy_submission WHERE is_valid`);
+    assert.equal(before.same, true, '剛收照片時兩個時間一樣');
+
+    await startOcr(cookie, { assignmentId: s.assignA });
+    const after = await rawDb.one<{ later: boolean }>(
+      `SELECT last_update > created_at AS later FROM batch_proxy_submission WHERE is_valid`);
+    assert.equal(after.later, true);
+  });
+
+  test('⚠️ 重試**不重傳照片**：同一位送兩次，job 叫兩次，但批次還是那一筆', async () => {
+    const s = await twoClasses();
+    const cookie = await login(srv);
+    await upload(cookie, s.assignA, s.mine.id, [JPEG, JPEG]);
+    const uploadsBefore = storageCalls.length;
+
+    await startOcr(cookie, { assignmentId: s.assignA, studentIds: [s.mine.id] });
+    await startOcr(cookie, { assignmentId: s.assignA, studentIds: [s.mine.id] });
+
+    assert.equal(ocrJobCalls.length, 2);
+    assert.equal(ocrJobCalls[0].batchUUID, ocrJobCalls[1].batchUUID, '同一批照片');
+    assert.equal(await countBatches(), 1, '沒有因為重試多出新的批次');
+    assert.equal(storageCalls.length, uploadsBefore, '沒有重傳');
+  });
+
+  test('已經辨識完成的 → already_done；帶 force 才重跑', async () => {
+    const s = await twoClasses();
+    const cookie = await login(srv);
+    await upload(cookie, s.assignA, s.mine.id, [JPEG]);
+    await rawDb.none(`UPDATE batch_proxy_submission SET ocr_time = now() WHERE is_valid`);
+
+    const plain = await (await startOcr(cookie, { assignmentId: s.assignA, studentIds: [s.mine.id] })).json();
+    assert.deepEqual(plain.skipped, [{ studentId: s.mine.id, reason: 'already_done' }]);
+    assert.equal(ocrJobCalls.length, 0);
+
+    const forced = await (await startOcr(cookie, { assignmentId: s.assignA, studentIds: [s.mine.id], force: true })).json();
+    assert.equal(forced.started.length, 1);
+    assert.equal(ocrJobCalls.length, 1);
+  });
+
+  test('⚠️ 別人班的學生 → not_found，而且一個 job 都沒開', async () => {
+    const s = await twoClasses();
+    await BatchProxySubmissionHelper.submit(s.theirs.id, s.assignB, s.other.id, ['x.jpg']);
+    const cookie = await login(srv);
+
+    const body = await (await startOcr(cookie, { assignmentId: s.assignB, studentIds: [s.theirs.id] })).json();
+    assert.deepEqual(body.skipped, [{ studentId: s.theirs.id, reason: 'not_found' }]);
+    assert.equal(ocrJobCalls.length, 0);
+  });
+
+  test('沒帶 assignmentId → 400', async () => {
+    await twoClasses();
+    const cookie = await login(srv);
+    assert.equal((await startOcr(cookie, {})).status, 400);
+  });
+});
+
+describe('GET /assignments/:id/proxy_status', () => {
+  test('回伺服器時間與每一位的原始狀態（不含作文全文）', async () => {
+    const s = await twoClasses();
+    const cookie = await login(srv);
+    await upload(cookie, s.assignA, s.mine.id, [JPEG]);
+
+    const res = await req(srv, `/service/instructor/assignments/${s.assignA}/proxy_status`, cookie);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(!Number.isNaN(Date.parse(body.now)), 'now 是伺服器時間');
+    assert.equal(body.rows.length, 1);
+    const row = body.rows[0];
+    assert.equal(row.user_id, s.mine.id);
+    assert.equal(row.ocr_time, null);
+    assert.equal(row.has_content, false);
+    assert.equal(row.img_files.length, 1);
+    assert.equal('content' in row, false, '輪詢不帶作文全文');
+  });
+
+  test('別人班的作業 → 空清單（不是 403，與其他查詢一致）', async () => {
+    const s = await twoClasses();
+    await BatchProxySubmissionHelper.submit(s.theirs.id, s.assignB, s.other.id, ['x.jpg']);
+    const cookie = await login(srv);
+    const res = await req(srv, `/service/instructor/assignments/${s.assignB}/proxy_status`, cookie);
+    assert.equal(res.status, 200);
+    assert.deepEqual((await res.json()).rows, []);
+  });
+});
+
+describe('校對完成（confirm_ocr）', () => {
+  test('存檔時帶 confirm_ocr → 這一批退役，不再算「未校對」', async () => {
+    const s = await twoClasses();
+    const cookie = await login(srv);
+    await upload(cookie, s.assignA, s.mine.id, [JPEG]);
+    await rawDb.none(`UPDATE batch_proxy_submission SET ocr_time = now() WHERE is_valid`);
+
+    const res = await post(cookie, '/service/instructor/submissions/proxy', {
+      assignment_id: s.assignA, user_id: s.mine.id,
+      content: '老師校對過的作文', word_count: 8, files: [], confirm_ocr: true,
+    });
+    assert.equal(res.status, 200);
+
+    const status = await (await req(srv, `/service/instructor/assignments/${s.assignA}/proxy_status`, cookie)).json();
+    assert.equal(status.rows.length, 0);
+  });
+
+  test('沒帶 confirm_ocr → 批次留著（打字登錄不會意外把辨識紀錄退役）', async () => {
+    const s = await twoClasses();
+    const cookie = await login(srv);
+    await upload(cookie, s.assignA, s.mine.id, [JPEG]);
+    await post(cookie, '/service/instructor/submissions/proxy', {
+      assignment_id: s.assignA, user_id: s.mine.id, content: '打字的', word_count: 3, files: [],
+    });
+    const status = await (await req(srv, `/service/instructor/assignments/${s.assignA}/proxy_status`, cookie)).json();
+    assert.equal(status.rows.length, 1);
   });
 });

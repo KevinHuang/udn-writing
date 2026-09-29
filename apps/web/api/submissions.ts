@@ -170,9 +170,15 @@ export async function clearSubmission(submissionId: string): Promise<void> {
   await api.del(`/service/instructor/submissions/${submissionId}`);
 }
 
-/** 教師代學生繳交。 */
+/**
+ * 教師代學生繳交。
+ *
+ * `confirmOcr`：這是老師校對過的批次辨識結果 —— 存檔後把那一批退役，
+ * 「AI 辨識未校對」的徽章就消失。
+ */
 export async function proxySubmit(
   assignmentId: string, studentId: string, content: string, files: string[] = [],
+  opts: { confirmOcr?: boolean } = {},
 ): Promise<void> {
   await api.post('/service/instructor/submissions/proxy', {
     assignment_id: assignmentId,
@@ -180,6 +186,7 @@ export async function proxySubmit(
     content,
     word_count: content.length,
     files,
+    ...(opts.confirmOcr ? { confirm_ocr: true } : {}),
   });
 }
 

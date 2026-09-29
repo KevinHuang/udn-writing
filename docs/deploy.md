@@ -62,6 +62,8 @@ shell 歷史裡。設定完就把那個檔刪掉。
 | `OCR_MODEL` / `GRADING_MODEL` | 見 `.env` | |
 | `STORAGE_BUCKET_NAME` / `STORAGE_API_URL` | 見 `.env` | ⚠️ 與程式寫死的 bucket 不一致，見下 |
 | `SESSION_KEY` | **另外產生一把**，不要沿用本機的 | `openssl rand -base64 48` |
+| `OCR_JOB_NAME` | 可省略 | 批次代繳交的背景辨識 job。預設 `projects/writing-classroom-672f8/locations/asia-east1/jobs/ocr-job`，見 [ocr-job.md](ocr-job.md) |
+| `STORAGE_FAKE` / `OCR_JOB_FAKE` | **不要設** | 只給測試與本機開發用（不打 GCS／不開 Cloud Run job）。`NODE_ENV=production` 時程式會忽略它們 |
 
 ### ⛔ DB_NAME 那道防護在 Cloud Run 上不會擋
 
@@ -86,6 +88,11 @@ shell 歷史裡。設定完就把那個檔刪掉。
 
 **3. 服務帳號。** 沒有指定 `--service-account`，用的是專案的預設 compute 服務帳號。
 正式上線前應該建一個最小權限的專用帳號。
+
+**4. 批次代繳交要能開 Cloud Run job。** 「開始辨識」會對 `ocr-job` 呼叫
+`runJob`，服務帳號需要 `run.jobs.run`（例如 `roles/run.invoker` 或 `roles/run.developer`）。
+權限不足時**不會讓整個請求失敗** —— 那幾位會在畫面上顯示「送不出去」，
+Cloud Logging 會有 `[ocr-job] failed to start`。
 
 ---
 

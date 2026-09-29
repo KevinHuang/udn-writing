@@ -54,6 +54,7 @@ const config = {
     },
     ocrModel: process.env.OCR_MODEL || 'gemini-3.1-pro-preview',
     gradingModel: process.env.GRADING_MODEL || 'gemini-3.7-flash',
+    DSA_DSNS:  process.env.DSA_DSNS || 'udncollege.plus'
 };
 
 export default config;

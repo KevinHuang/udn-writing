@@ -72,6 +72,73 @@ export async function fetchCourses(): Promise<Course[]> {
   return rows.map(toCourse);
 }
 
+/** `GET /service/instructor/sync/get_courses` 回傳的 DevAPI 課程，原樣是 camelCase */
+interface RawSyncCourse {
+  schoolDsns: string;
+  schoolYear: number;
+  semester: number;
+  courseID: number;
+  courseName: string | null;
+  /**
+   * ⚠️ 名字叫 class，裝的其實是**學校**：className 是「臺中市僑泰中學」。
+   *    後端的整校同步（DsaSyncHelper.syncSchools）也是把它寫進 school.school_name。
+   */
+  class: { classID: number; className: string | null };
+  /** 這門課的授課教師。不是 class.teacher —— 那是 class 那一層的 */
+  teacher: Array<{ teacherName: string | null }> | null;
+}
+
+/** 校務系統上一門還沒匯入的課。同步視窗用 */
+export interface SyncCourse {
+  /** 畫面上的鍵。加前綴，才不會跟資料庫的 course.id 撞在一起 */
+  id: string;
+  /** DevAPI 的 courseID —— 匯入後就是 course.source_index，也就是 Course.code */
+  code: string;
+  semester: string;
+  city: string | null;
+  schoolName: string | null;
+  className: string | null;
+  teacherNames: string[];
+}
+
+/** 欄位對應與 toCourse 一致：校名來自 class.className，班級來自 courseName */
+function toSyncCourse(r: RawSyncCourse): SyncCourse {
+  const schoolName = r.class.className?.trim() || null;
+  return {
+    id: `dsa-${r.schoolDsns}-${r.courseID}`,
+    code: String(r.courseID),
+    semester: semesterValue(r.schoolYear, r.semester),
+    city: schoolName ? cityOf(schoolName) : null,
+    schoolName,
+    className: r.courseName?.trim() || null,
+    teacherNames: (r.teacher ?? [])
+      .map((t) => t.teacherName ?? '')
+      .filter(Boolean),
+  };
+}
+
+/**
+ * 校務系統上可匯入的課程。
+ *
+ * 範圍由伺服器端決定：一律是**今天所在的學期**，教師只拿到自己的，
+ * 系統管理者拿到全校的。
+ */
+export async function fetchSyncCourses(): Promise<SyncCourse[]> {
+  const rows = await api.get<RawSyncCourse[]>('/service/instructor/sync/get_courses');
+  return rows.map(toSyncCourse);
+}
+
+/**
+ * 從校務系統匯入**一門**課（課程、授課教師、修課學生都由後端建好）。
+ *
+ * 一次一門，同步視窗才能逐門顯示進度。已經匯入過的課也照送，
+ * 怎麼處理由後端決定 —— 前端不自己建課程，匯入完一律重新載入課程清單。
+ */
+export async function importSyncCourse(course: SyncCourse): Promise<void> {
+  // code 就是 String(courseID)，見 toSyncCourse
+  await api.post('/service/instructor/sync/from_dsa_course', { courseId: Number(course.code) });
+}
+
 /** 班級名冊。座號來自 uc_learner.seat_no */
 export interface RosterEntry { seatNo: number; name: string; userId: string }
 

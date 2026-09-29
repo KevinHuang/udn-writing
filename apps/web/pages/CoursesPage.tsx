@@ -11,7 +11,7 @@ export const CoursesPage: React.FC = () => {
   const {
     currentUser, myCourses, assignments, submissions, currentSemester,
     semesterOptions, todaySemester,
-    setCurrentSemester, handleUpdateCourse, handleSyncCourses, handleDeleteCourse,
+    setCurrentSemester, handleUpdateCourse, handleDeleteCourse,
     reloadCourses, ensureRoster,
   } = useAppState();
 
@@ -30,7 +30,7 @@ export const CoursesPage: React.FC = () => {
       onBack={goBack}
       canGoBack={canGoBack}
       onUpdateCourse={handleUpdateCourse}
-      onAddCourses={handleSyncCourses}
+      onCoursesImported={reloadCourses}
       onDeleteCourse={handleDeleteCourse}
       onRosterSynced={async (courseId) => {
         // 人數在課程清單上、名冊在另一份快取，兩邊都要重讀

@@ -20,7 +20,6 @@ import {
   Submission,
   Assignment,
   Course,
-  SchoolCourse,
 } from "../types";
 import { semesterLabel } from "../lib/semester";
 import { isAdmin, coursesNeedingReview, type CurrentUser } from "../lib/access";
@@ -55,7 +54,7 @@ export const CourseList = ({
   onBack,
   canGoBack,
   onUpdateCourse,
-  onAddCourses,
+  onCoursesImported,
   onOpenCourse,
   user,
   onDeleteCourse,
@@ -73,7 +72,8 @@ export const CourseList = ({
   onBack: () => void;
   canGoBack: boolean;
   onUpdateCourse: (c: Course) => void;
-  onAddCourses: (selected: SchoolCourse[]) => void;
+  /** 同步視窗匯入完（至少一門成功）之後呼叫，重新載入課程清單 */
+  onCoursesImported: () => Promise<void>;
   /** 目前身分。管理人員多出縣市篩選、學校分組與「待確認」入口 */
   user: CurrentUser;
   /** 永久刪除課程。連同名單、作業、繳交紀錄一起消失 */
@@ -489,10 +489,7 @@ export const CourseList = ({
           currentSemester={currentSemester}
           existingCourseCodes={courses.map((c) => c.code)}
           user={user}
-          onConfirm={(selected) => {
-            onAddCourses(selected);
-            setIsSyncModalOpen(false);
-          }}
+          onImported={onCoursesImported}
         />
       )}
       <PageHeader

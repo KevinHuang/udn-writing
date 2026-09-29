@@ -320,7 +320,7 @@ router.post('/sync/school', OAuthMiddleware.isSystemAdmin, async (ctx) => {
         // console.log({ schools });
 
         // 3. 取得所有的課程
-        const courses = await DevapiJasmineHelper.getAllCourses(dsns, schoolYear, semester);
+        const courses = await DevapiJasmineHelper.getAllCourses(dsns, schoolYear, semester, 'all');
         // const courses = tempCourses.filter((crs: any) => {
         //     // console.log({ source_index: sch.source_index, cls_id: crs.class.classID })
         //     const sch = schools.find((sch: any) => sch.source_index === crs.class.classID.toString());

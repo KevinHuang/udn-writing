@@ -13,7 +13,6 @@ import {
   Question,
   Folder,
   UserRole,
-  SchoolCourse,
 } from "../types";
 import { DEMO_STUDENT, DEMO_TEACHER } from "../lib/constants";
 import { type CurrentUser } from "../lib/access";
@@ -25,7 +24,6 @@ import {
   type MarkKind,
   type SubmissionMarks,
 } from "../lib/submissionMarks";
-import { parseCourseName } from "../lib/schoolName";
 import { useResetDemo } from "../lib/usePersistentState";
 import { orderedAssignments } from "../lib/assignmentOrder";
 import { routes, type SemesterFilter } from "../lib/routes";
@@ -328,53 +326,6 @@ function useAppStateValue() {
       await deleteFolder(id);
       await Promise.all([reloadFolders(), reloadQuestions()]);
     },
-  };
-  /**
-   * 題庫資料夾。原本收在 QuestionBank 的 useState 裡，離開題庫中心
-   * 元件就被卸載，新增或刪除的資料夾會整個復原 —— 看起來像沒：教師打開同步視窗 → 從校務系統挑班級 → 匯入成自己的課程
-   *   後端：管理者跑 POST /service/admin/sync/school → 課程、授課關聯、
-   *         學生名冊一次全部從 DevAPI 建好 → 教師只是「看到」自己的課
-   *
-   * 後端沒有「把這個班加進我的名下」這種動作。要做的話等於是讓教師
-   * 自己建立 uc_instructor 關聯 —— 那是權限問題（同校的老師可以認領
-   * 任何一個班嗎？），不是我可以逕自決定的。
-   *
-   * 在決定之前刻意維持原狀，不要做成半接的樣子：接一半的話，
-   * 老師按下匯入會看到課程出現在畫面上，重新整理就不見了。
-   *
-   * 見 artifacts/api-gap.md 的開放問題。
-   */
-  const handleSyncCourses = (selected: SchoolCourse[]) => {
-    const newCourses: Course[] = selected.map((sc) => {
-      // 校務系統只給一整串課程名稱。在這裡解析一次、把結果存起來，
-      // 之後所有畫面讀存好的欄位，不再碰字串。原始字串保留在 name。
-      const parsed = parseCourseName(sc.name);
-      return {
-        id: sc.id,
-        code: sc.code,
-        name: sc.name,
-        semester: sc.semester,
-        studentCount: sc.studentCount,
-        aiModels: ["教育會考國寫輔助AI", "中階英文作文輔助AI"], // Default models
-        teacherName: sc.teacherName,
-        city: parsed.city ?? undefined,
-        schoolName: parsed.schoolName ?? undefined,
-        schoolLevel: parsed.schoolLevel ?? undefined,
-        className: parsed.className ?? undefined,
-        parseConfidence: parsed.confidence,
-      };
-    });
-
-    const newRosters: Record<string, { seatNo: number; name: string }[]> = {};
-    selected.forEach((sc) => {
-      newRosters[sc.id] = sc.roster.map((name, index) => ({
-        seatNo: index + 1,
-        name,
-      }));
-    });
-
-    setCourses((prev) => [...prev, ...newCourses]);
-    setRosters((prev) => ({ ...prev, ...newRosters }));
   };
   /**
    * 永久刪除一個課程。
@@ -780,15 +731,9 @@ function useAppStateValue() {
     content: string,
     /** 原稿在 GCS 的路徑。辨識時後端已經存好，這裡跟著存進 pic_files */
     picFiles: string[] = [],
-    /**
-     * 這一位有批次代繳交的辨識紀錄 —— 存檔後把它退役。
-     * 老師是因為辨識失敗才改用打字的；不退役的話那一批還算「失敗」，
-     * 之後按「全部重試」會再辨識一次，**把老師打好的作文蓋掉**。
-     */
-    opts: { confirmOcr?: boolean } = {},
   ) => {
     try {
-      await proxySubmit(selectedAssignmentId, studentId, content, picFiles, opts);
+      await proxySubmit(selectedAssignmentId, studentId, content, picFiles);
       await reloadSubmissions();
       await ensureSubmissions(selectedAssignmentId);
       /*
@@ -995,7 +940,6 @@ function useAppStateValue() {
     rosters,
     ensureRoster,
     reloadCourses,
-    handleSyncCourses,
     handleDeleteCourse,
     myCourses: visibleCourses,
     assignments: visibleAssignments,

@@ -91,7 +91,7 @@ class DevapiJasmineHelper {
     }
 
     /** 取得指定學校的所有課程 */
-    public static async getAllCourses(schoolDsns: string, schoolYear: number, semester: number) {
+    public static async getAllCourses(schoolDsns: string, schoolYear: number, semester: number, account: string) {
         const token = await DevapiJasmineHelper.getAccessToken();
 
         const url = `${DevapiUtil.getDevapiHost()}/api/jasmine/${schoolDsns}/getCourse`;
@@ -101,7 +101,23 @@ class DevapiJasmineHelper {
         const jsonResp = JSON.parse(resp);
         const result = jsonResp.course
             .filter((crs: any) => (crs.schoolYear === schoolYear && crs.semester === semester))
-            .filter((crs: any) => (crs.class));
+            .filter((crs: any) => (crs.class))
+            .filter((crs: any) => (account === 'all' ? true : (crs.teacher.filter((t: any) => t.teacherAcc.toLowerCase() === account.toLowerCase()).length > 0)));
+        // console.log({ result })
+        return result;
+    }
+
+        /** 取得指定編號的課程清單 */
+    public static async getAllCoursesByID(schoolDsns: string, schoolYear: number, semester: number, courseID: number) {
+        const token = await DevapiJasmineHelper.getAccessToken();
+
+        const url = `${DevapiUtil.getDevapiHost()}/api/jasmine/${schoolDsns}/getCourse?courseID=${courseID}`;
+        // console.log({ url });
+        const resp = await DevapiUtil.sendDevapiRequest(url, token);
+        // console.log({ resp })
+        const jsonResp = JSON.parse(resp);
+        // 查無此課時 course 可能整個不存在；回 null 讓路由回 404，而不是在這裡丟例外變成 500
+        const result = jsonResp.course?.[0] ?? null;
         // console.log({ result })
         return result;
     }

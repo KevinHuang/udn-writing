@@ -1,37 +1,35 @@
-import React, { useMemo, useState } from "react";
-import { X, Check, RefreshCcw, Loader2, Info, Search, School, Users } from "lucide-react";
-import { SchoolCourse, SchoolLevel } from "../types";
-import { MOCK_SCHOOL_COURSES } from "../mockData";
+import React, { useEffect, useMemo, useState } from "react";
+import { X, Check, RefreshCcw, Loader2, Info, Search, School } from "lucide-react";
+import { fetchSyncCourses, importSyncCourse, type SyncCourse } from "../api/courses";
 import { semesterLabel } from "../lib/semester";
-import { parseCourseName, type ParsedCourseName } from "../lib/schoolName";
-import { canImportCourse, isAdmin, type CurrentUser } from "../lib/access";
+import { isAdmin, type CurrentUser } from "../lib/access";
 
 interface SyncSchoolModalProps {
   onClose: () => void;
-  onConfirm: (selectedCourses: SchoolCourse[]) => void;
+  /** 匯入跑完、至少一門成功之後呼叫，讓外面重新載入課程清單 */
+  onImported: () => Promise<void>;
   existingCourseCodes: string[];
   currentSemester: string;
-  /** 決定看得到哪些班級：管理人員全部，授課教師只有自己名下的 */
+  /** 只影響顯示（管理人員多看授課教師）。看得到哪些班級由伺服器端決定 */
   user: CurrentUser;
 }
 
-/** 目錄的一列：校務系統原始資料 ＋ 解析出來的縣市／學校／班級 */
-interface CatalogRow {
-  course: SchoolCourse;
-  parsed: ParsedCourseName;
-}
-
-/** 依學校把班級收成一組，順便記住縣市與學制 */
+/** 依學校把班級收成一組，順便記住縣市 */
 interface SchoolGroup {
   key: string;
   city: string;
   schoolName: string;
-  schoolLevel: SchoolLevel | null;
-  classes: CatalogRow[];
+  classes: SyncCourse[];
 }
 
 /** 解析不到縣市或學校的，統一收在這一組，不要散落各處 */
 const UNKNOWN_CITY = '待確認';
+
+/** 這一輪匯入裡每門課的狀態。沒輪到的不在表裡 */
+type ImportStatus = 'running' | 'done' | 'failed';
+
+const TAG = "shrink-0 px-1.5 py-0.5 rounded border text-caption whitespace-nowrap";
+const NEUTRAL_TAG = `${TAG} bg-surface-soft border-border text-text-secondary`;
 
 /**
  * 同步校務系統。
@@ -39,39 +37,66 @@ const UNKNOWN_CITY = '待確認';
  * 聯合報的課橫跨全台國中小，一個學期可選的班級有數十個，
  * 攤成一條清單找不到東西。所以這裡是「縣市篩選 → 學校分組 → 勾班級」。
  *
- * 已經匯入過的班級（比對 code）不會出現在這裡，避免重複建立課程。
+ * 清單來自 GET /service/instructor/sync/get_courses（DevAPI）。
+ * 已經匯入過的班級（比對 code）照樣列出、標上「已匯入」，可以勾選再次匯入。
  */
 export const SyncSchoolModal = ({
   onClose,
-  onConfirm,
+  onImported,
   existingCourseCodes,
   currentSemester,
   user,
 }: SyncSchoolModalProps) => {
-  const [isLoading, setIsLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  /** 匯入中才有值：已經處理完（成功或失敗）幾門／總共幾門 */
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [importStatus, setImportStatus] = useState<Record<string, ImportStatus>>({});
+  const importing = progress !== null;
   const [city, setCity] = useState<string>("all");
   const [query, setQuery] = useState("");
+  /** null = 還在讀 */
+  const [catalog, setCatalog] = useState<SyncCourse[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchSyncCourses()
+      .then((rows) => {
+        if (!cancelled) setCatalog(rows);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.error('讀取校務系統課程失敗:', e);
+        setLoadFailed(true);
+      });
+    return () => { cancelled = true; };
+  }, [attempt]);
+
+  const retry = () => {
+    setCatalog(null);
+    setLoadFailed(false);
+    setAttempt((n) => n + 1);
+  };
 
   /**
-   * 本學期、尚未匯入、而且這個身分看得到的班級。
-   * 解析只在這裡跑一次（整份目錄），render 裡不再逐筆解析。
+   * 後端一律回**今天所在**的學期。老師在課程頁切到別的學期時，
+   * 標頭寫的是那個學期，清單就不能拿本學期的課頂替 —— 所以這裡還是要比對。
    */
-  const available = useMemo<CatalogRow[]>(
-    () =>
-      MOCK_SCHOOL_COURSES.filter(
-        (c) =>
-          c.semester === currentSemester &&
-          !existingCourseCodes.includes(c.code) &&
-          canImportCourse(user, c.teacherName),
-      ).map((course) => ({ course, parsed: parseCourseName(course.name) })),
-    [currentSemester, existingCourseCodes, user],
+  const available = useMemo(
+    () => (catalog ?? []).filter((c) => c.semester === currentSemester),
+    [catalog, currentSemester],
+  );
+
+  const importedCodes = useMemo(
+    () => new Set(existingCourseCodes),
+    [existingCourseCodes],
   );
 
   const cityCounts = useMemo(() => {
     const counts: Record<string, number> = { all: available.length };
-    available.forEach(({ parsed }) => {
-      const key = parsed.city ?? UNKNOWN_CITY;
+    available.forEach((c) => {
+      const key = c.city ?? UNKNOWN_CITY;
       counts[key] = (counts[key] ?? 0) + 1;
     });
     return counts;
@@ -79,22 +104,18 @@ export const SyncSchoolModal = ({
 
   const groups = useMemo<SchoolGroup[]>(() => {
     const term = query.trim().toLowerCase();
-    const rows = available.filter(({ course, parsed }) => {
-      const rowCity = parsed.city ?? UNKNOWN_CITY;
-      if (city !== "all" && rowCity !== city) return false;
+    const rows = available.filter((c) => {
+      if (city !== "all" && (c.city ?? UNKNOWN_CITY) !== city) return false;
       if (!term) return true;
-      // 解析不到的用原始字串比對，才不會搜不到
-      return (
-        course.name.toLowerCase().includes(term) ||
-        course.code.toLowerCase().includes(term) ||
-        course.teacherName.toLowerCase().includes(term)
+      return [c.schoolName, c.className, c.code, ...c.teacherNames].some((s) =>
+        s?.toLowerCase().includes(term),
       );
     });
 
     const bySchool = new Map<string, SchoolGroup>();
     rows.forEach((row) => {
-      const rowCity = row.parsed.city ?? UNKNOWN_CITY;
-      const rowSchool = row.parsed.schoolName ?? '未能辨識的學校';
+      const rowCity = row.city ?? UNKNOWN_CITY;
+      const rowSchool = row.schoolName ?? '未能辨識的學校';
       const key = `${rowCity}/${rowSchool}`;
       const group = bySchool.get(key);
       if (group) {
@@ -104,7 +125,6 @@ export const SyncSchoolModal = ({
           key,
           city: rowCity,
           schoolName: rowSchool,
-          schoolLevel: row.parsed.schoolLevel,
           classes: [row],
         });
       }
@@ -119,7 +139,7 @@ export const SyncSchoolModal = ({
 
   /** 整所學校一次勾選或取消 —— 一間學校常常是整批開課 */
   const toggleSchool = (group: SchoolGroup) => {
-    const ids = group.classes.map(({ course }) => course.id);
+    const ids = group.classes.map((c) => c.id);
     const allOn = ids.every((id) => selectedIds.includes(id));
     setSelectedIds((prev) =>
       allOn
@@ -128,14 +148,49 @@ export const SyncSchoolModal = ({
     );
   };
 
-  const handleSync = () => {
-    setIsLoading(true);
-    // 模擬校務系統的回應時間
-    setTimeout(() => {
-      onConfirm(MOCK_SCHOOL_COURSES.filter((c) => selectedIds.includes(c.id)));
-      setIsLoading(false);
-    }, 1200);
+  /**
+   * 一次匯入一門，逐門更新進度。一門失敗不中斷其他門。
+   *
+   * 全部成功就關視窗；有失敗的就留著，勾選只剩失敗的那幾門，
+   * 老師直接再按一次就是重試。
+   */
+  const handleSync = async () => {
+    const targets = available.filter((c) => selectedIds.includes(c.id));
+    const failed: string[] = [];
+    setImportStatus({});
+    for (const [i, course] of targets.entries()) {
+      setProgress({ done: i, total: targets.length });
+      setImportStatus((prev) => ({ ...prev, [course.id]: 'running' }));
+      try {
+        await importSyncCourse(course);
+        setImportStatus((prev) => ({ ...prev, [course.id]: 'done' }));
+      } catch (e) {
+        console.error(`匯入課程 ${course.code} 失敗:`, e);
+        failed.push(course.id);
+        setImportStatus((prev) => ({ ...prev, [course.id]: 'failed' }));
+      }
+    }
+    setProgress({ done: targets.length, total: targets.length });
+
+    // 部分成功也要重讀，課程清單才看得到剛匯入的那幾門
+    if (failed.length < targets.length) await onImported();
+
+    if (failed.length === 0) {
+      onClose();
+      return;
+    }
+    setSelectedIds(failed);
+    setProgress(null);
   };
+
+  const failedCount = Object.values(importStatus).filter((s) => s === 'failed').length;
+
+  const emptyMessage =
+    available.length > 0
+      ? "換個縣市或關鍵字再找找看。"
+      : isAdmin(user)
+        ? "校務系統裡沒有本學期的班級。"
+        : "校務系統裡沒有您本學期的授課班級。";
 
   /**
    * 晶片由**實際資料**產生，不是寫死的示範縣市清單 ——
@@ -217,10 +272,35 @@ export const SyncSchoolModal = ({
 
         {/* 學校與班級 */}
         <div className="flex-1 overflow-y-auto p-5 sm:p-6">
-          {groups.length > 0 ? (
+          {loadFailed ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="w-14 h-14 rounded-full bg-danger-50 flex items-center justify-center mb-3">
+                <Info size={28} className="text-danger-700" />
+              </div>
+              <h3 className="text-title font-bold text-text-primary">
+                讀不到校務系統的課程
+              </h3>
+              <p className="text-body text-text-secondary mt-1">
+                可能是校務系統暫時沒有回應，請稍後再試。
+              </p>
+              <button
+                id="course-sync-btn-retry"
+                onClick={retry}
+                className="mt-4 px-5 py-2.5 rounded-brand text-ui border border-border text-text-primary hover:bg-surface-soft transition-colors flex items-center gap-2 whitespace-nowrap"
+              >
+                <RefreshCcw size={15} className="shrink-0" />
+                重新讀取
+              </button>
+            </div>
+          ) : catalog === null ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center text-text-secondary">
+              <Loader2 size={28} className="animate-spin text-primary mb-3" />
+              <p className="text-body">正在讀取校務系統的課程…</p>
+            </div>
+          ) : groups.length > 0 ? (
             <div className="flex flex-col gap-5">
               {groups.map((group) => {
-                const ids = group.classes.map(({ course }) => course.id);
+                const ids = group.classes.map((c) => c.id);
                 const allOn = ids.every((id) => selectedIds.includes(id));
                 return (
                   <section key={group.key}>
@@ -228,14 +308,9 @@ export const SyncSchoolModal = ({
                       <h3 className="text-ui text-text-primary flex items-center gap-2 min-w-0">
                         <School size={15} className="text-primary shrink-0" />
                         <span className="truncate">
-                          {group.city}
+                          {/* 校名本身就帶縣市（「新北市石門實中」），不要再補一次 */}
                           {group.schoolName}
                         </span>
-                        {group.schoolLevel && (
-                          <span className="shrink-0 px-2 py-0.5 rounded bg-surface-soft border border-border text-caption text-text-secondary whitespace-nowrap">
-                            {group.schoolLevel}
-                          </span>
-                        )}
                         <span className="shrink-0 text-caption text-text-secondary whitespace-nowrap">
                           {group.classes.length} 個班級
                         </span>
@@ -243,21 +318,25 @@ export const SyncSchoolModal = ({
                       <button
                         id={`course-sync-btn-selectall-${group.key}`}
                         onClick={() => toggleSchool(group)}
-                        className="shrink-0 text-caption text-primary hover:underline whitespace-nowrap"
+                        disabled={importing}
+                        className="shrink-0 text-caption text-primary hover:underline whitespace-nowrap disabled:opacity-50 disabled:no-underline"
                       >
                         {allOn ? "取消整校" : "選取整校"}
                       </button>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {group.classes.map(({ course, parsed }) => {
+                      {group.classes.map((course) => {
                         const on = selectedIds.includes(course.id);
+                        const status = importStatus[course.id];
                         return (
                           <button
                             key={course.id}
                             id={`course-sync-item-${course.id}`}
                             onClick={() => toggle(course.id)}
-                            className={`text-left px-3.5 py-3 rounded-brand border transition-all flex items-center gap-3 ${
+                            // 匯入途中勾選不會有作用（要跑哪幾門在開始時就定了），乾脆鎖住
+                            disabled={importing}
+                            className={`text-left px-3.5 py-3 rounded-brand border transition-all flex items-center gap-3 disabled:cursor-default ${
                               on
                                 ? "border-primary bg-primary/5"
                                 : "border-border bg-card hover:border-primary/40"
@@ -275,32 +354,51 @@ export const SyncSchoolModal = ({
                             <span className="min-w-0 flex-1">
                               <span className="flex items-center gap-1.5 min-w-0">
                                 <span className="block text-body text-text-primary truncate">
-                                  {/* 解析不到班級就退回原始字串，不要留空 */}
-                                  {parsed.className ?? course.name}
+                                  {/* 沒有班級名稱就退回課程代碼，不要留空 */}
+                                  {course.className ?? course.code}
                                 </span>
-                                {parsed.confidence === 'low' && (
+                                {/* 判定規則同 toCourse：校名認不出縣市就是待確認 */}
+                                {!course.city && (
                                   <span
-                                    title="縣市或學校無法自動判定，匯入後請到「待確認」補齊"
+                                    title="縣市無法從校名判定，匯入後請到「待確認」補齊"
                                     className="shrink-0 px-1.5 py-0.5 rounded bg-warning-100 text-warning-700 border border-warning-200 text-caption whitespace-nowrap"
                                   >
                                     待確認
                                   </span>
                                 )}
+                                {/* 這一輪的匯入狀態優先；沒輪到的才看是不是早就匯入過 */}
+                                {status === 'running' ? (
+                                  <span className={`${NEUTRAL_TAG} inline-flex items-center gap-1`}>
+                                    <Loader2 size={11} className="animate-spin shrink-0" />
+                                    匯入中
+                                  </span>
+                                ) : status === 'done' ? (
+                                  <span className={`${NEUTRAL_TAG} inline-flex items-center gap-1`}>
+                                    <Check size={11} className="shrink-0" />
+                                    已完成
+                                  </span>
+                                ) : status === 'failed' ? (
+                                  <span className={`${TAG} bg-danger-50 border-danger-200 text-danger-700`}>
+                                    匯入失敗
+                                  </span>
+                                ) : importedCodes.has(course.code) ? (
+                                  <span
+                                    title="這個班級已經在系統裡，勾選會再匯入一次"
+                                    className={NEUTRAL_TAG}
+                                  >
+                                    已匯入
+                                  </span>
+                                ) : null}
                               </span>
-                              <span className="mt-0.5 flex items-center gap-2 text-caption text-text-secondary flex-wrap">
-                                <span className="whitespace-nowrap">{course.code}</span>
-                                <span aria-hidden>・</span>
-                                <span className="inline-flex items-center gap-1 whitespace-nowrap">
-                                  <Users size={11} className="shrink-0" />
-                                  {course.studentCount} 位
+                              <span className="mt-0.5 block text-caption text-text-secondary">
+                                {course.code}
+                              </span>
+                              {/* 一門課常有七、八位授課教師，自成一行，不跟代碼擠在一起 */}
+                              {isAdmin(user) && course.teacherNames.length > 0 && (
+                                <span className="mt-0.5 block text-caption text-text-muted">
+                                  {course.teacherNames.join('、')}
                                 </span>
-                                {isAdmin(user) && (
-                                  <>
-                                    <span aria-hidden>・</span>
-                                    <span className="whitespace-nowrap">{course.teacherName}</span>
-                                  </>
-                                )}
-                              </span>
+                              )}
                             </span>
                           </button>
                         );
@@ -319,11 +417,7 @@ export const SyncSchoolModal = ({
                 沒有符合的班級
               </h3>
               <p className="text-body text-text-secondary mt-1">
-                {available.length === 0
-                  ? isAdmin(user)
-                    ? "本學期校務系統裡的班級都已經加入系統了。"
-                    : "您本學期名下的班級都已經加入系統了。"
-                  : "換個縣市或關鍵字再找找看。"}
+                {emptyMessage}
               </p>
             </div>
           )}
@@ -337,6 +431,11 @@ export const SyncSchoolModal = ({
               {selectedIds.length}
             </span>{" "}
             個班級
+            {!importing && failedCount > 0 && (
+              <p role="alert" className="text-caption text-danger-700 mt-0.5">
+                {failedCount} 個班級匯入失敗，已保留勾選，可以再試一次。
+              </p>
+            )}
           </div>
           <div className="flex gap-3">
             <button
@@ -348,14 +447,17 @@ export const SyncSchoolModal = ({
             </button>
             <button
               id="course-btn-confirm-sync"
-              disabled={selectedIds.length === 0 || isLoading}
+              disabled={selectedIds.length === 0 || importing}
               onClick={handleSync}
               className="px-7 py-2.5 rounded-brand text-ui bg-primary text-on-accent hover:bg-primary/90 shadow-lg shadow-primary/25 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none transition-all flex items-center gap-2 whitespace-nowrap"
             >
-              {isLoading ? (
+              {progress ? (
                 <>
                   <Loader2 size={17} className="animate-spin shrink-0" />
-                  正在同步…
+                  正在匯入{" "}
+                  <span className="tabular-nums">
+                    {progress.done} / {progress.total}
+                  </span>
                 </>
               ) : (
                 <>

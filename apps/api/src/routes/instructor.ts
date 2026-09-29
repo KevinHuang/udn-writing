@@ -21,8 +21,12 @@ import FolderHelper from '../dal/folder_helper';
 import SubmissionMarkHelper from '../dal/submission_mark_helper';
 import AssignmentLeaveHelper from '../dal/assignment_leave_helper';
 import { checkImageList } from '../lib/image_input';
-// 建立授課教師專用的 Router 實例
+import SemesterHelper from '../dal/semester_helper';
+import config from '../config'
+import { DsaSyncHelper } from '../dal/dsa_sync_helper';
+import UserHelper from '../dal/user_helper';
 
+// 建立授課教師專用的 Router 實例
 const router = new Router();
 
 /**
@@ -277,7 +281,7 @@ router.post('/courses/:courseId/sync-roster', async (ctx) => {
              所以現有資料多半是 NULL —— 整校同步那一支也是把 dsns 寫死的。
              在補上那一欄之前，這裡只能用同一個預設值。
         */
-        const dsns = course.dsns || process.env.DSA_DSNS || 'udncollege.plus';
+        const dsns = course.dsns || config.DSA_DSNS ;
 
         const raw = await DevapiJasmineHelper.getStudentsByCourseId(dsns, String(course.source_index));
         const roster = (raw ?? [])
@@ -1329,6 +1333,120 @@ router.put('/assignments/:assignmentId/task', async (ctx) => {
         ctx.body = assignment;
     } catch (error) {
         console.error('Error updating assignment task:', error);
+        ctx.status = 500;
+        ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/**
+ * @route GET /sync/get_courses
+ * @description 取得 devapi 上使用者本學期的授課清單。如果是系統管理者則取得全校本學期的課程清單。
+ * @returns {Object} 回傳包含學生總數的物件。
+ */
+router.get('/sync/get_courses', async (ctx) => {
+    try {
+        // 找出目前學年期
+        const semesterInfo = await SemesterHelper.current();
+        const school_year = semesterInfo!.school_year ;
+        const semester = semesterInfo!.semester;
+
+        const dsns = config.DSA_DSNS ;
+        const userInfo = ctx.session.userInfo ;
+        console.log({ userInfo });
+        const account = userInfo.isSystemAdmin ? 'all' : userInfo.account ;
+        const courses = await DevapiJasmineHelper.getAllCourses(dsns, school_year, semester, account);
+
+        ctx.body = courses;
+    } catch (error) {
+        console.error('Error fetching students:', error);
+        ctx.status = 500;
+        ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/**
+ * @route POST /service/instructor/sync/from_dsa_course
+ * @description 從 DSA 匯入**一門**課程（課程、授課教師、修課學生）。
+ *   一次只收一門，前端逐門呼叫才能顯示進度。
+ * @body {{ courseId: number }} DevAPI 的 courseID
+ */
+router.post('/sync/from_dsa_course', async (ctx) => {
+
+    const dsns = config.DSA_DSNS ;
+    // const { schoolYear, semester } = { schoolYear: 115, semester: 1 }
+    // const dsns = 'fljh.hc.edu.tw'
+    try {
+        // body 是 DevAPI courseID 的物件。一定要是整數 —— 它會直接接進 DevAPI 的網址
+        const { courseId } = (ctx.request.body ?? {}) as { courseId?: unknown };
+        if (!Number.isInteger(courseId)) {
+            ctx.status = 400; ctx.body = { error: 'courseId must be an integer' }; return;
+        }
+
+        console.log({ courseId });
+        // ctx.body = courseIds;
+        // return ;
+
+        // 找出目前學年期
+        const semesterInfo = await SemesterHelper.current();
+        const school_year = semesterInfo!.school_year ;
+        const semester = semesterInfo!.semester;
+
+        // 1. 取得指定編號的 DSA 課程
+        const dsa_course = await DevapiJasmineHelper.getAllCoursesByID(dsns, school_year, semester, courseId as number);
+
+        if (!dsa_course) {
+            ctx.status = 404;
+            ctx.body = { error: 'DSA Course not found' };
+            return;
+        }
+
+        // 2. 針對課程所屬班級，更新到學校清單
+        const classes = [dsa_course.class];
+        const schools = await DsaSyncHelper.syncSchools(classes);
+        console.log({ schools });
+
+        // 4. 更新課程資訊，回傳作文系統中的課程資訊
+        // syncCourses 收的是陣列。dsa_course 是 any，直接傳單一物件編譯會過，執行時 courses.map 才炸
+        const finalCourses = await DsaSyncHelper.syncCourses([dsa_course], schools);
+        // console.log({ finalCourses })
+
+        // 5 針對這些被更新的每個作文系統中的課程，
+        for (const crs of finalCourses) {
+
+            // 5.1 從 dsa 課程中找出此課程的所有教師
+            // const targetCourse = dsa_courses.find((c: any) => c.courseID.toString() === crs.source_index.toString());
+            console.log(`開始處理課程：${dsa_course.class.className}-${crs.course_name}, id: ${crs.source_index}`);
+
+            const teachers = dsa_course.teacher;
+
+            // 5.2 針對每位教師
+            for (const teacher of teachers) {
+                // 5.2.1 更新或建立使用者資訊
+                const user = await UserHelper.add({ account: teacher.teacherAcc, firstName: teacher.teacherName, lastName: '' })
+                // console.log({ teacher, user, crs });
+                // 5.2.2 更新或建立授課紀錄 (uc_instructor)
+                await DsaSyncHelper.syncInstructor(crs.id, user.id)
+            }
+
+            // 5.3 取得指定 DSA 課程的學生清單，
+            const students = await DevapiJasmineHelper.getStudentsByCourseId(dsns, crs.source_index);
+
+            // 5.4 更新學生帳號資料
+            let users = students.map((stud: any) => (
+                { account: stud.studentAcc, name: stud.studentName }
+            ));
+            // 同步確保 user 資料表中有這位學生資料
+            const finalUsers = await DsaSyncHelper.syncUsers(users)
+
+            // 5.5 更新課程修課學生 (uc_learner)
+            const learners = await DsaSyncHelper.syncLearners(crs.id, finalUsers, students);
+        }
+
+
+        console.log('處理完成');
+        ctx.body = { msg: 'OK' };
+    } catch (error) {
+        console.error('Error importing DSA course:', error);
         ctx.status = 500;
         ctx.body = { error: 'Internal Server Error' };
     }

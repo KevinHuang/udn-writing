@@ -427,6 +427,21 @@ router.post('/submissions/proxy', async (ctx) => {
             return;
         }
 
+        /*
+          ⚠️ 授權。先前這一支**完全沒有檢查** —— 只要是教師身分，
+             就能對任意 user_id ＋ 任意 assignment_id 寫入 submission
+             （別人班的學生、別人班的作業都可以）。
+
+             查不到一律 404，不區分「作業不存在」與「不是你的班」；
+             回 403 等於告訴對方「這個 id 是存在的」。
+        */
+        const scope = await courseScopeOf(ctx);
+        if (!await AssignmentHelper.assertLearnerInScope(assignment_id, user_id, scope)) {
+            ctx.status = 404;
+            ctx.body = { error: '找不到這份作業，或這位學生不在這個班的名冊上。' };
+            return;
+        }
+
         // 直接給陣列 —— SubmissionHelper.submit 自己會 JSON.stringify，這裡再轉一次就變成 jsonb 字串
         const result = await SubmissionHelper.submit(
             user_id, assignment_id, content, Array.isArray(files) ? files : [], word_count);
@@ -462,16 +477,26 @@ router.post('/submissions/proxy', async (ctx) => {
  */
 router.post('/submissions/ocr_proxy', async (ctx) => {
     try {
-        const { assignmentId, studentId, images, batchUUID } = ctx.request.body as {
+        const { assignmentId, studentId, images } = ctx.request.body as {
             assignmentId: string;
             studentId: string;
             images: string[];
-            batchUUID: string;
         };
 
         if (!assignmentId || !studentId || !images) {
             ctx.status = 400;
             ctx.body = { error: 'Missing assignmentId, studentId or images' };
+            return;
+        }
+
+        /*
+          ⚠️ 授權要擋在**上傳之前**。先前這一支一樣沒有檢查，而且第一件事
+             就是把圖片寫進 GCS —— 就算之後擋下來，檔案也已經進去了。
+        */
+        const scope = await courseScopeOf(ctx);
+        if (!await AssignmentHelper.assertLearnerInScope(assignmentId, studentId, scope)) {
+            ctx.status = 404;
+            ctx.body = { error: '找不到這份作業，或這位學生不在這個班的名冊上。' };
             return;
         }
 
@@ -493,13 +518,18 @@ router.post('/submissions/ocr_proxy', async (ctx) => {
 
         const submitterId = ctx.session.userInfo.id;
 
-        // 紀錄到 batch_proxy_submission 資料表
-        const result = await BatchProxySubmissionHelper.submit(studentId, assignmentId, submitterId, fileNames, batchUUID,);
+        /*
+          紀錄到 batch_proxy_submission。
+          batch_uuid **由 helper 產生**，不再收 client 傳來的值 ——
+          那個值以前是字串內插進 SQL 的（注入點），而且兩個分頁同時開就可能撞號。
+        */
+        const batch = await BatchProxySubmissionHelper.submit(
+            studentId, assignmentId, submitterId, fileNames);
 
         // 呼叫 job 進行 ocr
-        await CloudRunJobsHelper.startOCRJob(studentId, assignmentId, batchUUID);
+        await CloudRunJobsHelper.startOCRJob(studentId, assignmentId, batch.batch_uuid);
 
-        ctx.body = { success: true, result };
+        ctx.body = { success: true, batchId: batch.id, batchUUID: batch.batch_uuid };
     } catch (error) {
         console.error('Error in proxy submission:', error);
         ctx.status = 500;

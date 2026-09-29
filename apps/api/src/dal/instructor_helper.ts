@@ -164,17 +164,17 @@ class InstructorHelper {
                 WHERE is_valid = true
                 ORDER BY ref_submission_id, created_time DESC, id DESC
             ) sf ON sf.ref_submission_id = s.id
+            -- 代繳交：最新一批「有效」的照片。
+            -- ⚠️ 先前這裡是 bps1 對 bps2 的 self-join，而 bps2 既沒有 max() 也沒有
+            --    GROUP BY —— 它只是把有效列原樣重列一次，所以那個 INNER JOIN
+            --    根本不會收斂。同一組（作業, 學生）只要有兩筆 is_valid = true，
+            --    **同一位學生就會在批改清單上出現兩列**。
+            --    改成與上面 sf 一致的 DISTINCT ON，「最新的一筆」變成明確的規則。
             LEFT JOIN (
-                SELECT bps1.*
-                FROM
-                    batch_proxy_submission bps1
-                    INNER JOIN (
-                        SELECT ref_assignment_id, ref_user_id, created_at as max_time
-                        FROM batch_proxy_submission
-                        WHERE is_valid = true) AS bps2
-                    ON bps1.ref_assignment_id = bps2.ref_assignment_id 
-                        AND bps1.ref_user_id = bps2.ref_user_id
-                        AND bps1.created_at = bps2.max_time
+                SELECT DISTINCT ON (ref_assignment_id, ref_user_id) *
+                FROM batch_proxy_submission
+                WHERE is_valid = true
+                ORDER BY ref_assignment_id, ref_user_id, created_at DESC, id DESC
             ) AS proxy_s ON proxy_s.ref_user_id = u.id AND proxy_s.ref_assignment_id = a.id
             WHERE a.id = $1
               AND a.ref_course_id IN ${courseScopeSubquery(scope)}

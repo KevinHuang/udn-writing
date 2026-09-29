@@ -1,5 +1,5 @@
 import { db } from './database';
-import { CourseScope, courseScopeSubquery } from '../lib/course_scope';
+import { CourseScope, courseScopeSubquery, isEmptyScope } from '../lib/course_scope';
 
 class AssignmentHelper {
 
@@ -357,6 +357,40 @@ class AssignmentHelper {
                   RETURNING *`,
                 [assignmentId, ref_task_id]);
         });
+    }
+
+    /**
+     * 「這位教師／管理者，可以對這份作業的這位學生動手嗎？」
+     *
+     * 代繳交（教師替學生把紙本作文登錄進系統）要問兩件事，而且**兩件都要問**：
+     *   1. 這份作業屬於他看得到的班（scope）
+     *   2. 這位學生真的在那個班的名冊上
+     *
+     * 先前兩支代繳交端點**一件都沒問** —— 只要是教師身分，就能對
+     * 任意 user_id ＋ 任意 assignment_id 寫入 submission。
+     *
+     * 一句 SQL 同時擋掉兩個：JOIN uc_learner 管第 2 件，
+     * `ref_course_id IN (scope)` 管第 1 件。不要拆成兩次查詢 ——
+     * 那會留下「查完到寫入之間名冊變了」的空隙，也多一次來回。
+     */
+    public static async assertLearnerInScope(
+        assignmentId: string,
+        userId: string,
+        scope: CourseScope,
+    ): Promise<boolean> {
+        if (isEmptyScope(scope)) return false;
+        const row = await db.default.oneOrNone(
+            `SELECT 1 AS ok
+               FROM assignment a
+               JOIN uc_learner ul
+                 ON ul.ref_course_id = a.ref_course_id
+                AND ul.ref_user_id = $2::bigint
+              WHERE a.id = $1::bigint
+                AND a.ref_course_id IN ${courseScopeSubquery(scope)}
+              LIMIT 1`,
+            [assignmentId, userId],
+        );
+        return !!row;
     }
 }
 

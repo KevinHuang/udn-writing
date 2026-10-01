@@ -16,6 +16,10 @@
 
 export type SemesterFilter = 'PAST' | 'CURRENT' | 'ALL';
 
+/** 學生「我的作業」的三個分頁籤。放網址，學習概況的提醒才帶得過去 */
+export type StudentAssignmentTab = 'inprogress' | 'submitted' | 'returned';
+export const STUDENT_ASSIGNMENT_TABS: StudentAssignmentTab[] = ['inprogress', 'submitted', 'returned'];
+
 /**
  * 篩選條件放 query string，網址才能完整還原畫面。
  *
@@ -33,6 +37,8 @@ export const queryKeys = {
   focus: 'focus',
   /** 學生作業清單是否隱藏逾期 */
   hideOverdue: 'hideOverdue',
+  /** 學生「我的作業」停在哪個分頁籤（inprogress／submitted／returned） */
+  assignmentTab: 'tab',
 } as const;
 
 /** 只把有值的參數接上去，空的不要留在網址裡變成雜訊。 */
@@ -62,18 +68,31 @@ export const routes = {
     withQuery('/grades', { [queryKeys.course]: opts?.courseId }),
   /** 一個班整學期的期末總結。從成績管理進來 */
   finalReport: (courseId: string) => `/courses/${courseId}/final-report`,
+  /** 成果集（A4 文集）。courseId：預先勾選的班級，可以再加選別班、別校 */
+  anthology: (opts?: { courseId?: string }) =>
+    withQuery('/anthology', { [queryKeys.course]: opts?.courseId }),
   concern: () => '/concern',
 
   // ── 學生端 ──
   /** semester：要看哪個學期的概況。不帶就是目前學期 */
   studentDashboard: (opts?: { semester?: string }) =>
     withQuery('/student', { [queryKeys.semesterFilter]: opts?.semester }),
-  /** focusId：進來時要捲到／highlight 哪一份作業 */
-  studentAssignments: (opts?: { focusId?: string }) =>
-    withQuery('/student/assignments', { [queryKeys.focus]: opts?.focusId }),
+  /**
+   * focusId：進來時要捲到／highlight 哪一份作業
+   * semester：看哪個學期（學生端各頁共用同一個選擇，見 AppState 的 currentSemester）
+   * tab：停在哪個分頁籤
+   */
+  studentAssignments: (opts?: { focusId?: string; semester?: string; tab?: StudentAssignmentTab }) =>
+    withQuery('/student/assignments', {
+      [queryKeys.focus]: opts?.focusId,
+      [queryKeys.semesterFilter]: opts?.semester,
+      [queryKeys.assignmentTab]: opts?.tab,
+    }),
   studentEditor: (assignmentId: string) => `/student/assignments/${assignmentId}`,
   /** semester：學期範圍篩選；focusId：要展開哪一份成績 */
   /** semester 是學期代碼（例如 115-1）。不帶就是目前學期（或 focusId 那一份的學期） */
+  /** 我的作品集：挑自己已發還的作品排成 A4 文集；佳作的公開意願也在這裡設 */
+  studentPortfolio: () => '/student/portfolio',
   studentGrades: (opts?: { semester?: string; focusId?: string }) =>
     withQuery('/student/grades', {
       [queryKeys.semesterFilter]: opts?.semester,
@@ -98,11 +117,13 @@ export const routePatterns: Record<keyof typeof routes, string> = {
   gradingEditor: '/grading/:assignmentId/:submissionId',
   grades: '/grades',
   finalReport: '/courses/:courseId/final-report',
+  anthology: '/anthology',
   concern: '/concern',
   studentDashboard: '/student',
   studentAssignments: '/student/assignments',
   studentEditor: '/student/assignments/:assignmentId',
   studentGrades: '/student/grades',
+  studentPortfolio: '/student/portfolio',
 };
 
 /** 學生端的路徑前綴。用來判斷某個網址屬於哪一邊。 */

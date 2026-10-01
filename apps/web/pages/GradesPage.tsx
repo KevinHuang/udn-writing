@@ -33,6 +33,7 @@ export const GradesPage: React.FC = () => {
       onBack={goBack}
       canGoBack={canGoBack}
       onOpenFinalReport={(courseId) => navigate(routes.finalReport(courseId))}
+      onOpenAnthology={(courseId) => navigate(routes.anthology({ courseId }))}
     />
   );
 };

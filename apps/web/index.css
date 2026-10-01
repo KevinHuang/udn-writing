@@ -236,6 +236,17 @@
      文字也就不該翻轉，否則深色模式會變成深字壓深紅。 */
   --color-on-solid:       #FFFFFF;
 
+  /* ---------- 成果集的紙張（components/anthology/） ----------
+     印出來的是一本書，不是畫面 —— 不論現在是不是碑拓模式，
+     紙永遠是白的、字永遠是墨色。所以這一組**刻意不在 html.dark 底下覆蓋**，
+     也不要拿 ink-* / surface 來代替（那幾個在深色模式會翻過來）。 */
+  --color-sheet-paper: #FFFFFF;
+  --color-sheet-tint:  #F6F4F1;   /* 評語區的底 */
+  --color-sheet-ink:   #1C1917;   /* 焦墨 */
+  --color-sheet-muted: #675F5A;   /* 次要文字 */
+  --color-sheet-rule:  #DCD6D0;   /* 稿紙的格線 */
+  --color-sheet-seal:  #C0430C;   /* 朱砂：級分、頁碼 */
+
   /* ---------- 其他 ---------- */
   --radius-brand: 12px;
   /*
@@ -650,3 +661,60 @@ mark.hl-pink  { background-color: var(--hl-pink); }
 span.tx-red    { color: var(--tx-red); }
 span.tx-orange { color: var(--tx-orange); }
 span.tx-green  { color: var(--tx-green); }
+
+/* ============================================================
+   成果集的 A4 頁（components/anthology/AnthologyBook.tsx）
+   ------------------------------------------------------------
+   尺寸一律用 mm，數字來自 lib/anthology.ts 的 SHEET（元件用 inline style 帶進來），
+   這裡只放「每一頁都一樣」的部分。頁高固定、內容不會撐開 ——
+   排版在 lib/anthology.ts 已經算好一頁放幾行，目錄的頁碼才會是真的。
+   ============================================================ */
+.sheet {
+  width: 210mm;
+  height: 297mm;
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+  background: var(--color-sheet-paper);
+  color: var(--color-sheet-ink);
+  font-family: var(--font-essay);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* 一行稿紙。不換行：斷行已經在 lib/anthology.ts 做完了 */
+.sheet-line {
+  white-space: pre;
+  overflow: visible;
+}
+
+@media print {
+  @page { size: A4; margin: 0; }
+
+  /* 只印成果集。預覽視窗是直接掛在 body 底下的（createPortal），
+     其餘的東西（整個 App）列印時藏起來 */
+  body:has(> #anthology-print) > :not(#anthology-print) { display: none !important; }
+  /* 預覽開著時 body 是 overflow: hidden（不讓後面的頁面跟著捲），
+     列印時不放開的話，有些瀏覽器只印得出第一頁 */
+  html:has(> body > #anthology-print),
+  body:has(> #anthology-print) {
+    background: var(--color-sheet-paper) !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  #anthology-print {
+    position: static !important;
+    overflow: visible !important;
+    background: none !important;
+    padding: 0 !important;
+  }
+  #anthology-print .anthology-chrome { display: none !important; }
+  #anthology-print .anthology-pages { zoom: 1 !important; gap: 0 !important; padding: 0 !important; }
+  #anthology-print .sheet {
+    box-shadow: none !important;
+    margin: 0 !important;
+    break-after: page;
+    page-break-after: always;
+  }
+}

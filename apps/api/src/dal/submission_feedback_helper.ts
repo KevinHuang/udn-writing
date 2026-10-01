@@ -28,14 +28,20 @@ class SubmissionFeedbackHelper {
         return result;
     }
 
+    /**
+     * 學生看自己某一篇的批改結果。**只有發還之後才回傳**，還沒發還就是 null。
+     *
+     * ⚠️ 以前少了 is_returned 的條件：老師批改完、還沒按發還，學生就能從這支
+     *    讀到分數與評語（畫面不顯示，但開發者工具看得到）。
+     */
     public static async getBySubmissionId(user_id: string, submission_id: string) {
-        // console.log({ user_id, submission_id })
         const sql = `
             SELECT fb.* 
             FROM 
                 submission_feedback as fb 
                 JOIN submission as s ON fb.ref_submission_id = s.id 
-            WHERE fb.ref_submission_id = $1 AND s.ref_user_id = $2 AND fb.is_valid = true
+            WHERE fb.ref_submission_id = $1 AND s.ref_user_id = $2
+              AND fb.is_valid = true AND fb.is_returned = true
         `;
         const result = await db.default.oneOrNone(sql, [submission_id, user_id]);
         return result;
@@ -80,7 +86,16 @@ class SubmissionFeedbackHelper {
         return await db.default.oneOrNone(sql, [feedback_id, inputTokens, outputTokens, JSON.stringify(sub_scores)]);
     }
 
-    public static async getScoresByCourseIdTaskId(course_id: string, taskIds: string[]) {
+    /**
+     * 某個班、某幾題的分數（舊前端的成績表用）。
+     *
+     * ⚠️ 以前有兩個洞：
+     *   1. 沒有範圍檢查 —— 任何教師改網址上的班級編號，就拿得到別班的分數
+     *   2. taskIds 直接拼進 SQL —— 網址上可以塞任意 SQL（SQL injection）
+     * 現在範圍條件寫在 SQL 裡（範圍外的班查不到任何一列），taskIds 走參數。
+     * 呼叫端另外先檢查 taskIds 都是數字，格式不對直接 400。
+     */
+    public static async getScoresByCourseIdTaskId(course_id: string, taskIds: string[], scope: CourseScope) {
 
         const sql = `
             with ass AS (
@@ -90,7 +105,9 @@ class SubmissionFeedbackHelper {
                 where
                     ref_course_id = $1
                     and
-                    ref_task_id IN (${taskIds.join(", ")})
+                    ref_course_id IN ${courseScopeSubquery(scope)}
+                    and
+                    ref_task_id IN ($2:csv)
             )
 
             select
@@ -113,7 +130,7 @@ class SubmissionFeedbackHelper {
             --     subm.ref_assignment_id IN ( select id from ass)
 
         `;
-        return await db.default.manyOrNone(sql, [course_id]);
+        return await db.default.manyOrNone(sql, [course_id, taskIds]);
     }
 
     public static async getByCourseIdUserId(course_id: string, user_id: string) {

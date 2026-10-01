@@ -198,3 +198,75 @@ describe('封存課程', () => {
     assert.notEqual(row.is_active, false);
   });
 });
+
+describe('作品集展示設定（是否顯示級分）', () => {
+  const putShowcase = (cookie: string, id: string, body: unknown) =>
+    req(srv, `/service/instructor/courses/${id}/showcase`, cookie, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  test('沒設定過的班一律是不顯示 —— 預設隱藏級分', async () => {
+    await seedTwoCourses();
+    const { rows } = await list(await login(srv));
+    assert.equal(rows[0].showcase_show_score, false);
+  });
+
+  test('打開之後課程清單讀得回來，再關掉也讀得回來', async () => {
+    const { mine } = await seedTwoCourses();
+    const cookie = await login(srv);
+
+    let res = await putShowcase(cookie, mine, { show_score: true });
+    assert.equal(res.status, 200);
+    assert.equal((await list(cookie)).rows[0].showcase_show_score, true);
+
+    res = await putShowcase(cookie, mine, { show_score: false });
+    assert.equal(res.status, 200);
+    assert.equal((await list(cookie)).rows[0].showcase_show_score, false);
+
+    // 同一班只會有一筆設定，改來改去不會越堆越多
+    const { n } = await rawDb.one(
+      'SELECT count(*)::int AS n FROM course_showcase WHERE ref_course_id=$1', [mine],
+    );
+    assert.equal(n, 1);
+  });
+
+  test('不能改別人的班', async () => {
+    const { theirs } = await seedTwoCourses();
+    const res = await putShowcase(await login(srv), theirs, { show_score: true });
+    assert.equal(res.status, 404);
+    const { n } = await rawDb.one('SELECT count(*)::int AS n FROM course_showcase');
+    assert.equal(n, 0);
+  });
+
+  test('show_score 不是布林 → 400，不寫入', async () => {
+    const { mine } = await seedTwoCourses();
+    const cookie = await login(srv);
+    for (const body of [{}, { show_score: 'true' }, { show_score: 1 }]) {
+      const res = await putShowcase(cookie, mine, body);
+      assert.equal(res.status, 400);
+    }
+    const { n } = await rawDb.one('SELECT count(*)::int AS n FROM course_showcase');
+    assert.equal(n, 0);
+  });
+
+  test('刪除班級時設定跟著刪掉，不會卡住刪除', async () => {
+    const { mine } = await seedTwoCourses();
+    const cookie = await login(srv);
+    await putShowcase(cookie, mine, { show_score: true });
+    const res = await req(srv, `/service/instructor/courses/${mine}`, cookie, { method: 'DELETE' });
+    assert.equal(res.status, 200);
+    const { n } = await rawDb.one('SELECT count(*)::int AS n FROM course_showcase');
+    assert.equal(n, 0);
+  });
+
+  test('系統管理者可以改任何班', async () => {
+    const { theirs } = await seedTwoCourses();
+    await seedSystemAdmin(ACCOUNT);
+    const cookie = await login(srv);
+    await setIdentity(cookie, 'system_admin');
+    const res = await putShowcase(cookie, theirs, { show_score: true });
+    assert.equal(res.status, 200);
+  });
+});

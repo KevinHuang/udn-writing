@@ -67,7 +67,11 @@ class AssignmentHelper {
                     -- 語意不同但不能改，舊前端在用。新前端讀這一欄。
                     sub.is_submitted as submission_is_submitted,
                     fb.id as feedback_id,
-                    fb.is_ai,
+                    -- ⚠️ 批改結果**發還之後**才給學生（分數、評語、是誰批的）。
+                    --    以前不論發還與否都整包送出，只靠前端畫面不顯示 ——
+                    --    學生打開瀏覽器的開發者工具就看得到老師還沒確認的分數。
+                    --    feedback_id／has_feedback 保留：前端靠它們推「已批改、待發還」的狀態。
+                    CASE WHEN fb.is_returned THEN fb.is_ai END AS is_ai,
                     -- 繳交狀態判斷
                     CASE 
                         WHEN sub.id IS NOT NULL THEN true
@@ -81,9 +85,20 @@ class AssignmentHelper {
                         WHEN fb.id IS NOT NULL THEN true
                         ELSE false
                     END AS has_feedback,
-                    fb.score ,
-                    fb.content as feedback_content ,
-                    fb.is_returned
+                    CASE WHEN fb.is_returned THEN fb.score END AS score,
+                    CASE WHEN fb.is_returned THEN fb.content END AS feedback_content,
+                    fb.is_returned,
+                    -- 以下三欄給學生的「我的作品集」（2026-10-01 新增，舊前端不讀）
+                    -- 原稿是學生自己交的，不必等發還
+                    sub.pic_files,
+                    -- 佳作章：**發還之後**才讓學生知道，而且只有佳作 ——
+                    -- 預選是老師內部的挑選進度，學生端看不到
+                    CASE WHEN fb.is_returned THEN EXISTS (
+                        SELECT 1 FROM public.submission_mark m
+                         WHERE m.ref_submission_id = sub.id AND m.kind = 'featured'
+                    ) ELSE false END AS is_featured,
+                    -- 學生對這篇佳作的公開意願。NULL ＝ 還沒決定（見 migrations/010）
+                    pc.willing AS publish_consent
                 FROM 
                     target_user u
                     JOIN public.uc_learner ul ON u.id = ul.ref_user_id
@@ -99,6 +114,7 @@ class AssignmentHelper {
                         FROM public.submission_feedback 
                         WHERE is_valid = true
                     ) fb ON (sub.id = fb.ref_submission_id)   
+                    LEFT JOIN public.submission_publish_consent pc ON pc.ref_submission_id = sub.id
                 WHERE
                     /*
                       **開過又改回未開放的作業也要回傳。**

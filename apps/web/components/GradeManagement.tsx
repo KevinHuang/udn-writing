@@ -15,7 +15,8 @@ import {
   GraduationCap,
   ClipboardList,
   Target,
-  Sparkles
+  Sparkles,
+  BookOpen
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
@@ -52,6 +53,8 @@ interface GradeManagementProps {
   canGoBack?: boolean;
   /** 開這個班的期末總結。由頁面負責導向 */
   onOpenFinalReport?: (courseId: string) => void;
+  /** 製作成果集，預先勾選這個班。由頁面負責導向 */
+  onOpenAnthology?: (courseId: string) => void;
 }
 
 // --- STUDENT HISTORY MODAL ---
@@ -264,7 +267,8 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
   onSetLeave,
   onBack,
   canGoBack,
-  onOpenFinalReport
+  onOpenFinalReport,
+  onOpenAnthology,
 }) => {
   // Filter courses by semester
   const semesterCourses = useMemo(() => 
@@ -648,6 +652,16 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                   className="bg-card hover:bg-surface-soft border border-border-strong text-text-primary px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
                 >
                   <Sparkles size={16} className="shrink-0 text-primary" /> 期末總結
+                </button>
+              )}
+              {/* 成果集同樣是一學期做一次的次要動作，跟期末總結同一種樣式 */}
+              {onOpenAnthology && (
+                <button
+                  id="grademanagement-btn-anthology"
+                  onClick={() => onOpenAnthology(selectedCourseId)}
+                  className="bg-card hover:bg-surface-soft border border-border-strong text-text-primary px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
+                >
+                  <BookOpen size={16} className="shrink-0 text-secondary" /> 製作成果集
                 </button>
               )}
               <button

@@ -2,13 +2,16 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ChevronRight, Bot, ChevronDown, Wand2, Loader2, Send, RotateCcw,
-  Check, Camera, Image as ImageIcon, ListChecks,
+  Check, Camera, Image as ImageIcon, ListChecks, Stamp,
 } from "lucide-react";
 import { StatusBadge } from "../components/StatusBadge";
 import { SubmissionStampRow } from "../components/SubmissionStamp";
 import { ProxySubmitModal } from "../components/ProxySubmitModal";
 import { ProxyOcrBadge } from "../components/ProxyOcrBadge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { FeaturedByLevelDialog } from "../components/FeaturedByLevelDialog";
+import { AssignmentFeaturedRule } from "../components/AssignmentFeaturedRule";
+import { effectiveRule } from "../lib/featuredRule";
 import { useProxyStatus } from "../lib/proxy/useProxyStatus";
 import { countStatuses, proxyBatchSummary } from "../lib/proxy/status";
 import { GradingHub } from "../components/GradingHub";
@@ -53,7 +56,12 @@ export const GradingListPage: React.FC = () => {
     submissionMarks,
     submissions,
     toggleMark,
+    markMany,
     ensureSubmissions,
+    myFeaturedRule,
+    assignmentFeaturedRules,
+    handleSaveMyFeaturedRule,
+    handleSaveAssignmentFeaturedRule,
   } = useAppState();
 
   /**
@@ -89,6 +97,8 @@ export const GradingListPage: React.FC = () => {
   const [proxyInitialTab, setProxyInitialTab] = useState<"register" | "progress">("register");
   /** 批次批改前發現有未校對的作品 → 先問一聲 */
   const [unproofreadGate, setUnproofreadGate] = useState<number | null>(null);
+  /** 「依級分蓋佳作」視窗 */
+  const [isFeaturedByLevelOpen, setIsFeaturedByLevelOpen] = useState(false);
   const setSelectedAssignmentId = (id: string) =>
     navigate(routes.gradingList({ assignmentId: id }), { replace: true });
 
@@ -424,6 +434,24 @@ export const GradingListPage: React.FC = () => {
                   <Send size={14} className="md:size-[16px]" />
                   發還 ({selectedGradedCount})
                 </button>
+                {/*
+                  依級分蓋佳作。描邊朱砂 —— 朱砂是佳作章的顏色，
+                  描邊是因為它和批改／發還不同，是「挑作品」而不是推進批改流程。
+                  不吃勾選：門檻本身就是挑選條件，兩套條件疊在一起老師會搞混。
+                */}
+                <button id="gradinglist-btn-featured-by-level"
+                  onClick={() => setIsFeaturedByLevelOpen(true)}
+                  disabled={isBatchGrading || graded + published === 0}
+                  title={
+                    graded + published === 0
+                      ? "批改完成的作品才能蓋佳作章"
+                      : "依級分挑出作品，一次蓋上佳作章"
+                  }
+                  className="flex-1 lg:flex-none flex items-center justify-center gap-2 bg-card hover:bg-secondary/5 text-secondary border border-secondary/40 hover:border-secondary px-3 md:px-4 py-2 md:py-2.5 rounded-xl text-body transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                >
+                  <Stamp size={14} className="md:size-[16px]" />
+                  依級分蓋佳作
+                </button>
                 <button id="gradinglist-btn-batch-reset"
                   onClick={() => handleBatchReset(selectedAssignmentId)}
                   disabled={isBatchGrading || selectedResetCount === 0}
@@ -442,6 +470,18 @@ export const GradingListPage: React.FC = () => {
               </div>
             </div>
 
+            {/* 這份作業的自動佳作標準。預設沿用批改者自己的，可以另外調整 */}
+            {assignment && (
+              <AssignmentFeaturedRule
+                assignmentId={assignment.id}
+                rules={assignmentFeaturedRules}
+                mine={myFeaturedRule}
+                onChange={(mode, minScore) =>
+                  void handleSaveAssignmentFeaturedRule(assignment.id, mode, minScore)
+                }
+              />
+            )}
+
             {isProxySubmitOpen && assignment && (
               <ProxySubmitModal
                 assignment={assignment}
@@ -456,6 +496,18 @@ export const GradingListPage: React.FC = () => {
                   handleProxySubmit(selectedAssignmentId, studentId, studentName, content, picFiles, opts)
                 }
                 onBatchChanged={() => void ensureSubmissions(selectedAssignmentId)}
+              />
+            )}
+
+            {isFeaturedByLevelOpen && (
+              <FeaturedByLevelDialog
+                submissions={sortedSubmissions}
+                marks={submissionMarks}
+                initialLevel={
+                  effectiveRule(selectedAssignmentId, assignmentFeaturedRules, myFeaturedRule).minScore ?? undefined
+                }
+                onConfirm={(ids) => markMany(ids, "featured")}
+                onClose={() => setIsFeaturedByLevelOpen(false)}
               />
             )}
 
@@ -907,6 +959,8 @@ export const GradingListPage: React.FC = () => {
           // 選定某份是 /grading?assignment=…，返回鍵自然會退回入口頁
           onOpenAssignment={(id) => navigate(routes.gradingList({ assignmentId: id }))}
           onBack={goBack}
+          featuredRule={myFeaturedRule}
+          onFeaturedRuleChange={(rule) => void handleSaveMyFeaturedRule(rule)}
         />
       );
 };

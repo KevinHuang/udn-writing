@@ -34,8 +34,15 @@ import {
 } from "../api/submissions";
 import { ApiError } from "../api/client";
 import { fetchSemesters } from "../api/semesters";
-import { fetchCourses, fetchRoster, deleteCourse, setCourseArchived } from "../api/courses";
-import { fetchStudentData, type StudentData } from "../api/student";
+import { fetchCourses, fetchRoster, deleteCourse, setCourseArchived, setCourseShowcase } from "../api/courses";
+import {
+  fetchMyFeaturedRule, saveMyFeaturedRule, fetchAssignmentFeaturedRules, saveAssignmentFeaturedRule,
+} from "../api/featuredRules";
+import {
+  DEFAULT_MY_RULE, applyAssignmentRule,
+  type AssignmentRuleMode, type AssignmentRules, type MyFeaturedRule,
+} from "../lib/featuredRule";
+import { fetchStudentData, setPublishConsent, type StudentData } from "../api/student";
 import {
   fetchAssignments, createAssignment, setAssignmentOpened, updateAssignmentConfig,
   swapAssignmentQuestion, reorderAssignments, deleteAssignment,
@@ -365,6 +372,25 @@ function useAppStateValue() {
     }
   };
 
+  /**
+   * 數位作品集的佳作觀摩要不要顯示這一班的級分。
+   *
+   * 先換畫面再存，存不進去就換回來 —— 開關按下去沒有反應，老師會一直按。
+   */
+  const handleSetShowcaseScore = async (courseId: string, showScore: boolean) => {
+    const apply = (value: boolean) =>
+      setCourses((prev) =>
+        prev.map((c) => (c.id === courseId ? { ...c, showcaseShowScore: value } : c)),
+      );
+    apply(showScore);
+    try {
+      await setCourseShowcase(courseId, showScore);
+    } catch (e) {
+      console.error('更新作品集展示設定失敗:', e);
+      apply(!showScore);
+    }
+  };
+
   const handleDeleteCourse = async (courseId: string) => {
     try {
       await deleteCourse(courseId);
@@ -427,9 +453,37 @@ function useAppStateValue() {
     [session?.id, session?.name],
   );
   const {
-    items: studentDataList, reload: reloadStudentData,
+    items: studentDataList, setItems: setStudentDataList, reload: reloadStudentData,
   } = useApiList<StudentData>(loadStudentData, studentDataReady);
   const studentData = studentDataList[0];
+
+  /**
+   * 學生對自己佳作的公開意願（同校觀摩用）。學習概況、我的作業、我的作品集**共用這一支**，
+   * 改的是同一份 studentData —— 在一頁按了，其他頁立刻一致，不必各自記一份。
+   *
+   * 先換畫面再存，存不進去就換回來。回傳有沒有存成功，讓頁面決定要不要顯示錯誤。
+   */
+  const handleSetPublishConsent = async (submissionId: string, willing: boolean): Promise<boolean> => {
+    const patch = (value: boolean | null) =>
+      setStudentDataList((list) =>
+        list.map((d) => ({
+          ...d,
+          submissions: d.submissions.map((s) =>
+            s.id === submissionId ? { ...s, publishConsent: value } : s,
+          ),
+        })),
+      );
+    const before = studentData?.submissions.find((s) => s.id === submissionId)?.publishConsent ?? null;
+    patch(willing);
+    try {
+      await setPublishConsent(submissionId, willing);
+      return true;
+    } catch (e) {
+      console.error('儲存公開意願失敗:', e);
+      patch(before);
+      return false;
+    }
+  };
 
   const loadMarks = useCallback(() => fetchMarks(), []);
   const [submissionMarks, setSubmissionMarks] = useState<SubmissionMarks>({});
@@ -449,6 +503,65 @@ function useAppStateValue() {
       .catch((e) => console.error('載入標記／請假失敗:', e));
     return () => { cancelled = true; };
   }, [teacherDataReady, activeIdentity, loadMarks, loadLeaves]);
+
+  /**
+   * 自動蓋佳作的標準：自己的、以及各作業另外調整過的。
+   *
+   * **跟標記分開載。** 放進上面那個 Promise.all 的話，後端還沒有這幾張表時
+   * （migration 009 沒套）整包失敗，連標記與請假都載不到。
+   */
+  const [myFeaturedRule, setMyFeaturedRule] = useState<MyFeaturedRule>(DEFAULT_MY_RULE);
+  const [assignmentFeaturedRules, setAssignmentFeaturedRules] = useState<AssignmentRules>({});
+  useEffect(() => {
+    if (!teacherDataReady) return;
+    let cancelled = false;
+    void Promise.all([fetchMyFeaturedRule(), fetchAssignmentFeaturedRules()])
+      .then(([mine, perAssignment]) => {
+        if (cancelled) return;
+        setMyFeaturedRule(mine);
+        setAssignmentFeaturedRules(perAssignment);
+      })
+      .catch((e) => console.error('載入自動蓋佳作的標準失敗:', e));
+    return () => { cancelled = true; };
+  }, [teacherDataReady, activeIdentity]);
+
+  /** 存自己的標準。先換畫面再存，存不進去就換回來 */
+  const handleSaveMyFeaturedRule = async (rule: MyFeaturedRule) => {
+    const before = myFeaturedRule;
+    setMyFeaturedRule(rule);
+    try {
+      await saveMyFeaturedRule(rule);
+    } catch (e) {
+      console.error('儲存自動蓋佳作的標準失敗:', e);
+      setMyFeaturedRule(before);
+    }
+  };
+
+  /** 調整某一份作業的標準。同樣先換畫面，失敗換回來 */
+  const handleSaveAssignmentFeaturedRule = async (
+    assignmentId: string, mode: AssignmentRuleMode, minScore: number | null,
+  ) => {
+    const before = assignmentFeaturedRules;
+    setAssignmentFeaturedRules((prev) => applyAssignmentRule(prev, assignmentId, mode, minScore));
+    try {
+      await saveAssignmentFeaturedRule(assignmentId, mode, minScore);
+    } catch (e) {
+      console.error('儲存作業的佳作標準失敗:', e);
+      setAssignmentFeaturedRules(before);
+    }
+  };
+
+  /**
+   * 批改之後重讀標記 —— 後端可能剛依標準自動蓋了佳作章，
+   * 不重讀的話清單上看不到，老師會以為沒有作用。一整份標記只有幾 KB。
+   */
+  const reloadMarks = useCallback(async () => {
+    try {
+      setSubmissionMarks(await loadMarks());
+    } catch (e) {
+      console.error('重新載入標記失敗:', e);
+    }
+  }, [loadMarks]);
 
   /**
    * 設定／取消請假註記。
@@ -578,6 +691,31 @@ function useAppStateValue() {
     }
   };
 
+  /**
+   * 一次蓋一批章（批改清單的「依級分蓋佳作」用）。**只蓋不取消。**
+   *
+   * 後端沒有批次端點，逐篇打既有的 PUT —— 一班三十幾篇，依序送出比同時
+   * 丟三十幾個請求溫和，也才回報得出「成功幾篇、失敗幾篇」。
+   * state 最後一次更新，畫面不會一顆一顆跳。
+   */
+  const markMany = async (submissionIds: string[], kind: MarkKind) => {
+    const done: string[] = [];
+    for (const id of submissionIds) {
+      try {
+        await setMarkApi(id, kind, true);
+        done.push(id);
+      } catch (e) {
+        console.error('蓋章失敗:', e);
+      }
+    }
+    if (done.length) {
+      setSubmissionMarks((prev) =>
+        done.reduce((marks, id) => setMark(marks, id, kind, true), prev),
+      );
+    }
+    return { done: done.length, failed: submissionIds.length - done.length };
+  };
+
   /** 批改清單上被勾選的那些（批次批改／發還／重置用） */
   const [selectedSubmissionIds, setSelectedSubmissionIds] = useState<string[]>([]);
   const [isBatchGrading, setIsBatchGrading] = useState(false);
@@ -625,6 +763,7 @@ function useAppStateValue() {
       await saveGrading(id, result);
       // 存檔會產生一筆新版本讓舊的失效，所以整批重載才看得到正確的狀態
       await reloadSubmissions();
+      await reloadMarks();
       await ensureSubmissions(
         submissions.find((s) => s.id === id)?.assignmentId ?? '',
       );
@@ -671,6 +810,8 @@ function useAppStateValue() {
     } catch (e) {
       console.error('批次批改失敗:', e);
     } finally {
+      // 中途失敗時，前面已經批完的幾篇可能也自動蓋了章，一樣要重讀
+      void reloadMarks();
       setCurrentlyGradingId(null);
       setIsBatchGrading(false);
       setSelectedSubmissionIds([]);
@@ -791,6 +932,7 @@ function useAppStateValue() {
     await gradeWithAi(id);
     await reloadSubmissions();
     if (assignmentId) await ensureSubmissions(assignmentId);
+    await reloadMarks();
     setGradingResetSeq((n) => n + 1);
   };
 
@@ -933,6 +1075,7 @@ function useAppStateValue() {
     courses: visibleCourses,
     setCourses,
     handleUpdateCourse,
+    handleSetShowcaseScore,
     questions: visibleQuestions,
     questionOps,
     folders,
@@ -952,8 +1095,14 @@ function useAppStateValue() {
     ensureSubmissions,
     reloadSubmissions,
     reloadStudentData,
+    handleSetPublishConsent,
     handleAssignmentOperation,
     toggleMark,
+    markMany,
+    myFeaturedRule,
+    assignmentFeaturedRules,
+    handleSaveMyFeaturedRule,
+    handleSaveAssignmentFeaturedRule,
     selectedSubmissionIds,
     setSelectedSubmissionIds,
     isBatchGrading,

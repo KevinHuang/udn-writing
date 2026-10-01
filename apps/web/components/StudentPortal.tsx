@@ -1,5 +1,5 @@
-import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { routes } from '../lib/routes';
+import { Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { queryKeys, routes } from '../lib/routes';
 import { useAppState } from '../state/appStateContext';
 import React, { useState, useRef, useEffect } from 'react';
 import { 
@@ -11,7 +11,8 @@ import {
   Bell,
   Settings,
   HelpCircle,
-  GraduationCap
+  GraduationCap,
+  BookMarked
 } from 'lucide-react';
 import { BrandMark } from './BrandMark';
 import { SettingsModal } from './SettingsModal';
@@ -29,9 +30,10 @@ export const StudentPortal: React.FC = () => {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const {
-    studentName, assignments, submissions, currentSemester,
+    studentName, assignments, submissions, currentSemester, setCurrentSemester, todaySemester,
     handleLogout, session, theme, applyTheme,
   } = useAppState();
+  const [params] = useSearchParams();
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   // 頭像依 user.id 記在這台裝置上（見 lib/avatar.ts）
@@ -102,7 +104,26 @@ export const StudentPortal: React.FC = () => {
     { key: 'dashboard', path: routes.studentDashboard(), label: '學習概況', icon: LayoutDashboard },
     { key: 'assignments', path: routes.studentAssignments(), label: '我的作業', icon: BookOpen },
     { key: 'grades', path: routes.studentGrades(), label: '成績紀錄', icon: Award },
+    { key: 'portfolio', path: routes.studentPortfolio(), label: '我的作品集', icon: BookMarked },
   ];
+
+  /**
+   * 導覽換頁。學習概況、我的作業、成績紀錄**共用同一個學期選擇**：
+   * 學期 = 目前網址的 ?semester（重新整理後只剩網址記得）?? AppState 的 currentSemester，
+   * 先寫回 currentSemester 再帶到下一頁。今天的學期就不放進網址，保持乾淨。
+   */
+  const go = (key: string, path: string) => {
+    const withSemester: Record<string, (semester?: string) => string> = {
+      dashboard: (semester) => routes.studentDashboard({ semester }),
+      assignments: (semester) => routes.studentAssignments({ semester }),
+      grades: (semester) => routes.studentGrades({ semester }),
+    };
+    const build = withSemester[key];
+    if (!build) { navigate(path); return; }
+    const semester = params.get(queryKeys.semesterFilter) ?? currentSemester;
+    if (semester !== currentSemester) setCurrentSemester(semester);
+    navigate(build(semester === todaySemester ? undefined : semester));
+  };
 
   /** 學習概況要精準比對，其他比前綴 —— 作答頁底下也要讓「我的作業」保持亮著。 */
   const isActivePath = (path: string) =>
@@ -129,15 +150,21 @@ export const StudentPortal: React.FC = () => {
             </div>
             <BrandMark
               trailing={
-                <span className="hidden sm:block text-caption text-text-primary bg-card/70 px-2 py-0.5 rounded-full tracking-widest">
-                  {currentSemester}
+                <span className="hidden sm:block shrink-0 whitespace-nowrap text-caption text-text-primary bg-card/70 px-2 py-0.5 rounded-full tracking-widest">
+                  {/* 本學期（今天的）。學生在各頁選的學期是另一回事，不顯示在這裡 */}
+                  {todaySemester}
                 </span>
               }
             />
           </div>
 
           {/* Desktop Navigation Tabs */}
-          <nav className="hidden lg:flex items-center gap-1 overflow-x-auto no-scrollbar px-4">
+          {/*
+            導覽有四顆（加了「我的作品集」之後）。1024～1280px 之間四顆含圖示放不下，
+            會把左邊的校名與學期標籤擠到換行 —— 這個寬度先拿掉圖示、縮小左右留白，
+            xl 以上才恢復。
+          */}
+          <nav className="hidden lg:flex items-center gap-1 overflow-x-auto no-scrollbar px-2 xl:px-4">
             {/*
               id 要帶 item.key。以前三顆按鈕共用同一個寫死的
               "student-nav-btn-profile" —— 重複 id 是無效 HTML，而且這個專案
@@ -147,14 +174,14 @@ export const StudentPortal: React.FC = () => {
             {navItems.map((item) => (
               <button id={`student-nav-btn-${item.key}`}
                 key={item.key}
-                onClick={() => navigate(item.path)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full text-body font-bold transition-all duration-300 whitespace-nowrap active:scale-95 ${
+                onClick={() => go(item.key, item.path)}
+                className={`flex items-center gap-2 px-3 xl:px-4 py-2 rounded-full text-body font-bold transition-all duration-300 whitespace-nowrap active:scale-95 ${
                   isActivePath(item.path)
                     ? 'bg-secondary text-on-accent shadow-md shadow-secondary/25'
                     : 'text-text-primary hover:bg-card/60'
                 }`}
               >
-                <item.icon size={18} strokeWidth={2} />
+                <item.icon size={18} strokeWidth={2} className="hidden xl:block" />
                 {item.label}
               </button>
             ))}
@@ -326,7 +353,7 @@ export const StudentPortal: React.FC = () => {
               <button
                 key={item.key}
                 id={`student-nav-bottom-btn-${item.key}`}
-                onClick={() => navigate(item.path)}
+                onClick={() => go(item.key, item.path)}
                 className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition-all active:scale-90 ${
                   isActive ? 'text-primary' : 'text-text-secondary opacity-50'
                 }`}

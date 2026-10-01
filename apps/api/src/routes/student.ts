@@ -9,6 +9,7 @@ import Util from '../util/util';
 import AssignmentHelper from '../dal/assignment_helper';
 import SubmissionHelper from '../dal/submission_helper';
 import SubmissionFeedbackHelper from '../dal/submission_feedback_helper';
+import PublishConsentHelper from '../dal/publish_consent_helper';
 
 
 const router = new Router({ prefix: '/student' });
@@ -124,6 +125,34 @@ router.get('/submission_feedback', async (ctx: Context) => {
     catch (error) {
         console.log({ error })
         Util.returnError(ctx, 500, 'Failed to submit assignment.');
+    }
+});
+
+/**
+ * @route PUT /service/student/submissions/:submissionId/publish-consent
+ * @description 學生決定自己這篇佳作要不要公開在數位作品集的同校觀摩。body：`{ willing: boolean }`
+ *
+ * 只有自己的、已發還、蓋了佳作章的作品可以設定，其餘一律 404
+ * （不區分「不是你的」與「還不能設」，理由同教師端的範圍檢查）。
+ */
+router.put('/submissions/:submissionId/publish-consent', async (ctx: Context) => {
+    try {
+        const { submissionId } = ctx.params;
+        const { willing } = (ctx.request.body ?? {}) as { willing?: unknown };
+        if (!/^\d+$/.test(submissionId) || typeof willing !== 'boolean') {
+            Util.returnError(ctx, 400, 'willing must be boolean');
+            return;
+        }
+        const row = await PublishConsentHelper.set(submissionId, ctx.session.userInfo.id, willing);
+        if (!row) {
+            Util.returnError(ctx, 404, 'Submission not found or not a returned featured work.');
+            return;
+        }
+        Util.returnMsg(ctx, 200, row);
+    }
+    catch (error) {
+        console.log({ error })
+        Util.returnError(ctx, 500, 'Failed to save publish consent.');
     }
 });
 

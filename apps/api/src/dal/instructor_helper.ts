@@ -1,4 +1,5 @@
 import { db } from './database';
+import FeaturedRuleHelper from './featured_rule_helper';
 import { CourseScope, courseScopeSubquery } from '../lib/course_scope';
 
 class InstructorHelper {
@@ -247,7 +248,24 @@ class InstructorHelper {
             ) RETURNING id;
         `;
         const contentStr = typeof analysis_content === 'string' ? analysis_content : JSON.stringify(analysis_content);
-        return await db.default.oneOrNone(sql, [submission_id, score || 0, contentStr, instructor_id, inputTokens, outputTokens, is_ai, wasReturned]);
+        const saved = await db.default.oneOrNone(sql, [submission_id, score || 0, contentStr, instructor_id, inputTokens, outputTokens, is_ai, wasReturned]);
+
+        /*
+          **第一次**批改完成（之前沒有有效的批改）才依標準自動蓋佳作。
+          老師改評語、改分數再存檔都不算 —— 每篇只判斷一次（見 FeaturedRuleHelper）。
+
+          蓋章失敗不能連累批改：分數與評語已經存進去了，這裡丟出例外的話
+          前端會以為批改失敗、老師重按一次又燒一次 AI。記下來就好，
+          老師照樣可以在清單上手動蓋。
+        */
+        if (saved && !previous) {
+            try {
+                await FeaturedRuleHelper.applyAfterFirstGrading(submission_id, score || 0, instructor_id);
+            } catch (e) {
+                console.error('自動蓋佳作失敗（批改已存檔）:', e);
+            }
+        }
+        return saved;
     }
 
     /**

@@ -28,6 +28,8 @@ import {
 import { orderedAssignments, orderNumbers } from '../lib/assignmentOrder';
 import { PageHeader, PAGE_CONTAINER } from './PageHeader';
 import { SemesterSelect } from './SemesterSelect';
+import { FeaturedRuleCard } from './FeaturedRuleCard';
+import type { MyFeaturedRule } from '../lib/featuredRule';
 
 interface GradingHubProps {
   /** 這位使用者看得到的班級（已依身分過濾，見 lib/access.ts） */
@@ -43,6 +45,9 @@ interface GradingHubProps {
   /** 進入某份作業的批改清單 */
   onOpenAssignment: (assignmentId: string) => void;
   onBack: () => void;
+  /** 自己的自動蓋佳作標準 */
+  featuredRule: MyFeaturedRule;
+  onFeaturedRuleChange: (rule: MyFeaturedRule) => void;
 }
 
 type PhaseFilter = 'all' | Exclude<AssignmentPhase, 'draft'>;
@@ -87,6 +92,8 @@ export const GradingHub: React.FC<GradingHubProps> = ({
   todaySemester,
   onOpenAssignment,
   onBack,
+  featuredRule,
+  onFeaturedRuleChange,
 }) => {
   const [query, setQuery] = useState('');
   const [city, setCity] = useState('all');
@@ -220,6 +227,9 @@ export const GradingHub: React.FC<GradingHubProps> = ({
           />
         }
       />
+
+      {/* 自動蓋佳作：老師自己的標準，所有學校、所有班都適用 */}
+      <FeaturedRuleCard rule={featuredRule} onChange={onFeaturedRuleChange} />
 
       {/* 待批改 */}
       <section id="grading-hub-pending">

@@ -15,6 +15,7 @@ import { QuestionBankPage } from "./pages/QuestionBankPage";
 import { GradingListPage } from "./pages/GradingListPage";
 import { GradingEditorPage } from "./pages/GradingEditorPage";
 import { FinalReportPage } from "./pages/FinalReportPage";
+import { AnthologyPage } from "./pages/AnthologyPage";
 import { GradesPage } from "./pages/GradesPage";
 import { ConcernPage } from "./pages/ConcernPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -22,6 +23,7 @@ import { LoginPage, SessionLoading } from "./pages/LoginPage";
 import { StudentDashboardPage } from "./pages/student/StudentDashboardPage";
 import { StudentAssignmentsPage } from "./pages/student/StudentAssignmentsPage";
 import { StudentGradesPage } from "./pages/student/StudentGradesPage";
+import { StudentPortfolioPage } from "./pages/student/StudentPortfolioPage";
 import { StudentEditorPage } from "./pages/student/StudentEditorPage";
 
 /**
@@ -56,6 +58,7 @@ export const AppRoutes: React.FC = () => (
       <Route path={routePatterns.gradingList} element={<GradingListPage />} />
       <Route path={routePatterns.gradingEditor} element={<GradingEditorPage />} />
       <Route path={routePatterns.finalReport} element={<FinalReportPage />} />
+      <Route path={routePatterns.anthology} element={<AnthologyPage />} />
       <Route path={routePatterns.grades} element={<GradesPage />} />
       <Route path={routePatterns.concern} element={<ConcernPage />} />
       {/* 打不到的網址仍然留在版面裡，才不會突然沒有導覽列 */}
@@ -68,6 +71,7 @@ export const AppRoutes: React.FC = () => (
       <Route path={routePatterns.studentAssignments} element={<StudentAssignmentsPage />} />
       <Route path={routePatterns.studentEditor} element={<StudentEditorPage />} />
       <Route path={routePatterns.studentGrades} element={<StudentGradesPage />} />
+      <Route path={routePatterns.studentPortfolio} element={<StudentPortfolioPage />} />
       <Route path="/student/*" element={<NotFoundPage />} />
     </Route>
   </Routes>

@@ -50,6 +50,11 @@ export interface Course {
   parseConfidence?: 'high' | 'low';
   /** 授課教師。授課教師身分只看得到自己名下的課程 */
   teacherName?: string;
+  /**
+   * 數位作品集的「同校佳作觀摩」是否顯示這一班作品的級分。
+   * 存在 `course_showcase`，沒設定過就是 false（預設隱藏）。
+   */
+  showcaseShowScore?: boolean;
 }
 
 /** 學校層級。決定班級的命名方式（國中用忠孝仁愛，國小用班號） */
@@ -243,6 +248,16 @@ export interface Submission {
   publishedAt?: string;
   status: SubmissionStatus;
   result?: GradingResult;
+  /**
+   * 老師蓋了佳作章。**只有學生端的資料會填**，而且後端只在發還之後給 true。
+   * 教師端的標記走 submissionMarks（lib/submissionMarks.ts），不要讀這一欄。
+   */
+  isFeatured?: boolean;
+  /**
+   * 學生願不願意讓這篇佳作公開在數位作品集的同校觀摩。**只有學生端的資料會填。**
+   * null ＝ 還沒決定（觀摩時當成不公開）。
+   */
+  publishConsent?: boolean | null;
 }
 
 /**

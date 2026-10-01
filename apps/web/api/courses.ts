@@ -14,6 +14,8 @@ interface RawCourse {
   source_index: string | null;
   is_active: boolean | null;
   stud_count: string | number | null;
+  /** 後端已經 COALESCE 成 false，舊版後端沒有這一欄時是 undefined */
+  showcase_show_score?: boolean | null;
 }
 
 /**
@@ -58,6 +60,7 @@ function toCourse(r: RawCourse): Course {
     className: className || undefined,
     // 校名裡認不出縣市時標成待確認 —— 這是唯一還需要「解析」的欄位
     parseConfidence: city ? 'high' : 'low',
+    showcaseShowScore: r.showcase_show_score === true,
   };
 }
 
@@ -179,6 +182,16 @@ export async function updateCourse(
  */
 export async function setCourseArchived(id: string, archived: boolean): Promise<void> {
   await updateCourse(id, { is_active: !archived });
+}
+
+/**
+ * 數位作品集的佳作觀摩要不要顯示這一班的級分。
+ *
+ * 不走 updateCourse()：這個設定不在 course 資料表，而在另一張
+ * course_showcase（見 docs/migrations/008 為什麼分開）。
+ */
+export async function setCourseShowcase(id: string, showScore: boolean): Promise<void> {
+  await api.put(`/service/instructor/courses/${id}/showcase`, { show_score: showScore });
 }
 
 export async function deleteCourse(id: string): Promise<void> {

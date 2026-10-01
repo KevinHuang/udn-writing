@@ -19,6 +19,7 @@ import RosterSyncHelper from '../dal/roster_sync_helper';
 import DevapiJasmineHelper from './../dal/devapi/devapi_helper';
 import FolderHelper from '../dal/folder_helper';
 import SubmissionMarkHelper from '../dal/submission_mark_helper';
+import FeaturedRuleHelper, { isRuleScore } from '../dal/featured_rule_helper';
 import AssignmentLeaveHelper from '../dal/assignment_leave_helper';
 import { checkImageList } from '../lib/image_input';
 import SemesterHelper from '../dal/semester_helper';
@@ -876,6 +877,76 @@ router.put('/submissions/:submissionId/marks/:kind', async (ctx) => {
 });
 
 /**
+ * @route GET /service/instructor/featured-rule
+ * @route PUT /service/instructor/featured-rule           body：{ enabled: boolean, min_score: 1～6 }
+ * @description 自己的自動蓋佳作標準（批改作業入口頁設定）。
+ *
+ * 作品**第一次**批改完成時，達到標準就自動蓋上佳作章；用的是當下批改的人
+ * 的這一份（見 dal/featured_rule_helper.ts 與 docs/migrations/009）。
+ * 每個人各一份，所以不需要範圍檢查 —— 只讀寫登入者自己的。
+ */
+router.get('/featured-rule', async (ctx) => {
+    try {
+        ctx.body = await FeaturedRuleHelper.getUserRule(ctx.session.userInfo.id);
+    } catch (error) {
+        console.error('Error fetching featured rule:', error);
+        ctx.status = 500; ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+router.put('/featured-rule', async (ctx) => {
+    try {
+        const { enabled, min_score } = (ctx.request.body ?? {}) as { enabled?: unknown; min_score?: unknown };
+        if (typeof enabled !== 'boolean' || !isRuleScore(min_score)) {
+            ctx.status = 400; ctx.body = { error: 'enabled must be boolean, min_score must be 1-6' }; return;
+        }
+        ctx.body = await FeaturedRuleHelper.setUserRule(ctx.session.userInfo.id, enabled, min_score);
+    } catch (error) {
+        console.error('Error saving featured rule:', error);
+        ctx.status = 500; ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/**
+ * @route GET /service/instructor/featured-rules/assignments
+ * @route PUT /service/instructor/assignments/:assignmentId/featured-rule
+ *        body：{ mode: 'inherit' | 'off' | 'custom', min_score?: 1～6 }
+ * @description 個別作業另外調整的自動蓋佳作標準。調整過之後不論誰批改都以這個為準。
+ *
+ * GET 只回傳調整過的作業；沒列出來的就是沿用批改者自己的標準。
+ */
+router.get('/featured-rules/assignments', async (ctx) => {
+    try {
+        ctx.body = await FeaturedRuleHelper.getAssignmentRules(await courseScopeOf(ctx));
+    } catch (error) {
+        console.error('Error fetching assignment featured rules:', error);
+        ctx.status = 500; ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+const RULE_MODES = ['inherit', 'off', 'custom'];
+
+router.put('/assignments/:assignmentId/featured-rule', async (ctx) => {
+    try {
+        const { assignmentId } = ctx.params;
+        const { mode, min_score } = (ctx.request.body ?? {}) as { mode?: unknown; min_score?: unknown };
+        if (typeof mode !== 'string' || !RULE_MODES.includes(mode) || (mode === 'custom' && !isRuleScore(min_score))) {
+            ctx.status = 400; ctx.body = { error: 'Invalid mode or min_score' }; return;
+        }
+        const row = await FeaturedRuleHelper.setAssignmentRule(
+            assignmentId, mode as 'inherit' | 'off' | 'custom',
+            mode === 'custom' ? (min_score as number) : null,
+            ctx.session.userInfo.id, await courseScopeOf(ctx),
+        );
+        if (!row) { ctx.status = 404; ctx.body = { error: 'Assignment not found or unauthorized' }; return; }
+        ctx.body = row;
+    } catch (error) {
+        console.error('Error saving assignment featured rule:', error);
+        ctx.status = 500; ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/**
  * @route GET /service/instructor/leaves
  * @route PUT /service/instructor/assignments/:assignmentId/leaves/:studentId
  * @description 請假註記。標成請假的學生不計入逾期未繳。
@@ -1092,6 +1163,32 @@ router.put('/courses/:id', async (ctx) => {
     }
 });
 
+/**
+ * @route PUT /service/instructor/courses/:id/showcase
+ * @description 班級給數位作品集用的展示設定。body：`{ show_score: boolean }`
+ *
+ * 數位作品集的「同校佳作觀摩」要不要顯示這一班作品的級分，由授課教師決定。
+ * 沒設定過一律視為不顯示（見 docs/migrations/008）。讀取不另開端點，
+ * 跟著課程清單回來（`showcase_show_score`）。
+ */
+router.put('/courses/:id/showcase', async (ctx) => {
+    try {
+        const { id } = ctx.params;
+        const { show_score } = (ctx.request.body ?? {}) as { show_score?: unknown };
+        if (typeof show_score !== 'boolean') {
+            ctx.status = 400; ctx.body = { error: 'show_score must be boolean' }; return;
+        }
+        const row = await CourseHelper.setShowcase(
+            id, show_score, ctx.session.userInfo.id, await courseScopeOf(ctx),
+        );
+        if (!row) { ctx.status = 404; ctx.body = { error: 'Course not found or unauthorized' }; return; }
+        ctx.body = row;
+    } catch (error) {
+        console.error('Error updating course showcase:', error);
+        ctx.status = 500; ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
 router.delete('/courses/:id', async (ctx) => {
     try {
         const userId = ctx.session.userInfo.id;
@@ -1125,14 +1222,21 @@ router.get('/courses/:id/assignments', async (ctx) => {
 
 router.get('/courses/:course_id/tasks/:task_ids/scores', async (ctx) => {
     try {
-        const userId = ctx.session.userInfo.id;
         const { course_id, task_ids } = ctx.params;
         const tasksIdsArray = task_ids.split(',');
-        console.log({ course_id, tasksIdsArray });
-        const scores = await SubmissionFeedbackHelper.getScoresByCourseIdTaskId(course_id, tasksIdsArray)
-        // console.log({ scores })
-        // const assignments = await AssignmentHelper.getAssignmentsByCourseId(userId, id);
-        ctx.body = scores;
+        /*
+          ⚠️ 以前這裡沒有任何檢查：task_ids 直接拼進 SQL（注入點），
+             而且不管這個班是不是你的都照查。現在：
+             - 班級與題目編號都必須是數字，否則 400
+             - 範圍外的班 → 404（與其他教師端 API 一致，不區分「沒這個班」與「不是你的」）
+        */
+        const isId = (v: string) => /^\d+$/.test(v);
+        if (!isId(course_id) || tasksIdsArray.length === 0 || !tasksIdsArray.every(isId)) {
+            ctx.status = 400; ctx.body = { error: 'Invalid course_id or task_ids' }; return;
+        }
+        const scope = await courseScopeOf(ctx);
+        if (!(await CourseHelper.isInScope(course_id, scope))) { ctx.status = 404; ctx.body = { error: 'Course not found or unauthorized' }; return; }
+        ctx.body = await SubmissionFeedbackHelper.getScoresByCourseIdTaskId(course_id, tasksIdsArray, scope);
     } catch (error) {
         console.error('Error fetching assignments:', error);
         ctx.status = 500;

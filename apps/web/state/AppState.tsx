@@ -872,9 +872,16 @@ function useAppStateValue() {
     content: string,
     /** 原稿在 GCS 的路徑。辨識時後端已經存好，這裡跟著存進 pic_files */
     picFiles: string[] = [],
+    /**
+     * 這一位有批次代繳交的辨識紀錄 —— 存檔後把它退役。
+     * 老師是因為辨識失敗才改用打字的；不退役的話那一批還算「失敗」，
+     * 之後按「全部重試」會再辨識一次，**把老師打好的作文蓋掉**。
+     * （2026-09-29 合併 cbf3156 時掉了，2026-10-01 補回）
+     */
+    opts: { confirmOcr?: boolean } = {},
   ) => {
     try {
-      await proxySubmit(selectedAssignmentId, studentId, content, picFiles);
+      await proxySubmit(selectedAssignmentId, studentId, content, picFiles, opts);
       await reloadSubmissions();
       await ensureSubmissions(selectedAssignmentId);
       /*

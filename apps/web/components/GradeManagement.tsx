@@ -2,8 +2,11 @@ import { Markdown } from './Markdown';
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { 
-  Download, 
-  Calendar, 
+  ArrowDownWideNarrow,
+  ArrowUpDown,
+  ArrowUpNarrowWide,
+  Download,
+  Calendar,  
   Search, 
   Users,
   ArrowLeft,
@@ -27,6 +30,9 @@ import { MAX_LEVEL, MIN_LEVEL, levelStyle, toLevel, CRITERIA_SHORT_LABELS } from
 import { SHOW_CATEGORY_SCORES } from '../lib/features';
 import { semesterLabel } from '../lib/semester';
 import { seatText } from '../lib/gradingQueue';
+import { studentHistory as studentHistoryOf } from '../lib/studentHistory';
+import { sortGradeRows, studentGradeStats, type GradeSortKey, type SortDir } from '../lib/gradeTable';
+import { MARK_META, type SubmissionMarks } from '../lib/submissionMarks';
 import { isOnLeave, type LeaveMarks } from '../lib/leave';
 import { isOverdue as isAssignmentOverdue } from '../lib/assignments';
 import { orderedAssignments, orderNumbers } from '../lib/assignmentOrder';
@@ -55,6 +61,8 @@ interface GradeManagementProps {
   onOpenFinalReport?: (courseId: string) => void;
   /** 製作成果集，預先勾選這個班。由頁面負責導向 */
   onOpenAnthology?: (courseId: string) => void;
+  /** 佳作／預選章（AppState 一次載入全部）。算每位學生的佳作數 */
+  marks?: SubmissionMarks;
 }
 
 // --- STUDENT HISTORY MODAL ---
@@ -74,12 +82,8 @@ const StudentHistoryModal: React.FC<StudentHistoryModalProps> = ({
 
     if (!isOpen || !student) return null;
 
-    // Filter relevant submissions for this student (Graded or Published only)
-    const studentHistory = submissions
-        .filter(s => 
-            s.studentName === student.name && 
-            (s.status === 'Graded' || s.status === 'Published')
-        )
+    // 用 studentId 比對，不要用姓名（同班有同名學生，見 lib/studentHistory.ts）
+    const studentHistory = studentHistoryOf(submissions, student.studentId)
         .map(s => {
             const assignment = assignments.find(a => a.id === s.assignmentId);
             return {
@@ -87,8 +91,7 @@ const StudentHistoryModal: React.FC<StudentHistoryModalProps> = ({
                 assignmentTitle: assignment?.title || '未知作業',
                 maxScore: MAX_LEVEL
             };
-        })
-        .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()); // Newest first
+        });
 
     // Detailed view data
     const selectedDetail = selectedSubmissionId 
@@ -254,6 +257,39 @@ function readChartInk() {
   };
 }
 
+/**
+ * 可以點的欄位標題（繳交、佳作、平均級分）。
+ * 點一下高→低、再點低→高、第三下回到座號順序。
+ */
+const SortButton: React.FC<{
+  id: string;
+  active: boolean;
+  dir: SortDir;
+  onClick: () => void;
+  children: React.ReactNode;
+}> = ({ id, active, dir, onClick, children }) => (
+  <button
+    id={id}
+    type="button"
+    onClick={onClick}
+    title={
+      active
+        ? dir === 'desc' ? '目前高→低，再點一下改成低→高' : '目前低→高，再點一下回到座號順序'
+        : '依這一欄排序（高→低）'
+    }
+    className={`tap-target inline-flex items-center justify-center gap-0.5 w-full rounded-md transition-colors hover:text-primary ${active ? 'text-primary' : ''}`}
+  >
+    <span className="truncate">{children}</span>
+    {!active ? (
+      <ArrowUpDown size={12} className="shrink-0 opacity-40" aria-hidden="true" />
+    ) : dir === 'asc' ? (
+      <ArrowUpNarrowWide size={14} className="shrink-0" aria-hidden="true" />
+    ) : (
+      <ArrowDownWideNarrow size={14} className="shrink-0" aria-hidden="true" />
+    )}
+  </button>
+);
+
 export const GradeManagement: React.FC<GradeManagementProps> = ({
   courses,
   assignments,
@@ -269,6 +305,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
   canGoBack,
   onOpenFinalReport,
   onOpenAnthology,
+  marks,
 }) => {
   // Filter courses by semester
   const semesterCourses = useMemo(() => 
@@ -525,8 +562,29 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
 
   // Search filter
   const [searchTerm, setSearchTerm] = useState('');
-  const filteredStudents = students.filter(student => 
-    student.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+  /** 排序。'seat'＝座號順序（預設） */
+  const [sort, setSort] = useState<{ key: GradeSortKey; dir: SortDir }>({ key: 'seat', dir: 'asc' });
+  const toggleSort = (key: GradeSortKey) =>
+    setSort((cur) =>
+      cur.key !== key ? { key, dir: 'desc' } : cur.dir === 'desc' ? { key, dir: 'asc' } : { key: 'seat', dir: 'asc' },
+    );
+  const ariaSort = (key: GradeSortKey) =>
+    sort.key !== key ? 'none' : sort.dir === 'asc' ? 'ascending' : 'descending';
+
+  /** 每位學生的繳交篇數、佳作數、平均級分（lib/gradeTable.ts），依目前的排序。表格與 CSV 共用 */
+  const scopedIds = useMemo(() => new Set(scopedAssignments.map((a) => a.id)), [scopedAssignments]);
+  const gradeRows = useMemo(
+    () =>
+      sortGradeRows(
+        students.map((s) => ({ ...s, stats: studentGradeStats(submissions, s.studentId, scopedIds, marks) })),
+        sort.key,
+        sort.dir,
+      ),
+    [students, submissions, scopedIds, marks, sort],
+  );
+
+  const filteredStudents = gradeRows.filter(student =>
+    student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     String(student.seatNo ?? '').includes(searchTerm)
   );
 
@@ -558,14 +616,12 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
       scopedAssignments.forEach(a => {
           csvContent += `,${cell(a.title)}`;
       });
-      csvContent += ",平均級分\n";
+      csvContent += ",繳交篇數,佳作數,平均級分\n";
 
-      // 2. CSV Rows
-      students.forEach(student => {
+      // 2. CSV Rows：順序跟著畫面的排序；全部學生都輸出，不受搜尋影響
+      gradeRows.forEach(student => {
           // ⚠️ 直接寫 student.seatNo 的話，沒有座號的人會印出「undefined」
           let row = `${cell(seatText(student.seatNo))},${cell(student.name)}`;
-          let totalScore = 0;
-          let gradedCount = 0;
 
           const studentId = student.studentId;
 
@@ -578,10 +634,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
               if (missing) {
                   scoreText = isOnLeave(leaveMarks, a.id, studentId) ? "請假" : "未繳交";
               } else if (sub!.status === 'Graded' || sub!.status === 'Published') {
-                  const score = sub!.result?.totalScore || 0;
-                  scoreText = score.toString();
-                  totalScore += score;
-                  gradedCount++;
+                  scoreText = String(sub!.result?.totalScore || 0);
               } else {
                   scoreText = "待批改";
               }
@@ -589,8 +642,9 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
           });
 
           // 一份都沒批改時不要寫 0.0 —— 那會被讀成「這位學生平均 0 分」
-          const avg = gradedCount > 0 ? (totalScore / gradedCount).toFixed(1) : "—";
-          row += `,${avg}\n`;
+          const { submitted, featured, average } = student.stats;
+          const avg = average !== null ? average.toFixed(1) : "—";
+          row += `,${submitted},${featured},${avg}\n`;
           csvContent += row;
       });
 
@@ -639,7 +693,12 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
           backId="grademanagement-btn-back"
           className="mb-3 sm:mb-4"
           actions={selectedCourseId && (
-            <div className="shrink-0 flex items-center gap-2">
+            /*
+              手機上三顆擠一列時「製作成果集」會被折成三行（實測 375px）。
+              改成可換行：兩顆次要動作平分第一排，主要動作「匯出成績」自己佔一整排；
+              640px 以上回到一列。按鈕字一律不換行。
+            */
+            <div className="w-full sm:w-auto shrink-0 flex flex-wrap sm:flex-nowrap items-center gap-2">
               {/*
                 期末總結是次要動作（一學期按一次），所以走描邊樣式，
                 不跟「匯出成績」搶同一個實心主色 —— 兩顆實心按鈕並排，
@@ -649,7 +708,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                 <button
                   id="grademanagement-btn-finalreport"
                   onClick={() => onOpenFinalReport(selectedCourseId)}
-                  className="bg-card hover:bg-surface-soft border border-border-strong text-text-primary px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
+                  className="flex-1 sm:flex-none whitespace-nowrap bg-card hover:bg-surface-soft border border-border-strong text-text-primary px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
                 >
                   <Sparkles size={16} className="shrink-0 text-primary" /> 期末總結
                 </button>
@@ -659,7 +718,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                 <button
                   id="grademanagement-btn-anthology"
                   onClick={() => onOpenAnthology(selectedCourseId)}
-                  className="bg-card hover:bg-surface-soft border border-border-strong text-text-primary px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
+                  className="flex-1 sm:flex-none whitespace-nowrap bg-card hover:bg-surface-soft border border-border-strong text-text-primary px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
                 >
                   <BookOpen size={16} className="shrink-0 text-secondary" /> 製作成果集
                 </button>
@@ -667,7 +726,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
               <button
                 id="grademanagement-btn-export"
                 onClick={handleDownloadExcel}
-                className="bg-primary hover:bg-primary/90 text-on-accent px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
+                className="basis-full sm:basis-auto whitespace-nowrap bg-primary hover:bg-primary/90 text-on-accent px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
               >
                 {/* 檔案是什麼格式就寫什麼格式 —— 產生的是 .csv，寫 EXCEL 老師會找不到檔 */}
                 <Download size={16} className="shrink-0" /> 匯出成績（CSV）
@@ -984,17 +1043,27 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                             </th>
                                         );
                                     })}
-                                    <th className="p-2 sm:p-4 px-1 sm:px-2 text-body text-text-primary border-b border-l border-border text-center sticky right-0 bg-surface-soft z-20 w-16 md:w-24 min-w-[4rem] md:min-w-[6rem] max-w-[4rem] md:max-w-[6rem]">
-                                        {/* 窄畫面只寫「平均」—— 四個字要 6rem，等於吃掉一整欄成績 */}
-                                        平均<span className="hidden md:inline">級分</span>
+                                    {/* 繳交篇數、佳作數：不凍結，只有平均凍結 —— 窄螢幕凍結欄一多，成績欄就看不到了 */}
+                                    <th aria-sort={ariaSort('submitted')} className="p-2 sm:p-4 px-1 sm:px-2 text-body text-text-primary border-b border-l border-border text-center w-14 md:w-16 min-w-[3.5rem] md:min-w-[4rem]">
+                                        <SortButton id="grademanagement-sort-submitted" active={sort.key === 'submitted'} dir={sort.dir} onClick={() => toggleSort('submitted')}>
+                                            繳交
+                                        </SortButton>
+                                    </th>
+                                    <th aria-sort={ariaSort('featured')} className="p-2 sm:p-4 px-1 sm:px-2 text-body text-text-primary border-b border-border text-center w-14 md:w-16 min-w-[3.5rem] md:min-w-[4rem]">
+                                        <SortButton id="grademanagement-sort-featured" active={sort.key === 'featured'} dir={sort.dir} onClick={() => toggleSort('featured')}>
+                                            {MARK_META.featured.label}
+                                        </SortButton>
+                                    </th>
+                                    <th aria-sort={ariaSort('average')} className="p-2 sm:p-4 px-1 sm:px-2 text-body text-text-primary border-b border-l border-border text-center sticky right-0 bg-surface-soft z-20 w-16 md:w-24 min-w-[4rem] md:min-w-[6rem] max-w-[4rem] md:max-w-[6rem]">
+                                        <SortButton id="grademanagement-sort-average" active={sort.key === 'average'} dir={sort.dir} onClick={() => toggleSort('average')}>
+                                            {/* 窄畫面只寫「平均」—— 四個字要 6rem，等於吃掉一整欄成績 */}
+                                            平均<span className="hidden md:inline">級分</span>
+                                        </SortButton>
                                     </th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-border/50">
                                 {filteredStudents.map(student => {
-                                    let totalScore = 0;
-                                    let gradedCount = 0;
-
                                     return (
                                         <tr key={student.studentId} id={`grademanagement-table-row-${student.studentId}`} className="hover:bg-surface-soft transition-colors group">
                                             <td className="p-3 sm:p-4 px-1 sm:px-2 text-text-primary font-mono text-center sticky left-0 bg-card group-hover:bg-surface-soft border-r border-border/50 z-10 w-10 md:w-14 min-w-[2.5rem] md:min-w-[3.5rem] max-w-[2.5rem] md:max-w-[3.5rem] text-body">
@@ -1026,7 +1095,9 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                                 const studentId = student.studentId;
                                                 const onLeave = isOnLeave(leaveMarks, a.id, studentId);
 
-                                                if (!sub || sub.status === 'Unsubmitted') {
+                                                // 草稿還沒交出來，和未繳交一樣看待（以前落到「已批改」那一支，以 0 級分算進平均；CSV 本來就這樣判斷）
+                                                const missing = !sub || sub.status === 'Unsubmitted' || sub.status === 'Draft';
+                                                if (missing) {
                                                     if (isOverdue || onLeave) {
                                                         /*
                                                           逾期沒交有兩種：真的沒寫，和請假。
@@ -1062,9 +1133,6 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                                     content = <span className="text-warning-700 text-caption bg-warning-50 px-1 sm:px-1.5 py-0.5 rounded">待批</span>;
                                                 } else {
                                                     const score = sub.result?.totalScore || 0;
-                                                    totalScore += score;
-                                                    gradedCount++;
-                                                    
                                                     content = (
                                                       <span className={`text-ui font-bold ${levelStyle(score).text}`}>
                                                         {score}
@@ -1073,15 +1141,23 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                                 }
  
                                                 return (
-                                                    <td key={a.id} className={`py-3 sm:py-4 px-1.5 sm:px-2 text-center border-border/10 w-20 sm:w-24 min-w-[5rem] sm:min-w-[6rem] max-w-[5rem] sm:max-w-[6rem] transition-colors ${isOverdue && !onLeave && (!sub || sub.status === 'Unsubmitted') ? 'bg-danger-50/30' : ''}`}>
+                                                    <td key={a.id} className={`py-3 sm:py-4 px-1.5 sm:px-2 text-center border-border/10 w-20 sm:w-24 min-w-[5rem] sm:min-w-[6rem] max-w-[5rem] sm:max-w-[6rem] transition-colors ${isOverdue && !onLeave && missing ? 'bg-danger-50/30' : ''}`}>
                                                         {content}
                                                     </td>
                                                 );
                                             })}
+                                            <td className="py-3 sm:py-4 px-1 text-center border-l border-border/50 text-body text-text-primary tabular-nums">
+                                                {student.stats.submitted}
+                                            </td>
+                                            <td className="py-3 sm:py-4 px-1 text-center text-body tabular-nums">
+                                                {student.stats.featured > 0
+                                                    ? <span className="font-bold text-secondary">{student.stats.featured}</span>
+                                                    : <span className="text-text-muted">0</span>}
+                                            </td>
                                             <td className="p-3 sm:p-4 px-1.5 sm:px-2 text-center border-l border-border/50 sticky right-0 bg-card group-hover:bg-surface-soft z-10 w-16 md:w-24 min-w-[4rem] md:min-w-[6rem] max-w-[4rem] md:max-w-[6rem]">
-                                                {gradedCount > 0 ? (
+                                                {student.stats.average !== null ? (
                                                     <span className="text-primary bg-primary/5 px-2 sm:px-3 py-0.5 sm:py-1 rounded-brand text-body">
-                                                        {(totalScore / gradedCount).toFixed(1)}
+                                                        {student.stats.average.toFixed(1)}
                                                     </span>
                                                 ) : (
                                                     <span className="text-text-muted text-body">-</span>
@@ -1092,7 +1168,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                 })}
                                 {filteredStudents.length === 0 && (
                                     <tr>
-                                        <td id="grademanagement-table-empty" colSpan={scopedAssignments.length + 3} className="p-12 text-center text-text-muted">
+                                        <td id="grademanagement-table-empty" colSpan={scopedAssignments.length + 5} className="p-12 text-center text-text-muted">
                                             無符合搜尋結果
                                         </td>
                                     </tr>

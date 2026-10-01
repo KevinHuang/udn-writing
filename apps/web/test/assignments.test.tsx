@@ -10,7 +10,8 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import type { Assignment } from "../types";
+import type { Assignment, Submission } from "../types";
+import { setMark } from "../lib/submissionMarks";
 import {
   assignmentPhase,
   canStudentSubmit,
@@ -20,6 +21,7 @@ import {
   endNow,
   openAssignment,
   toggleVisibility,
+  submissionStats,
 } from "../lib/assignments";
 
 const NOW = new Date("2026-09-18T12:00:00+08:00");
@@ -127,5 +129,28 @@ describe("狀態變更", () => {
     const reopened = toggleVisibility(toggleVisibility(first));
     assert.equal(reopened.status, "Published");
     assert.equal(reopened.publishedAt, first.publishedAt);
+  });
+});
+
+describe("submissionStats：作業卡片上的已繳與佳作數", () => {
+  const sub = (id: string, assignmentId: string, status: Submission["status"]): Submission => ({
+    id, assignmentId, studentId: `u${id}`, studentName: "王小明", content: "", submittedAt: "", status,
+  });
+  const subs = [
+    sub("1", "a1", "Published"), sub("2", "a1", "Graded"), sub("3", "a1", "Pending"),
+    sub("4", "a1", "Draft"), sub("5", "a2", "Published"),
+  ];
+
+  test("佳作數只算這份作業被蓋佳作章的；預選不算", () => {
+    let marks = setMark({}, "1", "featured", true);
+    marks = setMark(marks, "2", "preselect", true);
+    marks = setMark(marks, "5", "featured", true);   // 別份作業
+    const st = submissionStats(make({ totalStudents: 5 }), subs, marks);
+    assert.equal(st.featured, 1);
+    assert.equal(st.submitted, 3);   // 草稿不算已繳
+  });
+
+  test("沒給 marks（舊的呼叫方式）佳作數是 0", () => {
+    assert.equal(submissionStats(make(), subs).featured, 0);
   });
 });

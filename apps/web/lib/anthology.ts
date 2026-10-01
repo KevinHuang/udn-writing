@@ -20,6 +20,7 @@ import type { Assignment, Course, Submission } from '../types';
 import { hasMark, type MarkKind, type SubmissionMarks } from './submissionMarks';
 import { schoolLabel } from './courseGroups';
 import { semesterLabel } from './semester';
+import { isSubmitted } from './gradeTable';
 
 // ─────────────────────────────────────────────
 // 挑作品
@@ -35,9 +36,6 @@ export const SOURCE_LABELS: Record<AnthologySource, string> = {
   by_title: '依題目挑選',
 };
 
-/** 交出來了才算。草稿、未繳交都不是作品 */
-const isSubmitted = (s: Submission) =>
-  s.status === 'Pending' || s.status === 'Graded' || s.status === 'Published';
 
 /** 作業的題目。當作分組鍵，所以前後空白要去掉 */
 export const titleOf = (a: Assignment) => (a.title ?? '').trim();

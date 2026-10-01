@@ -5,6 +5,7 @@ import { PageHeader, PAGE_CONTAINER } from "../components/PageHeader";
 import { SemesterSelect } from "../components/SemesterSelect";
 import { AnthologyPreview, type AnthologyPreviewData } from "../components/anthology/AnthologyPreview";
 import { CheckRow } from "../components/anthology/CheckRow";
+import { PreviewFab } from "../components/anthology/PreviewFab";
 import { useAppState } from "../state/appStateContext";
 import { useGoBack } from "../lib/useGoBack";
 import { queryKeys } from "../lib/routes";
@@ -176,6 +177,26 @@ export const AnthologyPage: React.FC = () => {
   const canPreview =
     picked.length > 0 && !loading &&
     (options.showText || options.showComment || options.showScore || options.showImages);
+
+  /** 預覽按鈕的字與提示。電腦版的預覽區塊和手機版的底部操作列共用 */
+  const previewLabel = (
+    <>
+      {loading ? <Loader2 size={16} className="animate-spin shrink-0" /> : <BookOpen size={16} className="shrink-0" />}
+      {loading ? `載入作品中（${loading.done}／${loading.total} 份作業）` : "預覽成果集"}
+    </>
+  );
+  const previewHint = (
+    <>
+      {picked.length === 0 && selectedCourses.length > 0 && (
+        <p className="text-caption text-text-muted">
+          {source === "by_title" && titles.size === 0
+            ? "請勾選至少一個題目。"
+            : "勾選的班級裡沒有符合的作品。"}
+        </p>
+      )}
+      {loadError && <p className="text-caption text-danger-700">{loadError}</p>}
+    </>
+  );
 
   return (
     <div className={`${PAGE_CONTAINER} space-y-6 pb-12`}>
@@ -361,14 +382,7 @@ export const AnthologyPage: React.FC = () => {
                 （{selectedCourses.length} 個班）
               </span>
             </p>
-            {picked.length === 0 && selectedCourses.length > 0 && (
-              <p className="text-caption text-text-muted">
-                {source === "by_title" && titles.size === 0
-                  ? "請勾選至少一個題目。"
-                  : "勾選的班級裡沒有符合的作品。"}
-              </p>
-            )}
-            {loadError && <p className="text-caption text-danger-700">{loadError}</p>}
+            {previewHint}
             <button
               id="anthology-btn-preview"
               type="button"
@@ -376,12 +390,25 @@ export const AnthologyPage: React.FC = () => {
               disabled={!canPreview}
               className="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-on-accent px-4 py-2.5 rounded-xl text-body font-bold shadow-lg shadow-primary/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? <Loader2 size={16} className="animate-spin" /> : <BookOpen size={16} />}
-              {loading ? `載入作品中（${loading.done}／${loading.total} 份作業）` : "預覽成果集"}
+              {previewLabel}
             </button>
           </section>
         </div>
       </div>
+
+      {/*
+        手機與平板：班級清單很長，頁底的預覽按鈕要捲很久（實測 375px 在第 3145／3281px）——
+        右下角放一顆預覽圓鈕。TeacherLayout 的 main 自己捲動、已經留了 pb-24 給底部導覽，所以 bottom-2。
+      */}
+      <PreviewFab
+        id="anthology-btn-preview-mobile"
+        count={picked.length}
+        label="預覽成果集"
+        onClick={() => void openPreview()}
+        disabled={!canPreview}
+        loading={Boolean(loading)}
+        className="bottom-2"
+      />
 
       {preview && <AnthologyPreview preview={preview} onClose={() => setPreview(null)} />}
     </div>

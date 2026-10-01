@@ -17,6 +17,8 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Assignment, Question, Submission } from '../types';
+import type { SubmissionMarks } from '../lib/submissionMarks';
+import { FeaturedCount } from './FeaturedCount';
 import { QuestionPreviewModal } from './QuestionPreviewModal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DeadlineEditor } from './DeadlineEditor';
@@ -57,6 +59,8 @@ interface CourseAssignmentListProps {
   onPublishNew: () => void;
   /** 要求更換題目（由上層開題庫選擇器） */
   onRequestSwapQuestion: (assignment: Assignment) => void;
+  /** 佳作章（AppState 一次載入全部）。作業卡片上顯示「佳作 N」 */
+  marks?: SubmissionMarks;
 }
 
 type Filter = 'all' | AssignmentPhase;
@@ -222,6 +226,7 @@ export const CourseAssignmentList: React.FC<CourseAssignmentListProps> = ({
   onSelectAssignment,
   onPublishNew,
   onRequestSwapQuestion,
+  marks,
 }) => {
   const [filter, setFilter] = useState<Filter>('all');
   /** 檢視方向。只是個人的看法偏好，記在這台瀏覽器 */
@@ -456,7 +461,7 @@ export const CourseAssignmentList: React.FC<CourseAssignmentListProps> = ({
       ) : (
         <ul className="space-y-2.5">
           {rows.map((a) => {
-            const stats = submissionStats(a, submissions);
+            const stats = submissionStats(a, submissions, marks);
             const isDragging = dragId === a.id;
             const isDropTarget = canReorder && overId === a.id && dragId !== a.id;
             return (
@@ -634,6 +639,7 @@ export const CourseAssignmentList: React.FC<CourseAssignmentListProps> = ({
                   <span className="text-caption text-text-secondary whitespace-nowrap">
                     已繳 {stats.submitted}/{stats.total}
                   </span>
+                  <FeaturedCount count={stats.featured} />
                   {stats.pending > 0 && (
                     <span className="text-caption text-warning-700 bg-warning-100 border border-warning-200 px-2 py-0.5 rounded whitespace-nowrap">
                       待批改 {stats.pending}

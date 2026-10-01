@@ -38,6 +38,18 @@
 請有權限的人看日誌（找 out of memory／server process was terminated），
 並考慮把測試庫搬到另一台。在那之前，上課時段不要對這台跑後端整套測試。
 
+### 0.26 數位作品集資料介面：向 1Campus 確認兩件事
+
+`/service/portfolio/v1/*`（`docs/portfolio-api.md`）用**使用者自己的 1Campus token** 驗證。要問 1Campus 窗口：
+
+1. 數位作品集是另一個 OAuth client，它的使用者的 access token，本系統拿去問
+   `services/me.php` 能不能過？（測試用假 IdP 模擬，正式環境沒驗過）
+2. 家長身分與子女綁定要從哪裡拿（哪一支 API、哪個 scope、回傳格式）？
+   拿到之後實作 `apps/api/src/lib/parent_links.ts`，家長端點才會從 501 變成可用
+
+另外：Cloud Run 的服務帳號要能讀 bucket `writing-classroom`（照片轉送），
+並設定 `PORTFOLIO_ALLOWED_ORIGINS`。
+
 ### 0.25 部署兩個資料外洩的修補
 
 分支 `feat/portfolio-teacher-tools` 裡的安全修補（詳見 `artifacts/handoff.md` 第 ⑤ 項）：

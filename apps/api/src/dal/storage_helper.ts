@@ -59,6 +59,42 @@ class StorageHelper {
             throw new Error('Image upload failed');
         }
     }
+
+    /**
+     * 讀一張圖（數位作品集的原稿轉送用，routes/portfolio.ts）。
+     *
+     * 用這個服務自己的 GCS 權限讀，不靠 bucket 公開 —— 之後 bucket 改成不公開，
+     * 轉送照樣能用，而作品集那邊從頭到尾拿不到原始網址。
+     *
+     * 找不到檔案回傳 null。路徑只接受 bucket 裡的相對路徑（不能有 `..`、不能以 / 開頭），
+     * 雖然路徑來自資料庫，還是擋一下。
+     *
+     * 測試與本機（STORAGE_FAKE=1）：不打 GCS，回一張 1×1 的 PNG。
+     */
+    public static async openImage(path: string): Promise<{ body: NodeJS.ReadableStream | Buffer; contentType: string } | null> {
+        if (!path || path.startsWith('/') || path.split('/').includes('..')) return null;
+        const ext = (path.split('.').pop() ?? '').toLowerCase();
+        const contentType =
+            ext === 'png' ? 'image/png'
+            : ext === 'webp' ? 'image/webp'
+            : ext === 'gif' ? 'image/gif'
+            : 'image/jpeg';
+
+        if (isStorageFake()) {
+            return { body: FAKE_PNG, contentType: 'image/png' };
+        }
+
+        const file = this.storage.bucket(this.bucketName).file(path);
+        const [exists] = await file.exists();
+        if (!exists) return null;
+        return { body: file.createReadStream(), contentType };
+    }
 }
+
+/** STORAGE_FAKE 時回傳的 1×1 透明 PNG */
+const FAKE_PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+    'base64',
+);
 
 export default StorageHelper;

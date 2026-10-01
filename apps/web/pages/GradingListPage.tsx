@@ -961,6 +961,7 @@ export const GradingListPage: React.FC = () => {
           onBack={goBack}
           featuredRule={myFeaturedRule}
           onFeaturedRuleChange={(rule) => void handleSaveMyFeaturedRule(rule)}
+          marks={submissionMarks}
         />
       );
 };

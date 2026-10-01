@@ -12,7 +12,7 @@ export const CourseDetailPage: React.FC = () => {
   const { courseId } = useParams();
   const {
     myCourses, assignments, submissions, questions,
-    handleAssignmentOperation, setSwappingAssignment, handleSetShowcaseScore,
+    handleAssignmentOperation, setSwappingAssignment, handleSetShowcaseScore, submissionMarks,
   } = useAppState();
 
   /**
@@ -37,6 +37,7 @@ export const CourseDetailPage: React.FC = () => {
       onPublishNew={(cid) => navigate(routes.newAssignment(cid))}
       onRequestSwapQuestion={(assignment) => setSwappingAssignment(assignment)}
       onSetShowcaseScore={(show) => void handleSetShowcaseScore(course.id, show)}
+      marks={submissionMarks}
     />
   );
 };

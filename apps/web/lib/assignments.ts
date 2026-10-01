@@ -16,6 +16,7 @@
  */
 
 import { Assignment, Submission } from '../types';
+import { hasMark, type SubmissionMarks } from './submissionMarks';
 
 /* ══════════════════════════════════════════════════════════════
    查詢
@@ -165,11 +166,14 @@ export interface SubmissionStats {
   graded: number;
   published: number;
   missing: number;
+  /** 被蓋佳作章的篇數。沒給 marks 就是 0 */
+  featured: number;
 }
 
 export function submissionStats(
   assignment: Assignment,
   submissions: Submission[],
+  marks?: SubmissionMarks,
 ): SubmissionStats {
   const mine = submissions.filter((s) => s.assignmentId === assignment.id);
   const count = (...statuses: Submission['status'][]) =>
@@ -187,6 +191,7 @@ export function submissionStats(
     graded,
     published,
     missing: Math.max(0, assignment.totalStudents - submitted),
+    featured: mine.filter((s) => hasMark(marks, s.id, 'featured')).length,
   };
 }
 

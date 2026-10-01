@@ -30,6 +30,8 @@ import { PageHeader, PAGE_CONTAINER } from './PageHeader';
 import { SemesterSelect } from './SemesterSelect';
 import { FeaturedRuleCard } from './FeaturedRuleCard';
 import type { MyFeaturedRule } from '../lib/featuredRule';
+import type { SubmissionMarks } from '../lib/submissionMarks';
+import { FeaturedCount } from './FeaturedCount';
 
 interface GradingHubProps {
   /** 這位使用者看得到的班級（已依身分過濾，見 lib/access.ts） */
@@ -48,6 +50,8 @@ interface GradingHubProps {
   /** 自己的自動蓋佳作標準 */
   featuredRule: MyFeaturedRule;
   onFeaturedRuleChange: (rule: MyFeaturedRule) => void;
+  /** 佳作章（AppState 一次載入全部）。作業列上顯示「佳作 N」 */
+  marks?: SubmissionMarks;
 }
 
 type PhaseFilter = 'all' | Exclude<AssignmentPhase, 'draft'>;
@@ -94,6 +98,7 @@ export const GradingHub: React.FC<GradingHubProps> = ({
   onBack,
   featuredRule,
   onFeaturedRuleChange,
+  marks,
 }) => {
   const [query, setQuery] = useState('');
   const [city, setCity] = useState('all');
@@ -114,7 +119,7 @@ export const GradingHub: React.FC<GradingHubProps> = ({
   const perCourse = useMemo(() => {
     const map = new Map<
       string,
-      { no: Record<string, number>; list: { a: Assignment; pending: number; submitted: number; total: number }[] }
+      { no: Record<string, number>; list: { a: Assignment; pending: number; submitted: number; total: number; featured: number }[] }
     >();
     semesterCourses.forEach((c) => {
       const full = orderedAssignments(assignments, c.id);
@@ -122,13 +127,13 @@ export const GradingHub: React.FC<GradingHubProps> = ({
       const list = full
         .filter((a) => assignmentPhase(a) !== 'draft')
         .map((a) => {
-          const st = submissionStats(a, submissions);
-          return { a, pending: st.pending, submitted: st.submitted, total: st.total };
+          const st = submissionStats(a, submissions, marks);
+          return { a, pending: st.pending, submitted: st.submitted, total: st.total, featured: st.featured };
         });
       map.set(c.id, { no, list });
     });
     return map;
-  }, [semesterCourses, assignments, submissions]);
+  }, [semesterCourses, assignments, submissions, marks]);
 
   const pendingOf = (courseId: string): number =>
     (perCourse.get(courseId)?.list ?? []).reduce((n, x) => n + x.pending, 0);
@@ -435,7 +440,7 @@ export const GradingHub: React.FC<GradingHubProps> = ({
                                     {all.length === 0 ? '這個班還沒有開放的作業' : '這個篩選下沒有作業'}
                                   </li>
                                 ) : (
-                                  rows.map(({ a, pending: p, submitted, total }) => (
+                                  rows.map(({ a, pending: p, submitted, total, featured }) => (
                                     <li key={a.id}>
                                       <button
                                         id={`grading-hub-assignment-${a.id}`}
@@ -450,6 +455,7 @@ export const GradingHub: React.FC<GradingHubProps> = ({
                                         <span className="text-caption text-text-secondary tabular-nums whitespace-nowrap">
                                           已繳 {submitted}/{total}
                                         </span>
+                                        <FeaturedCount count={featured} />
                                         {p > 0 && pendingPill(p)}
                                         <ChevronRight size={14} className="shrink-0 text-text-muted" />
                                       </button>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { ArrowLeft, Bot, Users, Hash, Eye, EyeOff } from 'lucide-react';
 import { Assignment, Course, Question, Submission } from '../types';
+import type { SubmissionMarks } from '../lib/submissionMarks';
 import { CourseAssignmentList } from './CourseAssignmentList';
 import { semesterLabel } from '../lib/semester';
 import { SHOW_AI_MODEL_PICKER } from '../lib/features';
@@ -22,6 +23,8 @@ interface CourseDetailProps {
   onRequestSwapQuestion: (assignment: Assignment) => void;
   /** 數位作品集的佳作觀摩是否顯示這一班的級分 */
   onSetShowcaseScore: (showScore: boolean) => void;
+  /** 佳作章，傳給作業清單顯示「佳作 N」 */
+  marks?: SubmissionMarks;
 }
 
 /**
@@ -44,6 +47,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
   onPublishNew,
   onRequestSwapQuestion,
   onSetShowcaseScore,
+  marks,
 }) => {
   const models = course.aiModels || [];
   const showScore = course.showcaseShowScore === true;
@@ -135,6 +139,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
         onSelectAssignment={onSelectAssignment}
         onPublishNew={() => onPublishNew(course.id)}
         onRequestSwapQuestion={onRequestSwapQuestion}
+        marks={marks}
       />
     </div>
   );

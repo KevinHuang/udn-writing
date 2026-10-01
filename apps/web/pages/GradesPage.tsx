@@ -11,7 +11,7 @@ export const GradesPage: React.FC = () => {
   const [params] = useSearchParams();
   const {
     myCourses, assignments, submissions, currentSemester,
-    setCurrentSemester, leaveMarks, toggleLeave, semesterOptions, todaySemester,
+    setCurrentSemester, leaveMarks, toggleLeave, semesterOptions, todaySemester, submissionMarks,
   } = useAppState();
 
   return (
@@ -27,6 +27,7 @@ export const GradesPage: React.FC = () => {
       // 重新整理之後還在，也可以把這個網址貼給別人。
       initialCourseId={params.get(queryKeys.course) ?? undefined}
       leaveMarks={leaveMarks}
+      marks={submissionMarks}
       onSetLeave={(assignmentId, studentId, onLeave) =>
         void toggleLeave(assignmentId, studentId, onLeave)
       }

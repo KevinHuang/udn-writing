@@ -96,6 +96,15 @@ class CourseHelper {
         return (await db.default.manyOrNone(sql)) || [];
     }
 
+    /** 這個班在不在目前身分的範圍內。只給「要回 404 還是空陣列」這種判斷用 */
+    public static async isInScope(courseId: string, scope: CourseScope): Promise<boolean> {
+        const row = await db.default.oneOrNone(
+            `SELECT 1 FROM public.course WHERE id = $1 AND id IN ${courseScopeSubquery(scope)}`,
+            [courseId],
+        );
+        return row !== null;
+    }
+
     /**
      * 同步名單需要的最小資料：班級代碼與學校的 dsns。
      *

@@ -1125,14 +1125,21 @@ router.get('/courses/:id/assignments', async (ctx) => {
 
 router.get('/courses/:course_id/tasks/:task_ids/scores', async (ctx) => {
     try {
-        const userId = ctx.session.userInfo.id;
         const { course_id, task_ids } = ctx.params;
         const tasksIdsArray = task_ids.split(',');
-        console.log({ course_id, tasksIdsArray });
-        const scores = await SubmissionFeedbackHelper.getScoresByCourseIdTaskId(course_id, tasksIdsArray)
-        // console.log({ scores })
-        // const assignments = await AssignmentHelper.getAssignmentsByCourseId(userId, id);
-        ctx.body = scores;
+        /*
+          ⚠️ 以前這裡沒有任何檢查：task_ids 直接拼進 SQL（注入點），
+             而且不管這個班是不是你的都照查。現在：
+             - 班級與題目編號都必須是數字，否則 400
+             - 範圍外的班 → 404（與其他教師端 API 一致，不區分「沒這個班」與「不是你的」）
+        */
+        const isId = (v: string) => /^\d+$/.test(v);
+        if (!isId(course_id) || tasksIdsArray.length === 0 || !tasksIdsArray.every(isId)) {
+            ctx.status = 400; ctx.body = { error: 'Invalid course_id or task_ids' }; return;
+        }
+        const scope = await courseScopeOf(ctx);
+        if (!(await CourseHelper.isInScope(course_id, scope))) { ctx.status = 404; ctx.body = { error: 'Course not found or unauthorized' }; return; }
+        ctx.body = await SubmissionFeedbackHelper.getScoresByCourseIdTaskId(course_id, tasksIdsArray, scope);
     } catch (error) {
         console.error('Error fetching assignments:', error);
         ctx.status = 500;

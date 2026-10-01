@@ -27,6 +27,7 @@ import { MAX_LEVEL, MIN_LEVEL, levelStyle, toLevel, CRITERIA_SHORT_LABELS } from
 import { SHOW_CATEGORY_SCORES } from '../lib/features';
 import { semesterLabel } from '../lib/semester';
 import { seatText } from '../lib/gradingQueue';
+import { studentHistory as studentHistoryOf } from '../lib/studentHistory';
 import { isOnLeave, type LeaveMarks } from '../lib/leave';
 import { isOverdue as isAssignmentOverdue } from '../lib/assignments';
 import { orderedAssignments, orderNumbers } from '../lib/assignmentOrder';
@@ -74,12 +75,8 @@ const StudentHistoryModal: React.FC<StudentHistoryModalProps> = ({
 
     if (!isOpen || !student) return null;
 
-    // Filter relevant submissions for this student (Graded or Published only)
-    const studentHistory = submissions
-        .filter(s => 
-            s.studentName === student.name && 
-            (s.status === 'Graded' || s.status === 'Published')
-        )
+    // 用 studentId 比對，不要用姓名（同班有同名學生，見 lib/studentHistory.ts）
+    const studentHistory = studentHistoryOf(submissions, student.studentId)
         .map(s => {
             const assignment = assignments.find(a => a.id === s.assignmentId);
             return {
@@ -87,8 +84,7 @@ const StudentHistoryModal: React.FC<StudentHistoryModalProps> = ({
                 assignmentTitle: assignment?.title || '未知作業',
                 maxScore: MAX_LEVEL
             };
-        })
-        .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()); // Newest first
+        });
 
     // Detailed view data
     const selectedDetail = selectedSubmissionId 

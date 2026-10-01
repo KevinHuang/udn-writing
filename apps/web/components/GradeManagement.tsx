@@ -1022,7 +1022,9 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                                 const studentId = student.studentId;
                                                 const onLeave = isOnLeave(leaveMarks, a.id, studentId);
 
-                                                if (!sub || sub.status === 'Unsubmitted') {
+                                                // 草稿還沒交出來，和未繳交一樣看待（以前落到「已批改」那一支，以 0 級分算進平均；CSV 本來就這樣判斷）
+                                                const missing = !sub || sub.status === 'Unsubmitted' || sub.status === 'Draft';
+                                                if (missing) {
                                                     if (isOverdue || onLeave) {
                                                         /*
                                                           逾期沒交有兩種：真的沒寫，和請假。
@@ -1069,7 +1071,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                                                 }
  
                                                 return (
-                                                    <td key={a.id} className={`py-3 sm:py-4 px-1.5 sm:px-2 text-center border-border/10 w-20 sm:w-24 min-w-[5rem] sm:min-w-[6rem] max-w-[5rem] sm:max-w-[6rem] transition-colors ${isOverdue && !onLeave && (!sub || sub.status === 'Unsubmitted') ? 'bg-danger-50/30' : ''}`}>
+                                                    <td key={a.id} className={`py-3 sm:py-4 px-1.5 sm:px-2 text-center border-border/10 w-20 sm:w-24 min-w-[5rem] sm:min-w-[6rem] max-w-[5rem] sm:max-w-[6rem] transition-colors ${isOverdue && !onLeave && missing ? 'bg-danger-50/30' : ''}`}>
                                                         {content}
                                                     </td>
                                                 );

@@ -1,5 +1,6 @@
 import { api } from './client';
 import { feedbackTextOf } from '../lib/feedbackText';
+import { picFilesOf } from './submissions';
 import { semesterValue } from '../lib/semester';
 import { questionImageUrl } from './questions';
 import {
@@ -55,6 +56,12 @@ interface RawStudentAssignment {
   feedback_content: string | null;
   is_returned: boolean | null;
   is_ai: boolean | null;
+  /** 學生自己的原稿（jsonb）。舊版後端沒有這一欄 */
+  pic_files?: unknown;
+  /** 發還之後才可能是 true；預選永遠不會出現在這裡 */
+  is_featured?: boolean | null;
+  /** 願不願意公開在同校觀摩。null ＝ 還沒決定 */
+  publish_consent?: boolean | null;
 }
 
 export interface StudentData {
@@ -147,6 +154,9 @@ export async function fetchStudentData(
       studentId,
       studentName,
       content: r.submission_content ?? '',
+      picFiles: picFilesOf(r.pic_files),
+      isFeatured: r.is_featured === true,
+      publishConsent: r.publish_consent ?? null,
       submittedAt: r.submited_time ?? '',
       status: submissionStatusOf({
         submissionId: r.submission_id,
@@ -180,4 +190,14 @@ export async function fetchStudentData(
     assignments,
     submissions,
   };
+}
+
+/**
+ * 學生表示這篇佳作願不願意公開在數位作品集的同校觀摩。
+ *
+ * 只有**已發還、而且被選為佳作**的作品可以設定（後端擋）。
+ * 家長的同意在數位作品集那邊，不在這裡 —— 兩個都同意才會真的公開。
+ */
+export async function setPublishConsent(submissionId: string, willing: boolean): Promise<void> {
+  await api.put(`/service/student/submissions/${submissionId}/publish-consent`, { willing });
 }

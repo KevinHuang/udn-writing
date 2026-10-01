@@ -8,7 +8,10 @@ import { queryKeys } from "../../lib/routes";
 export const StudentDashboardPage: React.FC = () => {
   const { goBack, canGoBack } = useGoBack();
   const [params] = useSearchParams();
-  const { studentName, assignments, submissions, questions, courses, todaySemester, semesterOptions } = useAppState();
+  const {
+    studentName, assignments, submissions, questions, courses, todaySemester, semesterOptions,
+    currentSemester, setCurrentSemester, handleSetPublishConsent,
+  } = useAppState();
   // 學期從網址讀（與成績紀錄同一個參數），重新整理不會跳回目前學期
   return (
     <StudentDashboard
@@ -20,7 +23,10 @@ export const StudentDashboardPage: React.FC = () => {
       onBack={goBack}
       canGoBack={canGoBack}
       currentSemester={todaySemester}
-      semester={params.get(queryKeys.semesterFilter) ?? undefined}
+      // 網址優先；沒帶就用學生在任何一頁選過的學期（我的作業、成績紀錄共用這一個）
+      semester={params.get(queryKeys.semesterFilter) ?? currentSemester}
+      onSemesterChange={setCurrentSemester}
+      onSetConsent={handleSetPublishConsent}
       semesterOptions={semesterOptions}
     />
   );

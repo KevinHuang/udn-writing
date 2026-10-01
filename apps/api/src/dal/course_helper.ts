@@ -41,10 +41,13 @@ class CourseHelper {
 
             SELECT
                 tc.*,
-                COALESCE(sc.stud_count, 0) AS stud_count
+                COALESCE(sc.stud_count, 0) AS stud_count,
+                -- 沒有設定過＝不顯示級分（見 docs/migrations/008）
+                COALESCE(cs.show_score, false) AS showcase_show_score
             FROM
                 target_courses AS tc
                 LEFT OUTER JOIN stud_count AS sc ON sc.ref_course_id = tc.id
+                LEFT OUTER JOIN course_showcase AS cs ON cs.ref_course_id = tc.id
             order by
                 tc.school_year DESC,
                 tc.semester DESC,
@@ -86,10 +89,12 @@ class CourseHelper {
             )
             SELECT
                 tc.*,
-                COALESCE(sc.stud_count, 0) AS stud_count
+                COALESCE(sc.stud_count, 0) AS stud_count,
+                COALESCE(cs.show_score, false) AS showcase_show_score
             FROM
                 target_courses AS tc
                 LEFT OUTER JOIN stud_count AS sc ON sc.ref_course_id = tc.id
+                LEFT OUTER JOIN course_showcase AS cs ON cs.ref_course_id = tc.id
             ORDER BY
                 tc.school_year DESC, tc.semester DESC, tc.org_id ASC
         `;
@@ -203,6 +208,27 @@ class CourseHelper {
             data.is_active ?? null,
         ]);
         return result;
+    }
+
+    /**
+     * 班級給數位作品集用的展示設定（目前只有「是否顯示級分」）。
+     *
+     * 範圍條件寫在 SQL 裡：範圍外的班 INSERT 選不到任何一列，回傳 null，
+     * 呼叫端回 404 —— 不要先查課程再檢查權限（見 CLAUDE.md 的慣例）。
+     */
+    public static async setShowcase(courseId: string, showScore: boolean, userId: string, scope: CourseScope) {
+        return await db.default.oneOrNone<{ ref_course_id: string; show_score: boolean }>(
+            `INSERT INTO course_showcase (ref_course_id, show_score, ref_user_id, updated_at)
+             SELECT c.id, $2, $3, now()
+               FROM public.course c
+              WHERE c.id = $1 AND c.id IN ${courseScopeSubquery(scope)}
+             ON CONFLICT (ref_course_id) DO UPDATE
+                SET show_score  = EXCLUDED.show_score,
+                    ref_user_id = EXCLUDED.ref_user_id,
+                    updated_at  = now()
+             RETURNING ref_course_id::text, show_score`,
+            [courseId, showScore, userId],
+        );
     }
 
     /** 刪除課程（限範圍內的課程，並一起刪除 uc_instructor 關聯） */

@@ -54,7 +54,7 @@ interface RawDetailRow extends RawSubmissionBase {
  * 那一欄是 jsonb，pg 多半直接給陣列；舊資料裡也有存成 JSON 字串的，
  * 兩種都要吃。認不得就當作沒有原稿，不要讓畫面掛掉。
  */
-function picFilesOf(raw: unknown): string[] {
+export function picFilesOf(raw: unknown): string[] {
   if (!raw) return [];
   let arr: unknown = raw;
   if (typeof raw === 'string') {

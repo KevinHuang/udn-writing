@@ -2,7 +2,9 @@
  * 作品標記 —— 老師蓋在作文上的印章。
  *
  * 目前有兩種：**佳作**與**預選**。老師在批改時把值得留下來的作品挑出來，
- * **取用的地方還沒決定** —— 可能做在這個系統裡的展示頁，也可能匯出到別處
+ * 取用的地方（2026-10-01 起）：老師的「製作成果集」、批改清單的「依級分蓋佳作」與
+ * 自動蓋佳作、學生的「我的作品集」（只有佳作、而且發還後才看得到）。
+ * 原本寫的是：**取用的地方還沒決定** —— 可能做在這個系統裡的展示頁，也可能匯出到別處
  * （選文、比賽送件都有可能），所以這一層只負責
  * 「記住哪些作品被蓋了什麼章、什麼時候蓋的」。
  *
@@ -60,6 +62,33 @@ export type SubmissionMarks = Record<string, Partial<Record<MarkKind, Mark>>>;
  */
 export function canMark(status: SubmissionStatus): boolean {
   return status === 'Graded' || status === 'Published';
+}
+
+/** 「依級分蓋佳作」預設的門檻。沿用數位作品集原型的預設值 */
+export const FEATURED_DEFAULT_LEVEL = 5;
+
+/**
+ * 「依級分蓋佳作」的候選：達到門檻、現在能蓋章、而且還沒蓋過佳作的作品。
+ *
+ * 門檻只是**幫老師勾選**，不是自動評選 —— 所以這裡只挑「要新蓋的」，
+ * 永遠不回傳「該取消的」。低於門檻但老師自己蓋了佳作的，是老師的判斷，
+ * 系統不能替他拿掉（數位作品集原型為了這件事多了一個 isManualOverride
+ * 欄位；只蓋不取消，就不需要那個欄位）。
+ *
+ * 能不能蓋照樣問 canMark()，不要在這裡另外比對 status。
+ */
+export function featuredCandidates(
+  submissions: Submission[],
+  marks: SubmissionMarks | undefined,
+  minLevel: number,
+): Submission[] {
+  return submissions.filter(
+    (s) =>
+      canMark(s.status) &&
+      s.result !== undefined &&
+      s.result.totalScore >= minLevel &&
+      !hasMark(marks, s.id, 'featured'),
+  );
 }
 
 export function hasMark(

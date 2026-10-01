@@ -40,6 +40,7 @@ describe("教師端路由", () => {
     ["/grading", "批改作業"],
     ["/grades", "成績"],
     ["/concern", "關心"],
+    ["/anthology", "成果集"],
   ];
   for (const [url, expect] of cases) {
     test(`${url} 渲染得出「${expect}」`, () => {

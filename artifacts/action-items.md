@@ -3,7 +3,7 @@
 程式改好不等於事情做完。這一份列的是 **Claude Code 做不到、需要你去操作**的項目。
 技術規格在 `artifacts/spec.md`，這裡只放待辦。
 
-最後更新：2026-09-30（目前做到哪看 `artifacts/handoff.md`）
+最後更新：2026-10-01（目前做到哪看 `artifacts/handoff.md`）
 
 ---
 
@@ -26,6 +26,37 @@
 `apps/api/src/auth/dev_login.ts` 在 `2a5efc5` 被一起 commit 進去了。
 沒有 `DEV_LOGIN_TOKEN` 或 `NODE_ENV=production` 時不會生效，但不該留在正式版。
 要移除的位置與注意事項見 `artifacts/handoff.md` 第 3 項。
+
+### 0.2x 查資料庫伺服器在 10/1 早上反覆當機恢復的原因
+
+台灣時間 2026-10-01 約 07:50～08:00，對 `writing_classroom_autotest` 跑測試時，
+連續出現 `Connection terminated unexpectedly` 與 `the database system is in recovery mode`。
+伺服器啟動時間仍是 2026-06-27（不是整台重開，是 PostgreSQL 的當機恢復）。
+沒有 Cloud SQL 日誌權限，原因不明；猜測是記憶體不足（上課時段的正式流量＋測試連線）。
+
+**如果正式庫 `writing_classroom` 在同一台，那幾分鐘正式環境也會斷線。**
+請有權限的人看日誌（找 out of memory／server process was terminated），
+並考慮把測試庫搬到另一台。在那之前，上課時段不要對這台跑後端整套測試。
+
+### 0.25 部署兩個資料外洩的修補
+
+分支 `feat/portfolio-teacher-tools` 裡的安全修補（詳見 `artifacts/handoff.md` 第 ⑤ 項）：
+成績查詢端點的 SQL 注入與範圍檢查、學生端提前拿到未發還的分數。**不需要 migration**，
+可以單獨挑出那個 commit 先上線，不必等作品集的教師功能。
+
+### 0.3 部署作品集教師功能之前：正式庫要先有 001 與 008
+
+分支 `feat/portfolio-teacher-tools`（依級分蓋佳作、作品集展示設定、製作成果集）用到兩份 migration：
+
+- `docs/migrations/001-prototype-gaps.sql` —— 佳作／預選章的 `submission_mark` 表。**正式庫還沒有套過**。
+- `docs/migrations/008-course-showcase.sql` —— 班級的「作品集是否顯示級分」。開發與測試庫已套用。
+- `docs/migrations/009-featured-rules.sql` —— 自動蓋佳作的標準與「已判斷過」紀錄。開發與測試庫已套用。
+- `docs/migrations/010-publish-consent.sql` —— 學生對佳作的公開意願。開發與測試庫已套用。
+  沒套的話學生的作業清單（`my_assignments`）會查不到這張表 —— **學生端整個載不出來**，一定要先套。
+  沒套的話批改照樣存得進去（自動蓋章失敗只記 log），但入口頁的設定存不了。
+
+**先套 migration、再部署程式。** 008 沒套的話，新程式的課程清單會查不到 `course_showcase`，
+整個課程清單載不出來。008 可以用 `writing_mng` 執行（是新表，不必是 postgres）；001 需要 postgres 身分。
 
 ### 1. 把 admin 驗證的修補部署上去
 

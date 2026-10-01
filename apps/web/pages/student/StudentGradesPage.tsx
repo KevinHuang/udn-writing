@@ -8,7 +8,10 @@ import { queryKeys } from "../../lib/routes";
 export const StudentGradesPage: React.FC = () => {
   const { goBack, canGoBack } = useGoBack();
   const [params] = useSearchParams();
-  const { submissions, assignments, courses, questions, todaySemester, semesterOptions } = useAppState();
+  const {
+    submissions, assignments, courses, questions, todaySemester, semesterOptions,
+    currentSemester, setCurrentSemester,
+  } = useAppState();
 
   /**
    * 學期與要展開哪一筆，都從網址讀。
@@ -27,6 +30,8 @@ export const StudentGradesPage: React.FC = () => {
       selectedSubmissionId={params.get(queryKeys.focus) ?? undefined}
       semester={params.get(queryKeys.semesterFilter) ?? undefined}
       currentSemester={todaySemester}
+      selectedSemester={currentSemester}
+      onSemesterChange={setCurrentSemester}
       semesterOptions={semesterOptions}
     />
   );

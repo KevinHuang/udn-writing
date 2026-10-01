@@ -165,3 +165,98 @@ describe('學生端：發還之前拿不到分數與評語', () => {
     assert.ok(body.includes('老師還沒確認的評語'));
   });
 });
+
+describe('學生的「我的作品集」：原稿、佳作標記、公開意願', () => {
+  async function asStudent() {
+    const me = await seedUser(ACCOUNT, '我');
+    const teacher = await seedUser('t@test.edu.tw', '老師');
+    const school = await seedSchool();
+    const course = await seedCourse(school, '我的班');
+    await seedInstructor(course, teacher.id);
+    await seedLearner(course, me.id, 1);
+    const task = await seedTask(teacher.id);
+    const assignment = await seedAssignment(course, task, teacher.id);
+    const submission = await seedSubmission(assignment, me.id);
+    return { me, teacher, course, task, assignment, submission, cookie: await login(srv) };
+  }
+
+  const mark = (submissionId: string, kind: 'featured' | 'preselect') =>
+    rawDb.none(`INSERT INTO submission_mark (ref_submission_id, kind) VALUES ($1, $2)`, [submissionId, kind]);
+
+  const myRow = async (cookie: string, assignmentId: string) => {
+    const rows = await (await req(srv, '/service/student/my_assignments', cookie)).json();
+    return rows.find((r: { assignment_id: string }) => String(r.assignment_id) === String(assignmentId));
+  };
+
+  const putConsent = (cookie: string, submissionId: string, body: unknown) =>
+    req(srv, `/service/student/submissions/${submissionId}/publish-consent`, cookie, {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+
+  test('帶出學生自己的原稿路徑', async () => {
+    const s = await asStudent();
+    await rawDb.none(`UPDATE submission SET pic_files = $2::jsonb WHERE id = $1`,
+      [s.submission, JSON.stringify(['submit/assign_1/a.jpg'])]);
+    const row = await myRow(s.cookie, s.assignment);
+    assert.deepEqual(row.pic_files, ['submit/assign_1/a.jpg']);
+  });
+
+  test('佳作：還沒發還是 false，發還之後才是 true', async () => {
+    const s = await asStudent();
+    await mark(s.submission, 'featured');
+    await addFeedback(s.submission, s.teacher.id, 6, false);
+    assert.equal((await myRow(s.cookie, s.assignment)).is_featured, false);
+    await rawDb.none(`UPDATE submission_feedback SET is_returned = true WHERE ref_submission_id = $1`, [s.submission]);
+    assert.equal((await myRow(s.cookie, s.assignment)).is_featured, true);
+  });
+
+  test('只蓋了預選：發還之後也是 false —— 預選學生看不到', async () => {
+    const s = await asStudent();
+    await mark(s.submission, 'preselect');
+    await addFeedback(s.submission, s.teacher.id, 6, true);
+    assert.equal((await myRow(s.cookie, s.assignment)).is_featured, false);
+  });
+
+  test('公開意願：沒設定過是 null；已發還的佳作可以設，讀得回來', async () => {
+    const s = await asStudent();
+    await mark(s.submission, 'featured');
+    await addFeedback(s.submission, s.teacher.id, 6, true);
+    assert.equal((await myRow(s.cookie, s.assignment)).publish_consent, null);
+
+    assert.equal((await putConsent(s.cookie, s.submission, { willing: true })).status, 200);
+    assert.equal((await myRow(s.cookie, s.assignment)).publish_consent, true);
+    assert.equal((await putConsent(s.cookie, s.submission, { willing: false })).status, 200);
+    assert.equal((await myRow(s.cookie, s.assignment)).publish_consent, false);
+  });
+
+  test('公開意願：還沒發還、或不是佳作 → 404，不寫入', async () => {
+    const s = await asStudent();
+    await addFeedback(s.submission, s.teacher.id, 6, true);
+    assert.equal((await putConsent(s.cookie, s.submission, { willing: true })).status, 404, '不是佳作');
+
+    await mark(s.submission, 'featured');
+    await rawDb.none(`UPDATE submission_feedback SET is_returned = false WHERE ref_submission_id = $1`, [s.submission]);
+    assert.equal((await putConsent(s.cookie, s.submission, { willing: true })).status, 404, '還沒發還');
+
+    const { n } = await rawDb.one(`SELECT count(*)::int AS n FROM submission_publish_consent`);
+    assert.equal(n, 0);
+  });
+
+  test('公開意願：不能替別人設定', async () => {
+    const s = await asStudent();
+    const other = await seedUser('s9@test.edu.tw', '別的學生');
+    await seedLearner(s.course, other.id, 2);
+    const otherAssignment = await seedAssignment(s.course, s.task, s.teacher.id);
+    const theirs = await seedSubmission(otherAssignment, other.id);
+    await mark(theirs, 'featured');
+    await addFeedback(theirs, s.teacher.id, 6, true);
+    assert.equal((await putConsent(s.cookie, theirs, { willing: true })).status, 404);
+  });
+
+  test('公開意願：格式不對 → 400', async () => {
+    const s = await asStudent();
+    for (const body of [{}, { willing: 'yes' }, { willing: 1 }]) {
+      assert.equal((await putConsent(s.cookie, s.submission, body)).status, 400, JSON.stringify(body));
+    }
+  });
+});

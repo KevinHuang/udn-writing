@@ -13,6 +13,7 @@ import {
   Save,
   FileText,
   Calendar,
+  Stamp,
 } from 'lucide-react';
 import { Assignment, Submission, Question, Course } from '../types';
 import {
@@ -22,6 +23,9 @@ import {
   canStudentSubmit,
 } from '../lib/assignments';
 import { SemesterSelect } from './SemesterSelect';
+import { FeaturedBadge, FeaturedConsent } from './FeaturedConsent';
+import { undecidedFeatured } from '../lib/featuredConsent';
+import { semesterLabel } from '../lib/semester';
 
 interface StudentDashboardProps {
   studentName: string;
@@ -36,6 +40,10 @@ interface StudentDashboardProps {
   semester?: string;
   /** 學期下拉的選項（後端 semesters 表） */
   semesterOptions: { value: string; label: string }[];
+  /** 換學期。學生端各頁共用同一個選擇（AppState 的 currentSemester） */
+  onSemesterChange?: (semester: string) => void;
+  /** 佳作的公開意願。回傳有沒有存成功 */
+  onSetConsent?: (submissionId: string, willing: boolean) => Promise<boolean>;
 }
 
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({
@@ -48,6 +56,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   currentSemester,
   semester,
   semesterOptions,
+  onSemesterChange,
+  onSetConsent,
 }) => {
   const navigate = useNavigate();
   /*
@@ -135,6 +145,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     })
     .slice(0, 2);
 
+  /*
+    還沒決定要不要公開的佳作（所有學期）。「近期發還」只列最新兩篇，
+    早一點發還的佳作會被擠掉 —— 所以另外提醒，全部決定完就消失。
+  */
+  const undecided = undecidedFeatured(submissions, assignments, courses);
+
   const getGreeting = () => {
     const hour = new Date().getHours();
     if (hour >= 5 && hour < 12) return "早安";
@@ -169,13 +185,45 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           value={pickedSemester}
           options={semesterOptions}
           current={currentSemester}
-          onChange={(s) => navigate(
-            routes.studentDashboard({ semester: s === currentSemester ? undefined : s }),
-            { replace: true },
-          )}
+          onChange={(s) => {
+            onSemesterChange?.(s);
+            navigate(
+              routes.studentDashboard({ semester: s === currentSemester ? undefined : s }),
+              { replace: true },
+            );
+          }}
           className="self-stretch md:self-end"
         />
       </div>
+
+      {/* 佳作還沒決定要不要公開。朱砂描邊，與佳作章同一個顏色 */}
+      {undecided.count > 0 && (
+        <div
+          id="studentdashboard-featured-reminder"
+          className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-brand border border-secondary/40 bg-secondary/5 px-4 py-3"
+        >
+          <p className="flex items-start gap-2 text-body text-text-primary">
+            <Stamp size={18} className="text-secondary shrink-0 mt-0.5" />
+            <span>
+              你有 <b className="text-secondary">{undecided.count}</b> 篇佳作還沒決定要不要公開在同校觀摩
+              {undecided.firstSemester && (
+                <span className="text-caption text-text-muted ml-1">（最早一篇在 {semesterLabel(undecided.firstSemester)}）</span>
+              )}
+            </span>
+          </p>
+          <button
+            id="studentdashboard-btn-featured-reminder"
+            type="button"
+            onClick={() => {
+              if (undecided.firstSemester) onSemesterChange?.(undecided.firstSemester);
+              navigate(routes.studentAssignments({ semester: undecided.firstSemester, tab: 'returned' }));
+            }}
+            className="shrink-0 flex items-center justify-center gap-1 px-4 py-2 rounded-xl text-ui font-bold bg-secondary text-on-accent hover:bg-secondary/90 shadow-sm shadow-secondary/20 transition-all active:scale-95"
+          >
+            前往決定 <ChevronRight size={16} />
+          </button>
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-3 gap-2 sm:gap-6">
@@ -258,7 +306,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
             <button 
               id="studentdashboard-btn-viewall-assignments"
-              onClick={() => navigate(routes.studentAssignments())}
+              onClick={() => navigate(routes.studentAssignments({ semester: isCurrentSemester ? undefined : pickedSemester }))}
               className="tap-target text-body text-text-primary opacity-70 hover:text-primary flex items-center gap-1 transition-colors"
             >
               查看全部 <ChevronRight size={14} className="sm:size-4" />
@@ -377,8 +425,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   <div key={submission.id} id={`studentdashboard-item-feedback-${submission.id}`} className="bg-card p-4 sm:p-5 rounded-brand shadow-sm border border-border hover:bg-surface/80 hover:shadow-md hover:-translate-y-1 transition-all duration-300 group">
                     <div className="flex items-center justify-between mb-2 sm:mb-3">
                       <div className="flex flex-col gap-0.5 sm:gap-1 min-w-0 pr-2">
-                        <h4 className="text-title font-serif font-bold text-text-primary truncate group-hover:text-primary transition-colors">
-                          {assignment?.title || '作業'}
+                        <h4 className="flex items-center gap-2 text-title font-serif font-bold text-text-primary group-hover:text-primary transition-colors min-w-0">
+                          <span className="truncate">{assignment?.title || '作業'}</span>
+                          {submission.isFeatured && <FeaturedBadge />}
                         </h4>
                       </div>
                       <div className="bg-primary/10 text-primary px-2 py-0.5 sm:py-1 rounded-lg text-ui font-bold border border-primary/20 shrink-0">
@@ -397,6 +446,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         ? <Markdown>{submission.result.feedback}</Markdown>
                         : '尚無評語'}
                     </div>
+                    {/* 被選為佳作：明白告訴學生，並讓他在這裡直接決定要不要公開 */}
+                    {submission.isFeatured && onSetConsent && (
+                      <div className="mb-3 sm:mb-4">
+                        <FeaturedConsent
+                          submissionId={submission.id}
+                          value={submission.publishConsent ?? null}
+                          onChange={(willing) => onSetConsent(submission.id, willing)}
+                        />
+                      </div>
+                    )}
                     <button 
                       id={`studentdashboard-btn-viewdetail-feedback-${submission.id}`}
                       onClick={() => navigate(routes.studentGrades({ focusId: submission.id }))}

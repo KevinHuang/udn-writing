@@ -13,6 +13,10 @@ import {
   Save,
 } from 'lucide-react';
 import { Assignment, Submission } from '../types';
+import { SemesterSelect } from './SemesterSelect';
+import { FeaturedBadge, FeaturedConsent } from './FeaturedConsent';
+import { semesterLabel } from '../lib/semester';
+import type { StudentAssignmentTab } from '../lib/routes';
 import {
   deadlineOf,
   NO_DEADLINE_LABEL,
@@ -34,17 +38,41 @@ interface StudentAssignmentsProps {
   courseNameOf: (assignment: Assignment) => string;
   onBack?: () => void;
   canGoBack?: boolean;
+  /** 正在看的學期。學生端各頁共用同一個選擇（見 StudentAssignmentsPage） */
+  semester: string;
+  /** 今天的學期，選單上標「本學期」 */
+  todaySemester: string;
+  semesterOptions: { value: string; label: string }[];
+  onSemesterChange: (semester: string) => void;
+  /** 一進來停在哪個分頁籤（學習概況的佳作提醒會帶「已發還」過來） */
+  initialTab?: StudentAssignmentTab;
+  /** 佳作的公開意願。回傳有沒有存成功 */
+  onSetConsent?: (submissionId: string, willing: boolean) => Promise<boolean>;
 }
+
+const TAB_FILTER: Record<StudentAssignmentTab, 'IN_PROGRESS' | 'SUBMITTED' | 'RETURNED'> = {
+  inprogress: 'IN_PROGRESS',
+  submitted: 'SUBMITTED',
+  returned: 'RETURNED',
+};
 
 export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
   assignments,
   submissions,
   courseNameOf,
   onBack,
-  canGoBack
+  canGoBack,
+  semester,
+  todaySemester,
+  semesterOptions,
+  onSemesterChange,
+  initialTab,
+  onSetConsent,
 }) => {
   const navigate = useNavigate();
-  const [filter, setFilter] = useState<'IN_PROGRESS' | 'SUBMITTED' | 'RETURNED'>('IN_PROGRESS');
+  const [filter, setFilter] = useState<'IN_PROGRESS' | 'SUBMITTED' | 'RETURNED'>(
+    initialTab ? TAB_FILTER[initialTab] : 'IN_PROGRESS',
+  );
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredAssignments = assignments
@@ -90,10 +118,21 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
             )}
             <h1 className="text-display font-serif font-bold text-text-primary tracking-tight">我的作業</h1>
           </div>
-          <p className="text-caption sm:text-text-primary font-normal opacity-80">本學期所有班級的作業</p>
+          <p className="text-caption sm:text-text-primary font-normal opacity-80">
+            {semester === todaySemester ? '本學期' : semesterLabel(semester)}所有班級的作業
+          </p>
         </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          {/* 學期：與學習概況、成績紀錄共用同一個選擇 */}
+          <SemesterSelect
+            id="studentassignments-select-semester"
+            value={semester}
+            options={semesterOptions}
+            current={todaySemester}
+            onChange={onSemesterChange}
+            className="self-stretch sm:self-center"
+          />
           <div className="relative group flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-primary opacity-60 group-focus-within:text-primary transition-colors" size={18} />
             <input
@@ -181,8 +220,9 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                     navigate(routes.studentEditor(assignment.id));
                   }
                 }}
-                className="bg-card p-4 sm:p-5 rounded-2xl sm:rounded-3xl shadow-sm border border-border-card flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-primary/30 hover:shadow-md transition-all duration-300 group cursor-pointer active:scale-[0.99]"
+                className="bg-card p-4 sm:p-5 rounded-2xl sm:rounded-3xl shadow-sm border border-border-card flex flex-col gap-4 hover:border-primary/30 hover:shadow-md transition-all duration-300 group cursor-pointer active:scale-[0.99]"
               >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-start sm:items-center gap-3 sm:gap-4">
                   <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl flex items-center justify-center shrink-0 shadow-sm ${
                     isReturned ? 'bg-success-50 text-success-600 border border-success-100/50' : 
@@ -206,6 +246,7 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                         {assignment.title}
                       </h3>
                       <div className="flex gap-1 shrink-0">
+                        {isReturned && submission.isFeatured && <FeaturedBadge />}
                         {isDraft && (
                           <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-body rounded-full border border-amber-200/50 whitespace-nowrap">
                             草稿
@@ -293,6 +334,16 @@ export const StudentAssignments: React.FC<StudentAssignmentsProps> = ({
                     )}
                   </button>
                 </div>
+                </div>
+                {/* 已發還的佳作：在這裡也能決定要不要公開（與學習概況、我的作品集同一份資料） */}
+                {isReturned && submission.isFeatured && onSetConsent && (
+                  <FeaturedConsent
+                    compact
+                    submissionId={submission.id}
+                    value={submission.publishConsent ?? null}
+                    onChange={(willing) => onSetConsent(submission.id, willing)}
+                  />
+                )}
               </div>
             );
           })

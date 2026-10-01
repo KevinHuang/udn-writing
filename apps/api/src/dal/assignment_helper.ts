@@ -87,7 +87,18 @@ class AssignmentHelper {
                     END AS has_feedback,
                     CASE WHEN fb.is_returned THEN fb.score END AS score,
                     CASE WHEN fb.is_returned THEN fb.content END AS feedback_content,
-                    fb.is_returned
+                    fb.is_returned,
+                    -- 以下三欄給學生的「我的作品集」（2026-10-01 新增，舊前端不讀）
+                    -- 原稿是學生自己交的，不必等發還
+                    sub.pic_files,
+                    -- 佳作章：**發還之後**才讓學生知道，而且只有佳作 ——
+                    -- 預選是老師內部的挑選進度，學生端看不到
+                    CASE WHEN fb.is_returned THEN EXISTS (
+                        SELECT 1 FROM public.submission_mark m
+                         WHERE m.ref_submission_id = sub.id AND m.kind = 'featured'
+                    ) ELSE false END AS is_featured,
+                    -- 學生對這篇佳作的公開意願。NULL ＝ 還沒決定（見 migrations/010）
+                    pc.willing AS publish_consent
                 FROM 
                     target_user u
                     JOIN public.uc_learner ul ON u.id = ul.ref_user_id
@@ -103,6 +114,7 @@ class AssignmentHelper {
                         FROM public.submission_feedback 
                         WHERE is_valid = true
                     ) fb ON (sub.id = fb.ref_submission_id)   
+                    LEFT JOIN public.submission_publish_consent pc ON pc.ref_submission_id = sub.id
                 WHERE
                     /*
                       **開過又改回未開放的作業也要回傳。**

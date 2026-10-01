@@ -36,8 +36,15 @@ interface StudentGradesProps {
   selectedSubmissionId?: string;
   /** 網址指定的學期（例如 115-1）。沒帶就依 selectedSubmissionId 或目前學期決定 */
   semester?: string;
-  /** 目前學期。學期下拉預設就停在這一個 */
+  /** 目前學期（今天的）。選單上標「本學期」 */
   currentSemester?: string;
+  /**
+   * 學生在別頁選過的學期（AppState 的 currentSemester，學習概況、我的作業共用）。
+   * 網址沒帶、也不是點某一份成績進來時，停在這一個。
+   */
+  selectedSemester?: string;
+  /** 換學期時通知共用的選擇 */
+  onSemesterChange?: (semester: string) => void;
   /** 學期下拉的選項（後端 semesters 表） */
   semesterOptions: { value: string; label: string }[];
 }
@@ -69,6 +76,8 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
   selectedSubmissionId,
   semester,
   currentSemester,
+  selectedSemester,
+  onSemesterChange,
   semesterOptions,
 }) => {
   const navigate = useNavigate();
@@ -113,6 +122,7 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
   const pickedSemester =
     semester
     ?? (focusedSubmission && semesterOf(focusedSubmission))
+    ?? selectedSemester
     ?? currentSemester
     ?? '';
 
@@ -484,7 +494,10 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
             value={pickedSemester}
             options={semesterOptions}
             current={currentSemester}
-            onChange={(s) => navigate(routes.studentGrades({ semester: s }), { replace: true })}
+            onChange={(s) => {
+              onSemesterChange?.(s);
+              navigate(routes.studentGrades({ semester: s }), { replace: true });
+            }}
             className="self-stretch md:self-center"
           />
         </div>

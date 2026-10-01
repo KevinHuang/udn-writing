@@ -98,8 +98,9 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
         數位作品集的展示設定。數位作品集是給學生與家長用的另一個平台，
         老師在那邊沒有角色 —— 所以要影響那邊的顯示，設定就只能放在這裡。
         放在班級頁而不是批改頁：它管的是整個班，不是某一份作業。
+        手機上只留一行（文字＋開關並排、說明收起）：很少改的設定，不要把作業清單往下推 138px。
       */}
-      <div className="mb-6 bg-card border border-border-card shadow-paper rounded-brand px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="mb-6 bg-card border border-border-card shadow-paper rounded-brand px-4 py-3 flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="text-body text-text-primary flex items-center gap-2">
             {showScore
@@ -107,7 +108,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
               : <EyeOff size={16} className="shrink-0 text-text-muted" />}
             數位作品集：佳作觀摩{showScore ? '顯示' : '不顯示'}級分
           </p>
-          <p className="text-caption text-text-muted mt-0.5">
+          <p className="hidden sm:block text-caption text-text-muted mt-0.5">
             同校學生在數位作品集觀摩這一班的佳作時，是否看得到每篇的級分。預設不顯示。
           </p>
         </div>
@@ -118,7 +119,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
           aria-checked={showScore}
           aria-label="數位作品集的佳作觀摩顯示級分"
           onClick={() => onSetShowcaseScore(!showScore)}
-          className={`tap-target shrink-0 self-start sm:self-auto relative inline-flex h-7 w-12 items-center rounded-full border transition-colors ${
+          className={`tap-target shrink-0 relative inline-flex h-7 w-12 items-center rounded-full border transition-colors ${
             showScore ? 'bg-primary border-primary' : 'bg-surface-soft border-border-strong'
           }`}
         >

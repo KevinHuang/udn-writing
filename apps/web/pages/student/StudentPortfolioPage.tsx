@@ -3,6 +3,7 @@ import { BookOpen, Stamp } from "lucide-react";
 import { PageHeader, PAGE_CONTAINER } from "../../components/PageHeader";
 import { AnthologyPreview, type AnthologyPreviewData } from "../../components/anthology/AnthologyPreview";
 import { CheckRow } from "../../components/anthology/CheckRow";
+import { PreviewFab } from "../../components/anthology/PreviewFab";
 import { useAppState } from "../../state/appStateContext";
 import { useGoBack } from "../../lib/useGoBack";
 import { semesterLabel } from "../../lib/semester";
@@ -126,7 +127,7 @@ export const StudentPortfolioPage: React.FC = () => {
                     id={`portfolio-semester-${sem}`}
                     type="button"
                     onClick={() => setSemesterFilter(sem)}
-                    className={`px-3 py-1 rounded-full text-caption border transition-colors ${
+                    className={`tap-target px-3 py-1.5 rounded-full text-caption border transition-colors ${
                       semesterFilter === sem
                         ? "bg-primary border-primary text-on-accent"
                         : "bg-card border-border-strong text-text-secondary hover:border-primary hover:text-primary"
@@ -249,6 +250,18 @@ export const StudentPortfolioPage: React.FC = () => {
             </section>
           </div>
         </div>
+      )}
+
+      {/* 手機與平板：作品一多，頁底的預覽按鈕要捲很久 —— 右下角放一顆預覽圓鈕。學生端整頁捲動，貼在底部導覽上方 */}
+      {works.length > 0 && (
+        <PreviewFab
+          id="portfolio-btn-preview-mobile"
+          count={chosen.length}
+          label="預覽作品集"
+          onClick={openPreview}
+          disabled={!canPreview}
+          className="bottom-24"
+        />
       )}
 
       {preview && <AnthologyPreview preview={preview} onClose={() => setPreview(null)} />}

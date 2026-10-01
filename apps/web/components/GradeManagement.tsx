@@ -693,7 +693,12 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
           backId="grademanagement-btn-back"
           className="mb-3 sm:mb-4"
           actions={selectedCourseId && (
-            <div className="shrink-0 flex items-center gap-2">
+            /*
+              手機上三顆擠一列時「製作成果集」會被折成三行（實測 375px）。
+              改成可換行：兩顆次要動作平分第一排，主要動作「匯出成績」自己佔一整排；
+              640px 以上回到一列。按鈕字一律不換行。
+            */
+            <div className="w-full sm:w-auto shrink-0 flex flex-wrap sm:flex-nowrap items-center gap-2">
               {/*
                 期末總結是次要動作（一學期按一次），所以走描邊樣式，
                 不跟「匯出成績」搶同一個實心主色 —— 兩顆實心按鈕並排，
@@ -703,7 +708,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                 <button
                   id="grademanagement-btn-finalreport"
                   onClick={() => onOpenFinalReport(selectedCourseId)}
-                  className="bg-card hover:bg-surface-soft border border-border-strong text-text-primary px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
+                  className="flex-1 sm:flex-none whitespace-nowrap bg-card hover:bg-surface-soft border border-border-strong text-text-primary px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
                 >
                   <Sparkles size={16} className="shrink-0 text-primary" /> 期末總結
                 </button>
@@ -713,7 +718,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
                 <button
                   id="grademanagement-btn-anthology"
                   onClick={() => onOpenAnthology(selectedCourseId)}
-                  className="bg-card hover:bg-surface-soft border border-border-strong text-text-primary px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
+                  className="flex-1 sm:flex-none whitespace-nowrap bg-card hover:bg-surface-soft border border-border-strong text-text-primary px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
                 >
                   <BookOpen size={16} className="shrink-0 text-secondary" /> 製作成果集
                 </button>
@@ -721,7 +726,7 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
               <button
                 id="grademanagement-btn-export"
                 onClick={handleDownloadExcel}
-                className="bg-primary hover:bg-primary/90 text-on-accent px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
+                className="basis-full sm:basis-auto whitespace-nowrap bg-primary hover:bg-primary/90 text-on-accent px-4 sm:px-5 py-2 sm:py-2.5 rounded-full text-body shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 hover:scale-[1.02]"
               >
                 {/* 檔案是什麼格式就寫什麼格式 —— 產生的是 .csv，寫 EXCEL 老師會找不到檔 */}
                 <Download size={16} className="shrink-0" /> 匯出成績（CSV）

@@ -16,13 +16,15 @@ interface FeaturedRuleCardProps {
  *
  * 三條規則寫在卡片上，因為它們全都是「為什麼系統沒有動」的答案：
  * 老師取消章後章沒回來、改高分後沒蓋、舊作品沒補蓋 —— 不寫清楚會被當成 bug。
+ *
+ * 沒開啟時，手機上只留標題列（說明收起）：卡片在「待批改」上面，三行說明會把要批改的作業往下推。
  */
 export const FeaturedRuleCard: React.FC<FeaturedRuleCardProps> = ({ rule, onChange }) => (
   <section
     id="grading-hub-featured-rule"
-    className="bg-card border border-border-card shadow-paper rounded-brand px-4 py-4 md:px-5 space-y-3"
+    className="bg-card border border-border-card shadow-paper rounded-brand px-4 py-3 sm:py-4 md:px-5 space-y-3"
   >
-    <div className="flex items-start justify-between gap-3">
+    <div className={`flex justify-between gap-3 ${rule.enabled ? 'items-start' : 'items-center sm:items-start'}`}>
       <div className="min-w-0">
         <h3 className="flex items-center gap-2 text-title font-bold text-text-primary">
           <Stamp size={18} className="text-secondary shrink-0" />
@@ -31,7 +33,7 @@ export const FeaturedRuleCard: React.FC<FeaturedRuleCardProps> = ({ rule, onChan
             {rule.enabled ? `${levelText(rule.minScore)}` : '未開啟'}
           </span>
         </h3>
-        <p className="text-caption text-text-muted mt-1">
+        <p className={`${rule.enabled ? '' : 'hidden sm:block'} text-caption text-text-muted mt-1`}>
           作品第一次批改完成時（AI 批改或手動存檔），達到標準就自動蓋上佳作章。所有學校、所有班級都適用。
         </p>
       </div>

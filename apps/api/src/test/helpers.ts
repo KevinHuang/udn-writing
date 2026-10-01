@@ -177,6 +177,11 @@ export interface FakeIdentity {
   uuid?: string;
   lastName?: string;
   firstName?: string;
+  /**
+   * 依 access token 回不同的人（數位作品集的資料介面測試用：同一個假 IdP 要扮好幾個學生）。
+   * 沒列出來的 token 回上面那個預設身分；以 `bad-` 開頭的 token 一律 401。
+   */
+  tokens?: Record<string, { mail: string; lastName?: string; firstName?: string }>;
 }
 
 /**
@@ -198,13 +203,20 @@ export function startFakeIdp(identity: FakeIdentity) {
       return;
     }
     if (url.pathname === '/me') {
+      const token = url.searchParams.get('access_token') ?? '';
+      if (token.startsWith('bad-')) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid_token' }));
+        return;
+      }
+      const who = identity.tokens?.[token] ?? identity;
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({
-        mail: identity.mail,
-        uuid: identity.uuid ?? 'uuid-' + identity.mail,
+        mail: who.mail,
+        uuid: (who as FakeIdentity).uuid ?? 'uuid-' + who.mail,
         language: 'zh-Hant-TW',
-        lastName: identity.lastName ?? '測',
-        firstName: identity.firstName ?? '試',
+        lastName: who.lastName ?? '測',
+        firstName: who.firstName ?? '試',
       }));
       return;
     }

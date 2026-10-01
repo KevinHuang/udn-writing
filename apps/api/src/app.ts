@@ -19,11 +19,19 @@ app.proxy = true; // Trust proxy headers like X-Forwarded-Proto for HTTPS detect
 const router = new Router();
 
 // Configure CORS to allow frontend communication with credentials support
+/**
+ * 數位作品集（另一個網域）直接從瀏覽器呼叫 /service/portfolio/* 時要放行的來源。
+ * 以逗號分隔，例：https://portfolio.example.com,http://localhost:5173
+ * 那組端點用 Authorization: Bearer 驗證、不靠 cookie，所以只對它們放行，
+ * 其餘路徑維持原本只認 CLIENT_HOME_PAGE。
+ */
+const portfolioOrigins = (process.env.PORTFOLIO_ALLOWED_ORIGINS || '')
+  .split(',').map((o) => o.trim()).filter(Boolean);
+
 app.use(cors({
   origin: (ctx) => {
-    // const allowed = (process.env.CLIENT_HOME_PAGE || 'http://localhost:3000,http://localhost:5002').split(',').map(o => o.trim());
-    // const origin = ctx.get('Origin');
-    // return allowed.includes(origin) ? origin : allowed[0];
+    const origin = ctx.get('Origin');
+    if (ctx.path.startsWith('/service/portfolio/') && portfolioOrigins.includes(origin)) return origin;
     return process.env.CLIENT_HOME_PAGE || 'http://localhost:3000';
   },
   credentials: true,               // 允許攜帶 Cookie

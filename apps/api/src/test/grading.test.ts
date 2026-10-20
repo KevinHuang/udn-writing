@@ -294,6 +294,97 @@ describe('AI 批改', () => {
 });
 
 /**
+ * 四向度（submission_feedback.sub_scores）。
+ *
+ * 以前只有管理員手動打 /admin/grading_subscores 才會寫入；而老師每存一次評語，
+ * 新版本的四向度又是空的。現在 AI 批改時同一次產生，老師存檔沿用上一版
+ * （使用者決定：老師調整整體級分時，四向度維持不變）。
+ */
+describe('四向度：AI 批改時一併產生，老師存檔沿用', () => {
+  const autoGrade = (cookie: string, subId: string) =>
+    req(srv, `/service/instructor/grading/${subId}`, cookie, { method: 'POST' });
+
+  /*
+    模擬批改的級分由字數決定。預設那篇只有六個字，可能落到零級分 ——
+    零級分的四向度一律是 0（另有單元測試），這裡要驗的是一般情況，所以換一篇長的。
+  */
+  const LONG = '今天天氣很好我們去公園散步。'.repeat(30);
+  const useLongEssay = (subId: string) =>
+    rawDb.none(`UPDATE submission SET content = $2, word_count = $3 WHERE id = $1`, [subId, LONG, LONG.length]);
+
+  const validRow = (subId: string) =>
+    rawDb.one(
+      `SELECT score, content, is_ai, sub_scores, sub_scores_time
+         FROM submission_feedback WHERE ref_submission_id = $1 AND is_valid = true`, [subId]);
+
+  const DIMS = ['theme_and_content', 'structure_and_organization', 'diction_and_sentence_structure', 'mechanics_and_punctuation'];
+
+  test('AI 批改（模擬）同一次存進四個 0-6 的分數與四段評語', async () => {
+    const { mySubmission, cookie } = await scenario();
+    await useLongEssay(mySubmission);
+    assert.equal((await autoGrade(cookie, mySubmission)).status, 200);
+
+    const row = await validRow(mySubmission);
+    assert.ok(Number(row.score) > 0, '前提：這篇不是零級分');
+    assert.ok(row.sub_scores, '四向度要跟著這一版存進去，不必等管理員補');
+    for (const d of DIMS) {
+      const n = row.sub_scores[`${d}_score`];
+      assert.ok(Number.isInteger(n) && n >= 0 && n <= 6, `${d}_score 是 0-6 整數，拿到 ${n}`);
+      assert.match(row.sub_scores[`${d}_score_summary`], /示範模式/);
+    }
+    assert.ok(row.sub_scores_time, '有四向度就有產生時間');
+    assert.equal(JSON.parse(row.content).sub_scores, undefined, '四向度只存在 sub_scores 欄位，content 不重複存一份');
+  });
+
+  test('老師改級分與評語存檔 → 四向度沿用上一版，不變', async () => {
+    const { mySubmission, cookie } = await scenario();
+    await useLongEssay(mySubmission);
+    await autoGrade(cookie, mySubmission);
+    const before = await validRow(mySubmission);
+
+    const newScore = Number(before.score) === 6 ? 5 : 6;
+    assert.equal((await saveFeedback(cookie, mySubmission, newScore, { score: newScore, response: '老師改過' })).status, 200);
+
+    const after = await validRow(mySubmission);
+    assert.equal(after.is_ai, false, '這是老師的新版本');
+    assert.equal(Number(after.score), newScore);
+    assert.deepEqual(after.sub_scores, before.sub_scores, '整體級分改了，四向度維持不變');
+    assert.equal(after.sub_scores_time?.getTime(), before.sub_scores_time?.getTime(), '產生時間也跟著沿用');
+  });
+
+  test('上一版沒有四向度 → 老師存檔後仍是空的（留給批次補分）', async () => {
+    const { mySubmission, me, cookie } = await scenario();
+    await aiGraded(mySubmission, me.id, 4);   // 舊資料：只有級分與評語
+    await saveFeedback(cookie, mySubmission, 5, { score: 5, response: '老師改過' });
+
+    const row = await validRow(mySubmission);
+    assert.equal(row.sub_scores, null);
+    assert.equal(row.sub_scores_time, null);
+  });
+
+  test('繳交摘要與批改清單都帶出四向度分數，但不帶評語', async () => {
+    const { mySubmission, cookie } = await scenario();
+    await useLongEssay(mySubmission);
+    await autoGrade(cookie, mySubmission);
+    const { sub_scores } = await validRow(mySubmission);
+
+    const assignmentId = (await rawDb.one(
+      `SELECT ref_assignment_id::text AS id FROM submission WHERE id = $1`, [mySubmission])).id;
+    const summary = await (await req(srv, '/service/instructor/submissions', cookie)).json();
+    const detail = await (await req(srv, `/service/instructor/assignments/${assignmentId}/submissions`, cookie)).json();
+
+    for (const [name, rows] of [['摘要', summary], ['批改清單', detail]] as const) {
+      const row = rows.find((r: { submission_id: string | null }) => String(r.submission_id) === mySubmission);
+      assert.ok(row, `${name}裡要有這一篇`);
+      for (const d of DIMS) {
+        assert.equal(row[`${d}_score`], sub_scores[`${d}_score`], `${name}的 ${d}_score`);
+        assert.equal(`${d}_score_summary` in row, false, `${name}不帶評語（摘要刻意保持精簡）`);
+      }
+    }
+  });
+});
+
+/**
  * Phase 5 新增的無狀態 AI 端點。取代前端原本直接呼叫 Gemini 的那四支。
  * 這裡驗的是把關與參數檢查 —— 真正的 AI 呼叫在測試環境不會發生。
  */

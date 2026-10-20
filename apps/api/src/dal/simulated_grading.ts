@@ -19,6 +19,8 @@
  * 這裡產生的是「已批改」，不會自動發還 —— 發還一律由老師手動決定。
  */
 
+import type { SubScores } from '../lib/grading_result';
+
 /**
  * 批改結果的線路契約。前端的對應型別是 `@udn/shared` 的 `AiGradingResponse`，
  * **兩邊要一起改**。
@@ -151,6 +153,28 @@ export function simulateGrading(essayContent: string, topic: string): AiGradingR
         },
         feedback: `${SIMULATION_NOTICE}\n\n${overall}\n\n（全文約 ${words} 字）`,
         suggestions,
+    };
+}
+
+/**
+ * 模擬批改的四向度，轉成 `submission_feedback.sub_scores` 的形狀（見 lib/grading_result.ts）。
+ *
+ * 分數就是 simulateGrading() 的 categoryScores —— 以前算出來了，卻在存檔前被丟掉。
+ * 評語是固定句型，看得出是示範。零級分的規則（全給 0、評語空白）由呼叫端的
+ * normalizeSubScores() 統一處理，這裡不重複。
+ */
+export function simulateSubScores(sim: AiGradingResponse): SubScores {
+    const c = sim.categoryScores;
+    const say = (label: string, n: number) => `示範模式：${label}約 ${n} 級分。`;
+    return {
+        theme_and_content_score: c.content,
+        theme_and_content_score_summary: say('立意取材', c.content),
+        structure_and_organization_score: c.structure,
+        structure_and_organization_score_summary: say('結構組織', c.structure),
+        diction_and_sentence_structure_score: c.vocabulary,
+        diction_and_sentence_structure_score_summary: say('遣詞造句', c.vocabulary),
+        mechanics_and_punctuation_score: c.grammar,
+        mechanics_and_punctuation_score_summary: say('錯別字、格式與標點符號', c.grammar),
     };
 }
 

@@ -199,7 +199,14 @@ export interface GradingResult {
    * 欄位沿用 totalScore 這個名字以免大規模改名，語意已是級分。
    */
   totalScore: number;
-  categoryScores: {
+  /**
+   * 四向度（`submission_feedback.sub_scores` 的分數）。**沒有資料是 undefined，不是 0** ——
+   * 舊的批改可能還沒補過四向度，0 卻是合法的級分（零級分的作品四向度全是 0）。
+   * 對照與檢查在 apps/web 的 lib/categoryScores.ts。
+   *
+   * 以前前端一律填 0，成績管理的雷達圖因此永遠是 0。
+   */
+  categoryScores?: {
     content: number;
     structure: number;
     grammar: number;

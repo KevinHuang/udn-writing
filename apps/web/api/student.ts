@@ -72,8 +72,10 @@ export interface StudentData {
 }
 
 
-/** 四項分數在學生端是關著的（features.ts 的 SHOW_CATEGORY_SCORES），給零即可 */
-const NO_CATEGORY_SCORES = { content: 0, structure: 0, grammar: 0, vocabulary: 0 };
+/*
+  四向度在學生端是關著的（features.ts 的 SHOW_CATEGORY_SCORES），後端也不給 ——
+  所以 categoryScores 留空（＝沒有資料）。以前這裡填 0，那會變成「四項都是零級分」。
+*/
 
 export async function fetchStudentData(
   studentId: string,
@@ -175,7 +177,6 @@ export async function fetchStudentData(
       result: returned
         ? {
             totalScore: Number(r.score ?? 0),
-            categoryScores: NO_CATEGORY_SCORES,
             feedback: feedbackTextOf(r.feedback_content),
             isAi: r.is_ai !== false,
             isPublished: true,

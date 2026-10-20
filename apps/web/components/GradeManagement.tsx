@@ -32,6 +32,7 @@ import { semesterLabel } from '../lib/semester';
 import { seatText } from '../lib/gradingQueue';
 import { studentHistory as studentHistoryOf } from '../lib/studentHistory';
 import { sortGradeRows, studentGradeStats, type GradeSortKey, type SortDir } from '../lib/gradeTable';
+import { averageCategoryScores, CATEGORY_DIMENSIONS } from '../lib/categoryScores';
 import { MARK_META, type SubmissionMarks } from '../lib/submissionMarks';
 import { isOnLeave, type LeaveMarks } from '../lib/leave';
 import { isOverdue as isAssignmentOverdue } from '../lib/assignments';
@@ -488,25 +489,27 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
     return counts.map((count, level) => ({ level, name: `${level}級分`, count }));
   }, [scopedResults]);
 
-  /** 四向度平均。鍵與標籤都取自 types.ts 的 CATEGORY_LABELS，不要另寫一份 */
-  const categoryAverages = useMemo(() => {
-    const keys = ['content', 'structure', 'vocabulary', 'grammar'] as const;
-    return keys.map((key) => {
-      const values = scopedResults
-        .map((sub) => sub.result?.categoryScores?.[key])
-        .filter((v): v is number => typeof v === 'number');
-      const avg = values.length
-        ? values.reduce((a, b) => a + b, 0) / values.length
-        : 0;
-      return {
+  /**
+   * 四向度平均（lib/categoryScores.ts）。與級分分布同一份 scopedResults，
+   * 但**沒有四向度的作品不算進來** —— 舊的批改可能還沒補過，以前一律當 0，
+   * 而且前端根本沒拿到四向度，整張雷達圖永遠是 0。
+   * 鍵與標籤都取自 types.ts 的 CATEGORY_LABELS，不要另寫一份。
+   */
+  const categorySummary = useMemo(
+    () => averageCategoryScores(scopedResults.map((sub) => sub.result)),
+    [scopedResults],
+  );
+  const categoryAverages = useMemo(
+    () =>
+      CATEGORY_DIMENSIONS.map(([, key]) => ({
         key,
         // 軸上用短標籤，滑鼠停留的 Tooltip 仍是官方全名
         label: CRITERIA_SHORT_LABELS[key],
         fullLabel: CATEGORY_LABELS[key],
-        value: Number(avg.toFixed(1)),
-      };
-    });
-  }, [scopedResults]);
+        value: categorySummary.averages?.[key] ?? 0,
+      })),
+    [categorySummary],
+  );
 
   /*
     這個班的學生 —— **從繳交紀錄推出來**，照座號排序。
@@ -864,13 +867,27 @@ export const GradeManagement: React.FC<GradeManagementProps> = ({
 
           {/* 四向度平均 */}
           <div className="bg-card p-3 sm:p-6 rounded-brand border border-border shadow-sm">
-            <h3 className="text-title font-bold text-text-primary mb-2 sm:mb-4 flex items-center gap-2">
-              <Target size={16} className="sm:size-5 text-primary shrink-0" />
-              {isSchoolScope ? '全校寫作四向度平均' : '全班寫作四向度平均'}
-            </h3>
+            <div className="flex items-baseline justify-between gap-3 mb-2 sm:mb-4">
+              <h3 className="text-title font-bold text-text-primary flex items-center gap-2">
+                <Target size={16} className="sm:size-5 text-primary shrink-0" />
+                {isSchoolScope ? '全校寫作四向度平均' : '全班寫作四向度平均'}
+              </h3>
+              {/* 有幾份還沒有四向度要講出來，否則老師會以為平均是全部算的 */}
+              {categorySummary.count > 0 && (
+                <span id="grademanagement-category-count" className="text-caption text-text-muted whitespace-nowrap tabular-nums">
+                  {categorySummary.count === scopedResults.length
+                    ? `共 ${categorySummary.count} 份`
+                    : `${categorySummary.count}／${scopedResults.length} 份有四向度`}
+                </span>
+              )}
+            </div>
             {scopedResults.length === 0 ? (
               <div className="h-40 sm:h-56 flex items-center justify-center text-body text-text-muted">
                 這個範圍還沒有批改完成的成績
+              </div>
+            ) : categorySummary.count === 0 ? (
+              <div className="h-40 sm:h-56 flex items-center justify-center text-body text-text-muted text-center px-4">
+                已批改的作品還沒有四向度分數
               </div>
             ) : (
               <div className="h-40 sm:h-56 w-full">

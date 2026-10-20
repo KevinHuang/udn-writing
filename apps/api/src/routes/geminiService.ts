@@ -4,6 +4,7 @@ import { OAuthMiddleware } from '../middleware/oauth';
 import GenAIHelper from '../dal/genai_helper';
 import { isAiConfigured, simulateGrading, simulatedDelayMs } from '../dal/simulated_grading';
 import Util from '../util/util';
+import config from '../config';
 import StorageHelper from '../dal/storage_helper';
 import { checkImage } from '../lib/image_input';
 
@@ -194,7 +195,8 @@ router.post('/grade', OAuthMiddleware.requireLogin, async (ctx: Context) => {
       ctx.body = simulateGrading(content, topic);
       return;
     }
-    ctx.body = await new GenAIHelper().gradeAdhoc(
+    // 與真正的批改（/instructor/grading/:id）用同一個模型，試出來的效果才有參考價值
+    ctx.body = await new GenAIHelper(config.gradingModel).gradeAdhoc(
       content, topic, criteria || '', aiModel || '預設批改模型',
     );
   } catch (error) {

@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type, ThinkingLevel, HarmCategory, HarmBlockThreshold } from '@google/genai';
 import config from '../config';
 import { OCR_SYSTEM_PROMPT } from './constants';
+import { SUB_SCORE_INSTRUCTION, SUB_SCORES_JSON_SCHEMA, parseGradingResponse } from '../lib/grading_result';
 
 // 洗牌
 const shuffleArray = (array: any[]) => {
@@ -432,6 +433,7 @@ ${results.map((text, i) => `--- 第 ${i} 頁 ---\n${text}\n-------------------`)
             【題目】${gradingContext?.title || ''}
             【題說】${gradingContext?.description || ''}
             ${gradingContext?.note ? `【教師提示】${gradingContext.note}` : ''}
+            ${SUB_SCORE_INSTRUCTION}
         `;
 
         const promptText = `
@@ -454,6 +456,7 @@ ${results.map((text, i) => `--- 第 ${i} 頁 ---\n${text}\n-------------------`)
                 }
             ],
             config: {
+                // 開發資料庫實測的輸出最多 1,863 tokens（2,392 篇），加上四向度約多 300，仍遠低於上限
                 maxOutputTokens: 6000,
                 temperature: 0.3, // slightly lower temperature for more deterministic grading
                 responseMimeType: 'application/json',
@@ -465,7 +468,7 @@ ${results.map((text, i) => `--- 第 ${i} 頁 ---\n${text}\n-------------------`)
                     "required": [
                         "raw_score",
                         "score",
-                        // "sub_scores",
+                        "sub_scores",
                         "response"
                     ],
                     "properties": {
@@ -475,36 +478,12 @@ ${results.map((text, i) => `--- 第 ${i} 頁 ---\n${text}\n-------------------`)
                             "minimum": 0,
                             "maximum": 100
                         },
-                        // "sub_scores": {
-                        //     "description": "各項分數",
-                        //     "type": "object",
-                        //     "properties": {
-                        //         "theme_and_content_score": {
-                        //             "description": "立意取材分數：評估文章的主題思想是否明確、立意是否深刻或新穎，以及所選取的素材與例證是否切合題目、內容充實且具說服力。",
-                        //             "type": "integer",
-                        //             "minimum": 0,
-                        //             "maximum": 100
-                        //         },
-                        //         "structure_and_organization_score": {
-                        //             "description": "結構組織分數：評估文章的整體架構與段落安排是否合理，前後邏輯銜接是否順暢，以及起承轉合與文氣脈絡是否層次分明。",
-                        //             "type": "integer",
-                        //             "minimum": 0,
-                        //             "maximum": 100
-                        //         },
-                        //         "diction_and_sentence_structure_score": {
-                        //             "description": "遣詞造句分數：評估詞彙活用的準確度與豐富度、句型變化的多樣性與流暢度，以及整體修辭是否得宜、有無語病或贅詞。",
-                        //             "type": "integer",
-                        //             "minimum": 0,
-                        //             "maximum": 100
-                        //         },
-                        //         "mechanics_and_punctuation_score": {
-                        //             "description": "錯別字與標點分數：評估字詞書寫的正確性（有無錯別字、漏字或錯字），以及標點符號的使用是否符合規範且恰當。",
-                        //             "type": "integer",
-                        //             "minimum": 0,
-                        //             "maximum": 100
-                        //         }
-                        //     }
-                        // },
+                        /*
+                          四向度（0-6 級分＋50 字內評語）。形狀與 submission_feedback.sub_scores 相同，
+                          見 lib/grading_result.ts。更早的版本這裡是 0-100 分制、後來整段註解掉，
+                          所以四向度只能等管理員的批次補分。
+                        */
+                        "sub_scores": SUB_SCORES_JSON_SCHEMA,
                         "score": {
                             "description": "級分，範圍為 0 到 6 之間的整數",
                             "type": "integer",
@@ -530,21 +509,18 @@ ${results.map((text, i) => `--- 第 ${i} 頁 ---\n${text}\n-------------------`)
             }
         });
 
-        let parsedResult;
-        try {
-            let jsonString = response.text || '{}';
-            // Remove markdown code block formats if present
-            jsonString = jsonString.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-            parsedResult = JSON.parse(jsonString);
-        } catch (e) {
-            console.error('Failed to parse AI grading result', e);
-            parsedResult = { score: 0, summary: "解析失敗", suggestions: "", analysis: {} };
-        }
+        /*
+          解析不了、或沒有合法的整體級分 → 丟出 AiGradingResponseError，呼叫端不存檔。
+          以前這裡回傳 { score: 0, summary: "解析失敗" }，於是被存成一份有效的零級分。
+          result 不含 sub_scores —— 四向度另外回傳，存進 sub_scores 欄位。
+        */
+        const { content: parsedResult, subScores } = parseGradingResponse(response.text);
 
         const usageMetadata = response.usageMetadata;
 
         return {
             result: parsedResult,
+            subScores,
             inputTokens: usageMetadata?.promptTokenCount || 0,
             outputTokens: usageMetadata?.candidatesTokenCount || 0
         };

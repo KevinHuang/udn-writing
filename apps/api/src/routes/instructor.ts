@@ -2,7 +2,8 @@ import Router from '@koa/router';
 import InstructorHelper from '../dal/instructor_helper';
 import SubmissionHelper from '../dal/submission_helper';
 import GenAIHelper from '../dal/genai_helper';
-import { isAiConfigured, simulateGrading, simulatedDelayMs } from '../dal/simulated_grading';
+import { isAiConfigured, simulateGrading, simulateSubScores, simulatedDelayMs } from '../dal/simulated_grading';
+import { AiGradingResponseError, normalizeSubScores, type SubScores } from '../lib/grading_result';
 import type { Context } from 'koa';
 import { OAuthMiddleware, actsAsSystemAdmin, actsAsAdmin } from '../middleware/oauth';
 import { courseScopeOf } from '../lib/scope_of';
@@ -348,12 +349,18 @@ router.post('/grading/:submissionId', async (ctx) => {
           模擬結果的評語開頭會標明「示範模式」。
         */
         let result: any;
+        let subScores: SubScores | null = null;
         let inputTokens = 0;
         let outputTokens = 0;
         if (isAiConfigured()) {
-            const genAIHelper = new GenAIHelper();
+            /*
+              批改用 GRADING_MODEL。以前 new GenAIHelper() 沒帶模型，吃到建構子的預設值
+              OCR_MODEL —— 作文批改一直是用辨識手寫稿的那個模型在跑（使用者決定改回來）。
+            */
+            const genAIHelper = new GenAIHelper(config.gradingModel);
             const aiResponse = await genAIHelper.grading(gradingContext, submission.content, submission.word_count || submission.content);
             result = aiResponse.result;
+            subScores = aiResponse.subScores;
             inputTokens = aiResponse.inputTokens;
             outputTokens = aiResponse.outputTokens;
         } else {
@@ -370,12 +377,29 @@ router.post('/grading/:submissionId', async (ctx) => {
                 ? [sim.feedback, '### 修改建議', ...advice.map((s) => `- ${s}`)].join('\n\n')
                 : sim.feedback;
             result = { score: sim.totalScore, response };
+            subScores = simulateSubScores(sim);
         }
 
-        const feedback = await InstructorHelper.saveFeedback(submissionId, result.score, result, userId, await courseScopeOf(ctx), inputTokens, outputTokens);
+        /*
+          四向度與整體級分同一次產生，一起存進這一版（以前要等管理員的批次補分）。
+          零級分一律全給 0、評語空白；AI 沒給齊就是 null，整體級分照樣存。
+        */
+        subScores = normalizeSubScores(subScores, result.score);
+        const feedback = await InstructorHelper.saveFeedback(submissionId, result.score, result, userId, await courseScopeOf(ctx), inputTokens, outputTokens, true, subScores);
 
         ctx.body = { success: true, result, feedback };
     } catch (error) {
+        /*
+          AI 的回傳解析不了（或沒有合法的級分）：**什麼都沒存**，作品仍是待批改。
+          回 502 讓畫面顯示「AI 批改失敗」，老師再按一次就好。
+          以前這種情況會被存成一份有效的零級分。
+        */
+        if (error instanceof AiGradingResponseError) {
+            console.error('AI 批改結果無法使用，沒有存檔:', error.message);
+            ctx.status = 502;
+            ctx.body = { error: 'AI 回傳的批改結果無法使用，這一篇沒有存檔，請再試一次' };
+            return;
+        }
         console.error('Error in AI grading:', error);
         ctx.status = 500;
         ctx.body = { error: 'Internal Server Error' };

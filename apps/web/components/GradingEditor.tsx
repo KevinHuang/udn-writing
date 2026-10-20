@@ -37,10 +37,10 @@ const snapshot = (r?: GradingResult): string =>
   r
     ? JSON.stringify([
         r.totalScore,
-        r.categoryScores.content,
-        r.categoryScores.structure,
-        r.categoryScores.grammar,
-        r.categoryScores.vocabulary,
+        r.categoryScores?.content ?? null,
+        r.categoryScores?.structure ?? null,
+        r.categoryScores?.grammar ?? null,
+        r.categoryScores?.vocabulary ?? null,
         r.feedback,
         r.isAi,
         r.isPublished,

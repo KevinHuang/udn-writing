@@ -10,11 +10,12 @@
  * 四項評分要素（立意取材／結構組織／遣詞造句／錯別字格式與標點）
  * 是否顯示在教師端與學生端。
  *
- * 目前為 false —— 依需求先隱藏，但：
- *   - types.ts 的 GradingResult.categoryScores 欄位保留
- *   - 後端 dal/genai_helper.ts 的批改 schema 仍要求 AI 回傳這四項
- *   - mockData 仍會產生
- * 也就是資料一直都在，只是不畫在畫面上。要恢復顯示改成 true 即可。
+ * 目前為 false —— 依需求先隱藏**單篇**的四向度（批改頁、學生端），但：
+ *   - AI 批改會一併產生四向度，存在 submission_feedback.sub_scores
+ *     （apps/api 的 lib/grading_result.ts；舊資料由管理員的批次補分補上）
+ *   - 教師端的繳交資料有帶分數（GradingResult.categoryScores），學生端沒有
+ *   - 成績管理的「全班寫作四向度平均」雷達圖**不受這個開關影響**，一直都顯示
+ * 要恢復單篇顯示改成 true，學生端還得請後端多帶這四欄。
  *
  * 補充：會考的級分本來就是「整體評定」，四項要素是閱卷時的參考面向、
  * 不是各自打分再加總，所以不顯示它們並不違背評分邏輯。

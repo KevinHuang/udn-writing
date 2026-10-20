@@ -1,5 +1,6 @@
 import { api } from './client';
 import { CATEGORY_LABELS, type FinalReport } from '@udn/shared';
+import { CATEGORY_DIMENSIONS } from '../lib/categoryScores';
 
 /**
  * `final_report` 的資料庫列。四個面向在資料庫裡是**八個平鋪的欄位**
@@ -28,22 +29,6 @@ interface RawFinalReport {
   created_at: string | null;
 }
 
-/**
- * 資料庫的面向欄位 → 前端的四個面向。
- *
- * 左邊那兩個長名稱是資料庫欄位的前綴，右邊是 `CATEGORY_LABELS` 的鍵。
- * **順序就是畫面上的順序**，與會考四項評分要素一致。
- *
- * 注意 `grammar` 對到的是 `mechanics_and_punctuation`（錯別字、格式與標點），
- * 不是文法 —— 這個鍵名是原型留下來的，語意早就漂了，所以在這裡對清楚。
- */
-const DIMENSIONS = [
-  ['theme_and_content', 'content'],
-  ['structure_and_organization', 'structure'],
-  ['diction_and_sentence_structure', 'vocabulary'],
-  ['mechanics_and_punctuation', 'grammar'],
-] as const;
-
 /** numeric(4,1) 經過 pg 回來是字串，double precision 是數字。兩種都要吃 */
 const num = (v: number | string | null): number => (v == null ? 0 : Number(v));
 
@@ -67,7 +52,8 @@ function toFinalReport(r: RawFinalReport): FinalReport {
     studentName: r.student_name ?? '',
     seatNo: r.seat_no ?? undefined,
     avgScore: num(r.avg_score),
-    dimensions: DIMENSIONS.map(([col, key]) => ({
+    // 欄位前綴 ↔ 前端鍵的對照與繳交摘要共用（lib/categoryScores.ts）
+    dimensions: CATEGORY_DIMENSIONS.map(([col, key]) => ({
       key,
       label: CATEGORY_LABELS[key] ?? key,
       score: numOrNull(r[`${col}_score`]),

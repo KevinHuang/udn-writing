@@ -319,11 +319,13 @@ export const StudentGrades: React.FC<StudentGradesProps> = ({
 
   // 雷達圖：四項要素用會考的官方名稱，滿分是級分上限而非舊的 25 分制。
   // 名稱走 CATEGORY_LABELS，這樣改一個地方全站都跟著改。
-  const radarData = displayData.result
+  // 沒有四向度資料就不畫（undefined 不是 0 分，見 lib/categoryScores.ts）
+  const categoryScores = displayData.result?.categoryScores;
+  const radarData = categoryScores
     ? (['content', 'structure', 'vocabulary', 'grammar'] as const).map((key) => ({
         key,
         subject: CATEGORY_LABELS[key],
-        A: displayData.result!.categoryScores[key],
+        A: categoryScores[key],
         fullMark: MAX_LEVEL,
       }))
     : [];

@@ -1,6 +1,17 @@
 import { db } from './database';
 import FeaturedRuleHelper from './featured_rule_helper';
 import { CourseScope, courseScopeSubquery } from '../lib/course_scope';
+import { SUB_SCORE_DIMENSIONS, type SubScores } from '../lib/grading_result';
+
+/*
+  四向度的**分數**（不含評語），給成績管理的雷達圖用。
+  用 `->`（jsonb）而不是 `->>` 再轉 numeric：轉型失敗會讓整支查詢掛掉，
+  老師的每個畫面都會跟著打不開。值的檢查交給前端（lib/categoryScores.ts）。
+  欄位名稱與 final_report 的四個分數欄位相同，前端用同一份對照表讀。
+*/
+const SUB_SCORE_COLUMNS = SUB_SCORE_DIMENSIONS
+    .map((d) => `sf.sub_scores->'${d}_score' AS ${d}_score`)
+    .join(',\n                ');
 
 class InstructorHelper {
 
@@ -106,7 +117,8 @@ class InstructorHelper {
                 sf.id AS feedback_id,
                 sf.score,
                 sf.is_returned,
-                sf.is_ai
+                sf.is_ai,
+                ${SUB_SCORE_COLUMNS}
             FROM assignment a
                 JOIN uc_learner ul ON ul.ref_course_id = a.ref_course_id
                 JOIN "user" u ON u.id = ul.ref_user_id
@@ -147,6 +159,8 @@ class InstructorHelper {
                 sf.score, 
                 sf.content as ai_analysis,
                 sf.is_returned,
+                -- 與摘要同樣四欄：前端 ensureSubmissions() 會用這支的結果換掉摘要那幾列
+                ${SUB_SCORE_COLUMNS},
                 proxy_s.id as batch_proxy_submission_id,
                 proxy_s.created_at as batch_proxy_submission_time,
                 proxy_s.ocr_time 
@@ -198,7 +212,17 @@ class InstructorHelper {
      * ⚠️ **先前完全沒有授權檢查** —— 任何教師都能批改任何一份作品。
      *    現在整包在一個交易裡，第一件事就是確認這份繳交屬於你教的班。
      */
-    public static async saveFeedback(submission_id: string, score: number, analysis_content: any, instructor_id: string, scope: CourseScope, inputTokens: number = 0, outputTokens: number = 0, is_ai: boolean = true) {
+    public static async saveFeedback(
+        submission_id: string, score: number, analysis_content: any, instructor_id: string, scope: CourseScope,
+        inputTokens: number = 0, outputTokens: number = 0, is_ai: boolean = true,
+        /**
+         * 這一版的四向度。
+         *   undefined ＝ **沿用上一版**（老師存檔：改評語、改級分都不動四向度 —— 使用者決定）
+         *   null      ＝ 這一版沒有四向度（AI 沒給齊；管理員的批次補分之後會補）
+         *   物件      ＝ AI 這一次產生的
+         */
+        sub_scores?: SubScores | null,
+    ) {
         /*
           instructor_id 與 scope 是兩件事，不要合併：
           前者記錄「誰批的」（會寫進 submission_feedback.ref_user_id），
@@ -224,11 +248,21 @@ class InstructorHelper {
           在把舊版本設為失效**之前**讀，否則就讀不到了。
         */
         const previous = await db.default.oneOrNone(
-            `SELECT is_returned FROM public.submission_feedback
+            `SELECT is_returned, sub_scores, sub_scores_time FROM public.submission_feedback
               WHERE ref_submission_id = $1 AND is_valid = true
               ORDER BY id DESC LIMIT 1`,
             [submission_id]);
         const wasReturned = previous?.is_returned === true;
+
+        /*
+          四向度同樣**沿用前一筆**（呼叫端沒給的時候）。理由與發還狀態相同：
+          老師存檔是產生新版本，新列的 sub_scores 吃預設值 null 的話，
+          每改一次評語四向度就消失，又得等管理員的批次補分。
+          產生時間跟著沿用；token 不沿用 —— 那是當初那次呼叫花的，抄過來會重複計算。
+        */
+        const inherit = sub_scores === undefined;
+        const subScores = inherit ? (previous?.sub_scores ?? null) : sub_scores;
+        const subScoresTime = inherit ? (previous?.sub_scores_time ?? null) : null;
 
         await db.default.none(`UPDATE public.submission_feedback SET is_valid = false WHERE ref_submission_id = $1`, [submission_id]);
 
@@ -242,13 +276,21 @@ class InstructorHelper {
                 input_tokens,
                 output_tokens,
                 is_ai,
-                is_returned
+                is_returned,
+                sub_scores,
+                sub_scores_time
             ) VALUES (
-                $1, $2, $3::text, true, $4, $5, $6, $7, $8
+                $1, $2, $3::text, true, $4, $5, $6, $7, $8,
+                $9::jsonb,
+                -- 有四向度才有產生時間：沿用的帶舊時間，這次才產生的記現在
+                CASE WHEN $9::jsonb IS NULL THEN NULL ELSE COALESCE($10::timestamptz, now()) END
             ) RETURNING id;
         `;
         const contentStr = typeof analysis_content === 'string' ? analysis_content : JSON.stringify(analysis_content);
-        const saved = await db.default.oneOrNone(sql, [submission_id, score || 0, contentStr, instructor_id, inputTokens, outputTokens, is_ai, wasReturned]);
+        const saved = await db.default.oneOrNone(sql, [
+            submission_id, score || 0, contentStr, instructor_id, inputTokens, outputTokens, is_ai, wasReturned,
+            subScores == null ? null : JSON.stringify(subScores), subScoresTime,
+        ]);
 
         /*
           **第一次**批改完成（之前沒有有效的批改）才依標準自動蓋佳作。

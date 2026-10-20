@@ -8,6 +8,7 @@ import SubmissionHelper from '../dal/submission_helper';
 import GenAIHelper from '../dal/genai_helper';
 import SubmissionFeedbackHelper from '../dal/submission_feedback_helper';
 import config from '../config';
+import { SUB_SCORE_RUBRIC, zeroSubScores, type SubScores } from '../lib/grading_result';
 import FinalReportHelper from '../dal/final_report_helper';
 import Util from '../util/util';
 import DevapiJasmineHelper from '../dal/devapi/devapi_helper';
@@ -96,6 +97,11 @@ router.post('/grading_subscores', OAuthMiddleware.isSystemAdmin, async (ctx) => 
             return;
         }
 
+        /*
+          中間的「核心評量規準」與 AI 批改共用（lib/grading_result.ts 的 SUB_SCORE_RUBRIC）。
+          AI 批改現在會一併產生四向度，這支只剩補舊資料的用途：
+          它只處理 sub_scores 還是空的批改。
+        */
         const grading_subscore_systemInstruction = `
         # 臺灣國中教育會考寫作測驗閱卷專家 Prompt（嚴格校準版）
 
@@ -105,34 +111,7 @@ router.post('/grading_subscores', OAuthMiddleware.isSystemAdmin, async (ctx) => 
 
 ---
 
-## 核心評量規準（標準參照與嚴格扣分線）
-
-### 1. 立意取材
-  **6 級分**：適切統整、運用材料，能進一步闡述說明以凸顯主旨，具深刻的思想高度。
-  **5 級分**：適當統整、運用材料，並能闡述說明主旨，論述清晰。
-  **4 級分**：能統整、運用材料，尚能闡述說明主旨。（若流於平鋪直敘、缺乏深刻反思，上限即為 4 級分）
-  **3 級分**：嘗試依據題目取材，但不甚適當，或發展不夠充分、內容流於空洞重複。
-  **2 級分**：取材不足，發展有限，或大量引述、抄錄題幹引導內容。
-  **1 級分**：僅能解釋題目；或材料過於簡略，無法加以發展。
-
-### 2. 結構組織
-  **6 級分**：文章結構完整，段落分明，脈絡極其分明，內容前後連貫。
-  **5 級分**：文章結構完整，但偶有轉折不夠流暢之處。
-  **4 級分**：文章結構大致完整，但偶有不連貫、轉折不清之處。
-  **3 級分**：文章結構鬆散；或前後不連貫；或各段字數極度不均。
-  **2-1 級分**：結構不完整；或僅有單一段落。
-
-### 3. 遣詞造句（嚴格審查項）
-  **6 級分**：能精確使用語詞，並有效運用各種句型使文句流暢，具文采。
-  **5 級分**：能正確使用語詞，並運用各種句型使文句通順。（若出現成語嚴重誤用、或文句帶有強烈網路/流行語，直接取消 5 級分資格）
-  **4 級分**：能正確使用語詞，表達尚清楚，但偶有冗詞贅句，且句型缺乏變化。
-  **3 級分**：用字遣詞不太恰當，出現語法錯誤；或文句高度口語化、句子破碎、大量重複相同詞彙。
-  **2-1 級分**：遣詞造句常有錯誤，文句支離破碎，難以理解。
-
-### 4. 錯別字、格式與標點符號
-  **6-5 級分**：幾乎沒有或極少錯別字，格式、標點符號運用正確，不影響文意。
-  **4 級分**：有一些錯別字及格式（如段首未縮排兩格）、標點錯誤。
-  **3 級分**：錯別字或標點錯誤已造成理解上的困難。
+${SUB_SCORE_RUBRIC}
 
 ---
 
@@ -196,16 +175,8 @@ markdown
             // const rec = recs[0]
             // console.log({ rec });
             const { score, content } = rec;
-            let result = {
-                theme_and_content_score: 0,
-                theme_and_content_score_summary: '',
-                structure_and_organization_score: 0,
-                structure_and_organization_score_summary: '',
-                diction_and_sentence_structure_score: 0,
-                diction_and_sentence_structure_score_summary: '',
-                mechanics_and_punctuation_score: 0,
-                mechanics_and_punctuation_score_summary: ''
-            };
+            // 零級分不送 AI，四向度全給 0、評語空白 —— AI 批改時也是同一條規則（lib/grading_result.ts）
+            let result: SubScores = zeroSubScores();
             let inputTokens = 0;
             let outputTokens = 0;
 

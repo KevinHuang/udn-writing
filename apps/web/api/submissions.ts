@@ -1,5 +1,6 @@
 import { api } from './client';
 import { feedbackTextOf } from '../lib/feedbackText';
+import { categoryScoresOf } from '../lib/categoryScores';
 import { countWords } from '../lib/wordCount';
 import { submissionStatusOf, type Submission, type GradingResult } from '@udn/shared';
 
@@ -29,6 +30,11 @@ interface RawSubmissionBase {
   score: number | null;
   is_returned: boolean | null;
   is_ai: boolean | null;
+  /** 四向度的分數（sub_scores 裡的值，沒有就是 null）。交給 categoryScoresOf() 檢查 */
+  theme_and_content_score?: unknown;
+  structure_and_organization_score?: unknown;
+  diction_and_sentence_structure_score?: unknown;
+  mechanics_and_punctuation_score?: unknown;
 }
 
 interface RawSummaryRow extends RawSubmissionBase {
@@ -63,15 +69,12 @@ export function picFilesOf(raw: unknown): string[] {
   return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : [];
 }
 
-/** 空的四項分數。資料庫的 sub_scores 多半是 null，而畫面上這一區是關著的 */
-const NO_CATEGORY_SCORES = { content: 0, structure: 0, grammar: 0, vocabulary: 0 };
-
-
 function resultOf(r: RawSubmissionBase, feedbackText: string): GradingResult | undefined {
   if (!r.feedback_id) return undefined;
   return {
     totalScore: Number(r.score ?? 0),
-    categoryScores: NO_CATEGORY_SCORES,
+    // 摘要與詳細兩支都有帶這四欄。以前這裡一律填 0，雷達圖因此永遠是 0
+    categoryScores: categoryScoresOf(r as unknown as Record<string, unknown>),
     feedback: feedbackText,
     // 一份繳交任何時刻只有一筆有效批改，is_ai 標示那一版是誰寫的
     isAi: r.is_ai !== false,

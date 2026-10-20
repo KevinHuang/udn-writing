@@ -1,6 +1,6 @@
 # 交接：目前做到哪
 
-最後更新：2026-10-01。這一份**會變舊**，每次交接都要更新；不會變的規則在根目錄的 `CLAUDE.md`。
+最後更新：2026-10-20。這一份**會變舊**，每次交接都要更新；不會變的規則在根目錄的 `CLAUDE.md`。
 
 ---
 
@@ -8,6 +8,7 @@
 
 | commit | 內容 |
 |---|---|
+| 分支 `feat/portfolio-teacher-tools`（未 commit） | **AI 批改時一併產生四向度**（使用者決定，2026-10-20）。以前四向度只有管理員手動打 `/admin/grading_subscores` 才補，而且老師每存一次評語新版本就是空的。現在：① `GenAIHelper.grading()` 的回傳格式加上 `sub_scores`（四個 0-6 分數＋四段 50 字內評語），提示詞後面附加批次那份「嚴格校準版」的**四向度規準**（只有核心評量規準；「心態校準」「審查極限」會改變整體級分，沒有附加）。規準、格式、整理規則都在 `apps/api/src/lib/grading_result.ts`，批次補分改成共用同一段規準（原文逐字比對過）。② 零級分一律四向度全 0、評語空白（沿用批次）；AI 沒給齊就只存整體級分、四向度留空給批次補。③ **老師存檔沿用上一版的四向度**，改整體級分也不動（`saveFeedback` 的 `sub_scores` 參數：undefined＝沿用）。④ AI 回傳解析失敗（或沒有合法級分）改成回 502、**不存檔** —— 以前會被存成一份有效的零級分。⑤ AI 批改與題庫試批改改用 `GRADING_MODEL`（以前沒帶模型，吃到預設的 `OCR_MODEL`）。⑥ **成績管理的四向度雷達圖接上真資料**：摘要與詳細兩支查詢多帶四個分數（不帶評語），前端 `lib/categoryScores.ts` 讀取與平均，沒有四向度的作品不算、標示「M／N 份有四向度」。以前前端一律填 0，雷達圖永遠是 0。測試：`grading_result.test.ts` 14 條、`grading.test.ts` 新增 4 條、前端 `categoryScores.test.tsx`。**真的 Gemini 還沒有實跑過**（本機沒有憑證），上線前要對一兩篇實批，確認四向度有回來、`response` 的排版沒有被附加的說明影響 |
 | 分支 `feat/portfolio-teacher-tools`（未合併） | **數位作品集的教師功能搬進來**（分工見數位作品集資料夾的 `UDN_整合分析.md`）。① 批改清單「依級分蓋佳作」：選門檻、列出候選、確認才蓋，**只蓋不取消**（`lib/submissionMarks.ts` 的 `featuredCandidates`）。② 班級頁「數位作品集：佳作觀摩顯示級分」開關，存在新表 `course_showcase`（migration 008，預設不顯示），`PUT /service/instructor/courses/:id/showcase`，讀取跟著課程清單的 `showcase_show_score`。③ 成績管理「製作成果集」→ `/anthology`：跨班跨校勾選、全部／佳作／預選／依題目，A4 稿紙排版、目錄頁碼是**排出來的**不是估的（`lib/anthology.ts`）。瀏覽器實測過三項；**實際列印與另存 PDF 還沒有人試過**。④ **自動蓋佳作**：批改作業入口頁設定自己的標準（例如 5 級分以上），作品**第一次**批改完成（AI 或手動存檔）就自動蓋；批改清單可另外調整該作業的標準（沿用／本作業 N 級分／不自動蓋）。用當下批改的人的標準、每篇只判斷一次、只對之後的批改生效（migration 009、`dal/featured_rule_helper.ts`、掛在 `InstructorHelper.saveFeedback`）。瀏覽器實測過（模擬批改）。⑤ **兩個資料外洩的修補**（同一個分支，commit 時分開，需要時可以單獨挑出來先上線）：`GET /instructor/courses/:course_id/tasks/:task_ids/scores` 補上範圍檢查、task_ids 改成參數（以前是 SQL 注入點，任何教師可以讀整個資料庫）；學生端 `my_assignments` 與 `submission_feedback` 在發還前不再送出分數與評語（以前只靠畫面不顯示）。測試 `scores_and_unreturned.test.ts`，已確認舊程式會失敗 5 條。⑥ **學生的「我的作品集」**（`/student/portfolio`）：挑自己已發還的作品排成 A4 作品集（與老師的成果集同一套引擎，目錄依學期分組），佳作發還後會標示；被選為佳作的作品可以設定「同校觀摩：願意公開／不公開」（migration 010 `submission_publish_consent`，`PUT /service/student/submissions/:id/publish-consent`，只限自己的、已發還的佳作；沒設＝還沒決定＝不公開；不限學期、隨時可改）。家長同意在數位作品集平台。**後端新測試因為 10/1 早上資料庫伺服器反覆當機恢復，還沒有乾淨跑完**。⑦ 公開意願也能在**學習概況的「近期發還」**與**我的作業**設定（共用元件 `components/FeaturedConsent.tsx`、共用狀態 `handleSetPublishConsent`）；學習概況多一條「N 篇佳作還沒決定」提醒（`lib/featuredConsent.ts`），帶到我的作業的已發還分頁。學生端的學期選單在**學習概況、我的作業、成績紀錄**互相延用：網址 `?semester` 優先，否則 AppState 的 `currentSemester`；頂端導覽換頁時帶著走。頂端的學期小標籤改成固定顯示今天的學期 |
 | 分支 `feat/portfolio-teacher-tools`（未合併） | **數位作品集專用資料介面** `/service/portfolio/v1/*`（`routes/portfolio.ts`，說明 `docs/portfolio-api.md`）。唯讀；**用使用者自己的 1Campus access token 驗證**（使用者決定，不用平台金鑰）：學生拿自己已發還的作品、同校觀摩（佳作＋學生願意公開＋已發還＋同校，級分依班級設定、不給評語）；原稿照片由本系統轉送，給 15 分鐘的簽章網址；**家長端點預留、回 501**，等 1Campus 家長身分的文件（`lib/parent_links.ts`）。測試 `portfolio_api.test.ts` 13 條。`scores_and_unreturned.test.ts` 也終於乾淨跑完（16 條） |
 | `beef3c1` | **批次代繳交改成「先收照片、後台辨識」**。老師拍完一位就上傳、自動跳下一位，全部收完按「開始辨識」由 Cloud Run `ocr-job` 在背景跑，可以關掉視窗。批改清單有進度 pill 與「AI 辨識未校對」徽章，批改頁有「校對文字」，批次批改遇到未校對的會先確認。設計與狀態推導見 `docs/ocr-job.md` |

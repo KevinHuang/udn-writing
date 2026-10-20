@@ -8,7 +8,7 @@ import SubmissionHelper from '../dal/submission_helper';
 import GenAIHelper from '../dal/genai_helper';
 import SubmissionFeedbackHelper from '../dal/submission_feedback_helper';
 import config from '../config';
-import { SUB_SCORE_RUBRIC, zeroSubScores, type SubScores } from '../lib/grading_result';
+import { SUB_SCORE_RUBRIC, normalizeSubScores, zeroSubScores, type SubScores } from '../lib/grading_result';
 import FinalReportHelper from '../dal/final_report_helper';
 import Util from '../util/util';
 import DevapiJasmineHelper from '../dal/devapi/devapi_helper';
@@ -168,6 +168,8 @@ markdown
         const genAIHelper = new GenAIHelper(config.gradingModel);
 
         let index = 0;
+        let saved = 0;
+        let skipped = 0;
 
         for (const rec of recs) {
             index++;
@@ -176,19 +178,34 @@ markdown
             // console.log({ rec });
             const { score, content } = rec;
             // 零級分不送 AI，四向度全給 0、評語空白 —— AI 批改時也是同一條規則（lib/grading_result.ts）
-            let result: SubScores = zeroSubScores();
+            let result: SubScores | null = zeroSubScores();
             let inputTokens = 0;
             let outputTokens = 0;
 
             if (score > 0) {
                 const aiResponse = await genAIHelper.gradingSubscores(rec, grading_subscore_systemInstruction, content, content.length);
-                result = aiResponse.result;
+                /*
+                  與 AI 批改走同一套整理規則。四個分數缺任何一個（包括 AI 回傳解析失敗時
+                  gradingSubscores 給的 { score: 0, summary: "解析失敗" }）就是 null。
+                */
+                result = normalizeSubScores(aiResponse.result, score);
                 inputTokens = aiResponse.inputTokens;
                 outputTokens = aiResponse.outputTokens;
             }
 
+            /*
+              不能用就**不寫入**，sub_scores 維持空的，下一次批次會再試一次。
+              以前解析失敗的那一份照樣存進去：sub_scores 不是空的了，批次永遠不會再挑到它，
+              而雷達圖與期末總結讀到的四向度是缺的。
+            */
+            if (!result) {
+                skipped++;
+                console.warn({ index: `${index}/${recs.length}`, feedback_id: rec.feedback_id, msg: 'AI 回傳的四向度不能用，這一筆沒有寫入，下次批次會再試' });
+                continue;
+            }
 
             const feedback = await SubmissionFeedbackHelper.saveSubscores(rec.feedback_id, inputTokens, outputTokens, result);
+            saved++;
             console.log({ index: `${index}/${recs.length}`, score, inputTokens, outputTokens, feedback })
 
         }
@@ -209,7 +226,8 @@ markdown
 
         // const feedback = await InstructorHelper.saveFeedback(submissionId, result.score, result, userId, inputTokens, outputTokens, sub_scores);
 
-        ctx.body = { success: true };
+        // skipped > 0 代表有幾筆 AI 回傳不能用、沒有寫入，再跑一次會重試
+        ctx.body = { success: true, saved, skipped };
     } catch (error) {
         console.error('Error in AI grading:', error);
         ctx.status = 500;

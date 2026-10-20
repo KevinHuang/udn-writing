@@ -17,6 +17,7 @@ import {
   seedTask, seedAssignment, seedSubmission, startFakeIdp, startServer, login, req,
   type TestServer,
 } from './helpers';
+import SubmissionFeedbackHelper from '../dal/submission_feedback_helper';
 
 const ACCOUNT = 'me@test.edu.tw';
 let srv: TestServer;
@@ -350,6 +351,33 @@ describe('同時存檔：同一篇只會留下一筆有效批改', () => {
     assert.equal(rows.length, 1);
     assert.equal(rows[0].is_returned, true, '每一次存檔讀到的「上一版」都是前一次存好的那一筆');
     assert.deepEqual(rows[0].sub_scores, subScores);
+  });
+});
+
+/**
+ * 批次補分（/admin/grading_subscores）的寫入。
+ *
+ * 以前 SQL 寫成 `sub_scores_input_tokens = $1, sub_scores_output_tokens = $2`，
+ * 而 $1 是批改的 id、$2 才是輸入 token —— 輸入欄存的是 id，輸出欄存的是輸入，
+ * 真正的輸出 token 數沒有存。（舊資料不修，使用者決定，2026-10-20）
+ * 那支路由沒有模擬模式、測試裡會去打真的 AI，所以這裡直接測 DAL。
+ */
+describe('批次補分寫入（saveSubscores）', () => {
+  test('輸入、輸出 token 各自存到對的欄位', async () => {
+    const { mySubmission, me } = await scenario();
+    await aiGraded(mySubmission, me.id, 4);
+    const fb = await rawDb.one(
+      `SELECT id::text FROM submission_feedback WHERE ref_submission_id = $1 AND is_valid = true`, [mySubmission]);
+
+    await SubmissionFeedbackHelper.saveSubscores(fb.id, 1234, 567, { theme_and_content_score: 4 });
+
+    const row = await rawDb.one(
+      `SELECT sub_scores, sub_scores_input_tokens, sub_scores_output_tokens, sub_scores_time
+         FROM submission_feedback WHERE id = $1`, [fb.id]);
+    assert.equal(row.sub_scores_input_tokens, 1234);
+    assert.equal(row.sub_scores_output_tokens, 567);
+    assert.deepEqual(row.sub_scores, { theme_and_content_score: 4 });
+    assert.ok(row.sub_scores_time);
   });
 });
 

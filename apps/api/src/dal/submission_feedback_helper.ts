@@ -70,14 +70,21 @@ class SubmissionFeedbackHelper {
         return (await db.default.manyOrNone(sql, [submission_id])) || [];
     }
 
+    /**
+     * 管理員批次補分（/admin/grading_subscores）寫入四向度。
+     *
+     * ⚠️ 以前 token 兩欄寫成 `$1`、`$2`，而 $1 是批改的 id —— 輸入欄存的是 id、
+     *    輸出欄存的是輸入 token，真正的輸出 token 數沒有存。2026-10-20 修正；
+     *    在那之前寫入的這兩欄不能信（舊資料不修，使用者決定）。
+     */
     public static async saveSubscores(feedback_id: string, inputTokens: number = 0, outputTokens: number = 0, sub_scores: any = undefined) {
 
         const sql = `
-            UPDATE public.submission_feedback 
-            SET 
+            UPDATE public.submission_feedback
+            SET
                 sub_scores = $4::jsonb,
-                sub_scores_input_tokens = $1,
-                sub_scores_output_tokens = $2,
+                sub_scores_input_tokens = $2,
+                sub_scores_output_tokens = $3,
                 sub_scores_time = now()
             WHERE
                 id = $1

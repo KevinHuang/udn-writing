@@ -3,7 +3,7 @@
 程式改好不等於事情做完。這一份列的是 **Claude Code 做不到、需要你去操作**的項目。
 技術規格在 `artifacts/spec.md`，這裡只放待辦。
 
-最後更新：2026-10-01（目前做到哪看 `artifacts/handoff.md`）
+最後更新：2026-10-20（目前做到哪看 `artifacts/handoff.md`）
 
 ---
 
@@ -69,6 +69,20 @@
 
 **先套 migration、再部署程式。** 008 沒套的話，新程式的課程清單會查不到 `course_showcase`，
 整個課程清單載不出來。008 可以用 `writing_mng` 執行（是新表，不必是 postgres）；001 需要 postgres 身分。
+
+### 0.4 同一篇只能有一筆有效批改：套 migration 011 與 012
+
+程式已經修好（`saveFeedback` 改成交易＋鎖住那篇繳交，2026-10-20），**不依賴這兩份，可以先上線**。
+這兩份是處理歷史殘留、再讓資料庫本身擋住重複：
+
+1. `docs/migrations/011-dedupe-valid-feedback.sql` —— 同一篇有兩筆以上有效批改的，只留最新一筆。
+   **`writing_mng` 就能執行。** 檔案開頭有唯讀的檢查查詢，正式庫請先跑一次看有幾篇；
+   被失效的那筆若已發還、留下的沒有，學生會看不到那篇成績，要人工判斷。開發庫（test2）檢查是 0 篇。
+2. `docs/migrations/012-one-valid-feedback-index.sql` —— 部分唯一索引。**必須用 postgres 執行**
+   （表的擁有者是 postgres）。還有重複時會直接中止，不會建到一半。
+
+四個資料庫都要套：`writing_classroom`（正式）、`writing_classroom_test`、`writing_classroom_test2`、
+`writing_classroom_autotest`（測試庫套了，測試才會走到資料庫這一道防護）。
 
 ### 1. 把 admin 驗證的修補部署上去
 

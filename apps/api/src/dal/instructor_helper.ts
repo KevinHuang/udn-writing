@@ -210,7 +210,20 @@ class InstructorHelper {
      * 舊版本留著但不再顯示（產品決定：改過之後不需要回看 AI 原版）。
      *
      * ⚠️ **先前完全沒有授權檢查** —— 任何教師都能批改任何一份作品。
-     *    現在整包在一個交易裡，第一件事就是確認這份繳交屬於你教的班。
+     *    現在第一件事就是確認這份繳交屬於你教的班（範圍寫在 SQL 裡）。
+     *
+     * ⚠️ **整段在一個交易裡，而且先鎖住那一篇繳交。**
+     *    以前「讀上一版 → 舊的全部失效 → 插入新版」是三句各自生效的 SQL，
+     *    同一篇同時存兩次就兩邊都插入：實測同時存 10 次，留下 9～10 筆
+     *    `is_valid = true`。教師端的查詢用 DISTINCT ON 只取一筆看不出來，
+     *    但學生端會出現兩筆、期末總結會把那一篇算兩次。
+     *    會撞上的情境：連按兩下、開兩個分頁、批次 AI 批改的同時老師在存同一篇、
+     *    授課教師與管理人員同時批同一篇。
+     *
+     *    鎖的是 submission 那一列（`FOR UPDATE OF s`）：同一篇的存檔排隊，
+     *    別篇不受影響。AI 呼叫在這之前就做完了，鎖只會持有幾毫秒。
+     *    資料庫另有部分唯一索引兜底（docs/migrations/012），
+     *    繞過這把鎖的寫入只會失敗，不會悄悄多出一筆。
      */
     public static async saveFeedback(
         submission_id: string, score: number, analysis_content: any, instructor_id: string, scope: CourseScope,
@@ -223,91 +236,100 @@ class InstructorHelper {
          */
         sub_scores?: SubScores | null,
     ) {
-        /*
-          instructor_id 與 scope 是兩件事，不要合併：
-          前者記錄「誰批的」（會寫進 submission_feedback.ref_user_id），
-          後者決定「可不可以批」。管理人員批改時兩者不同 ——
-          範圍是整個學校，但署名還是他本人。
-        */
-        const owned = await db.default.oneOrNone(
-            `SELECT s.id FROM submission s
-                 INNER JOIN assignment a ON a.id = s.ref_assignment_id
-             WHERE s.id = $1
-               AND a.ref_course_id IN ${courseScopeSubquery(scope)}`,
-            [submission_id]);
-        if (!owned) return null;
-
-        /*
-          **沿用前一筆有效批改的發還狀態。**
-
-          教師修改評語是「產生新版本」，不是「重新批改」—— 一份已經發還的
-          作品，老師改個錯字再存檔，它還是已發還的。新列的 is_returned 若吃
-          預設值 false，學生原本看得到的成績會**被無聲收回**
-          （實測：已發還的作品改完分數存檔，狀態退回「已批改」）。
-
-          在把舊版本設為失效**之前**讀，否則就讀不到了。
-        */
-        const previous = await db.default.oneOrNone(
-            `SELECT is_returned, sub_scores, sub_scores_time FROM public.submission_feedback
-              WHERE ref_submission_id = $1 AND is_valid = true
-              ORDER BY id DESC LIMIT 1`,
-            [submission_id]);
-        const wasReturned = previous?.is_returned === true;
-
-        /*
-          四向度同樣**沿用前一筆**（呼叫端沒給的時候）。理由與發還狀態相同：
-          老師存檔是產生新版本，新列的 sub_scores 吃預設值 null 的話，
-          每改一次評語四向度就消失，又得等管理員的批次補分。
-          產生時間跟著沿用；token 不沿用 —— 那是當初那次呼叫花的，抄過來會重複計算。
-        */
-        const inherit = sub_scores === undefined;
-        const subScores = inherit ? (previous?.sub_scores ?? null) : sub_scores;
-        const subScoresTime = inherit ? (previous?.sub_scores_time ?? null) : null;
-
-        await db.default.none(`UPDATE public.submission_feedback SET is_valid = false WHERE ref_submission_id = $1`, [submission_id]);
-
-        const sql = `
-            INSERT INTO public.submission_feedback (
-                ref_submission_id, 
-                score, 
-                content, 
-                is_valid, 
-                ref_user_id,
-                input_tokens,
-                output_tokens,
-                is_ai,
-                is_returned,
-                sub_scores,
-                sub_scores_time
-            ) VALUES (
-                $1, $2, $3::text, true, $4, $5, $6, $7, $8,
-                $9::jsonb,
-                -- 有四向度才有產生時間：沿用的帶舊時間，這次才產生的記現在
-                CASE WHEN $9::jsonb IS NULL THEN NULL ELSE COALESCE($10::timestamptz, now()) END
-            ) RETURNING id;
-        `;
         const contentStr = typeof analysis_content === 'string' ? analysis_content : JSON.stringify(analysis_content);
-        const saved = await db.default.oneOrNone(sql, [
-            submission_id, score || 0, contentStr, instructor_id, inputTokens, outputTokens, is_ai, wasReturned,
-            subScores == null ? null : JSON.stringify(subScores), subScoresTime,
-        ]);
+
+        const outcome = await db.default.tx('save-feedback', async (t) => {
+            /*
+              instructor_id 與 scope 是兩件事，不要合併：
+              前者記錄「誰批的」（會寫進 submission_feedback.ref_user_id），
+              後者決定「可不可以批」。管理人員批改時兩者不同 ——
+              範圍是整個學校，但署名還是他本人。
+
+              範圍檢查兼上鎖：同一篇的下一次存檔會停在這裡，等這個交易結束。
+            */
+            const owned = await t.oneOrNone(
+                `SELECT s.id FROM submission s
+                     INNER JOIN assignment a ON a.id = s.ref_assignment_id
+                 WHERE s.id = $1
+                   AND a.ref_course_id IN ${courseScopeSubquery(scope)}
+                 FOR UPDATE OF s`,
+                [submission_id]);
+            if (!owned) return null;
+
+            /*
+              **沿用前一筆有效批改的發還狀態。**
+
+              教師修改評語是「產生新版本」，不是「重新批改」—— 一份已經發還的
+              作品，老師改個錯字再存檔，它還是已發還的。新列的 is_returned 若吃
+              預設值 false，學生原本看得到的成績會**被無聲收回**
+              （實測：已發還的作品改完分數存檔，狀態退回「已批改」）。
+
+              在把舊版本設為失效**之前**讀，否則就讀不到了。拿到鎖之後才讀，
+              所以讀到的一定是前一次存檔已經生效的結果。
+            */
+            const previous = await t.oneOrNone(
+                `SELECT is_returned, sub_scores, sub_scores_time FROM public.submission_feedback
+                  WHERE ref_submission_id = $1 AND is_valid = true
+                  ORDER BY id DESC LIMIT 1`,
+                [submission_id]);
+            const wasReturned = previous?.is_returned === true;
+
+            /*
+              四向度同樣**沿用前一筆**（呼叫端沒給的時候）。理由與發還狀態相同：
+              老師存檔是產生新版本，新列的 sub_scores 吃預設值 null 的話，
+              每改一次評語四向度就消失，又得等管理員的批次補分。
+              產生時間跟著沿用；token 不沿用 —— 那是當初那次呼叫花的，抄過來會重複計算。
+            */
+            const inherit = sub_scores === undefined;
+            const subScores = inherit ? (previous?.sub_scores ?? null) : sub_scores;
+            const subScoresTime = inherit ? (previous?.sub_scores_time ?? null) : null;
+
+            await t.none(`UPDATE public.submission_feedback SET is_valid = false WHERE ref_submission_id = $1`, [submission_id]);
+
+            const saved = await t.one(`
+                INSERT INTO public.submission_feedback (
+                    ref_submission_id, 
+                    score, 
+                    content, 
+                    is_valid, 
+                    ref_user_id,
+                    input_tokens,
+                    output_tokens,
+                    is_ai,
+                    is_returned,
+                    sub_scores,
+                    sub_scores_time
+                ) VALUES (
+                    $1, $2, $3::text, true, $4, $5, $6, $7, $8,
+                    $9::jsonb,
+                    -- 有四向度才有產生時間：沿用的帶舊時間，這次才產生的記現在
+                    CASE WHEN $9::jsonb IS NULL THEN NULL ELSE COALESCE($10::timestamptz, now()) END
+                ) RETURNING id;
+            `, [
+                submission_id, score || 0, contentStr, instructor_id, inputTokens, outputTokens, is_ai, wasReturned,
+                subScores == null ? null : JSON.stringify(subScores), subScoresTime,
+            ]);
+            return { saved, isFirstGrading: !previous };
+        });
+        if (!outcome) return null;
 
         /*
           **第一次**批改完成（之前沒有有效的批改）才依標準自動蓋佳作。
           老師改評語、改分數再存檔都不算 —— 每篇只判斷一次（見 FeaturedRuleHelper）。
+          「是不是第一次」在交易裡、拿到鎖之後判斷，同時存兩次也只有一次算第一次。
 
-          蓋章失敗不能連累批改：分數與評語已經存進去了，這裡丟出例外的話
-          前端會以為批改失敗、老師重按一次又燒一次 AI。記下來就好，
-          老師照樣可以在清單上手動蓋。
+          刻意放在交易**提交之後**：蓋章失敗不能連累批改。分數與評語已經存進去了，
+          這裡丟出例外的話前端會以為批改失敗、老師重按一次又燒一次 AI。
+          記下來就好，老師照樣可以在清單上手動蓋。
         */
-        if (saved && !previous) {
+        if (outcome.isFirstGrading) {
             try {
                 await FeaturedRuleHelper.applyAfterFirstGrading(submission_id, score || 0, instructor_id);
             } catch (e) {
                 console.error('自動蓋佳作失敗（批改已存檔）:', e);
             }
         }
-        return saved;
+        return outcome.saved;
     }
 
     /**

@@ -294,6 +294,66 @@ describe('AI 批改', () => {
 });
 
 /**
+ * 同時存檔。
+ *
+ * saveFeedback 以前是三句各自生效的 SQL（讀上一版 → 舊的全部失效 → 插入新版），
+ * 同一篇同時存兩次就可能兩邊都插入，留下**兩筆 is_valid = true**。
+ * 教師端的查詢用 DISTINCT ON 只取一筆所以看不出來，但學生端會出現兩筆、
+ * 期末總結會把那一篇算兩次。會撞上的情境：連按兩下、開兩個分頁、
+ * 批次 AI 批改的同時老師在存同一篇、授課教師與管理人員同時批同一篇。
+ */
+describe('同時存檔：同一篇只會留下一筆有效批改', () => {
+  const N = 10;
+  const validRows = (subId: string) =>
+    rawDb.manyOrNone(
+      `SELECT score, is_returned, sub_scores FROM submission_feedback
+        WHERE ref_submission_id = $1 AND is_valid = true`, [subId]);
+  const saveManyAtOnce = (cookie: string, subId: string) =>
+    Promise.all(Array.from({ length: N }, (_, i) =>
+      saveFeedback(cookie, subId, (i % 6) + 1, { score: (i % 6) + 1, response: `第 ${i} 次存檔` })));
+
+  test(`已經批改過的作品同時存 ${N} 次 → 只有一筆有效，歷史全留著`, async () => {
+    const { mySubmission, me, cookie } = await scenario();
+    await aiGraded(mySubmission, me.id, 3);
+
+    const res = await saveManyAtOnce(cookie, mySubmission);
+    assert.deepEqual(res.map((r) => r.status), Array(N).fill(200), '每一次都存成功，只是排隊');
+
+    assert.equal((await validRows(mySubmission)).length, 1);
+    const { count } = await rawDb.one(
+      `SELECT count(*)::int FROM submission_feedback WHERE ref_submission_id = $1`, [mySubmission]);
+    assert.equal(count, N + 1, 'AI 那一版加上 N 次存檔，一筆都沒少');
+  });
+
+  test(`還沒批改的作品同時存 ${N} 次 → 只有一筆有效`, async () => {
+    const { mySubmission, cookie } = await scenario();
+    await saveManyAtOnce(cookie, mySubmission);
+    assert.equal((await validRows(mySubmission)).length, 1);
+  });
+
+  test('已發還、有四向度的作品同時存 → 留下的那一筆仍是已發還，四向度也還在', async () => {
+    const { mySubmission, me, cookie } = await scenario();
+    const subScores = {
+      theme_and_content_score: 4, theme_and_content_score_summary: '取材切題。',
+      structure_and_organization_score: 4, structure_and_organization_score_summary: '脈絡分明。',
+      diction_and_sentence_structure_score: 3, diction_and_sentence_structure_score_summary: '偶有贅詞。',
+      mechanics_and_punctuation_score: 5, mechanics_and_punctuation_score_summary: '標點正確。',
+    };
+    await rawDb.none(
+      `INSERT INTO submission_feedback (ref_submission_id, score, content, ref_user_id, is_ai, is_valid, is_returned, sub_scores, sub_scores_time)
+       VALUES ($1, 4, $2, $3, true, true, true, $4::jsonb, now())`,
+      [mySubmission, JSON.stringify({ score: 4, response: 'AI' }), me.id, JSON.stringify(subScores)]);
+
+    await saveManyAtOnce(cookie, mySubmission);
+
+    const rows = await validRows(mySubmission);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].is_returned, true, '每一次存檔讀到的「上一版」都是前一次存好的那一筆');
+    assert.deepEqual(rows[0].sub_scores, subScores);
+  });
+});
+
+/**
  * 四向度（submission_feedback.sub_scores）。
  *
  * 以前只有管理員手動打 /admin/grading_subscores 才會寫入；而老師每存一次評語，

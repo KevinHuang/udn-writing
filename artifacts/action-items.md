@@ -9,6 +9,24 @@
 
 ## 🔴 立刻
 
+### 0.0 部署 Node 26.12.1（2026-10-21 的 Node.js 安全更新）
+
+分支 `chore/node-26`（2026-10-22）。正式環境原本跑 `node:20-slim`，**Node 20 已停止支援，
+這次的修補（Brotli 遠端執行程式碼、TLS 主機名稱繞過等）不會出 20 版**。
+只換執行環境、不動程式，可以單獨先上。在 26.12.1 上測過什麼、怎麼退回，見 `docs/deploy.md` 的「Node 版本」。
+
+1. `npm run deploy:build` —— Cloud Build 是**第一次真的建這個映像檔**（本機沒有跑 Docker）。
+   紀錄裡要看到 `FROM node:26.12.1-slim`；結尾的 `npm warn install-scripts` 不是錯誤。
+2. `npm run deploy:run` → `npm run deploy:smoke` → **實際登入一次**（冒煙測試碰不到資料庫）。
+3. 上線後找機會實際走一次 AI 批改與照片上傳（GCS、Vertex AI 在測試裡都是假的）。
+
+另外兩件不在這個 repo 裡的：
+
+- **`ocr-job` 的映像檔**（原始碼不在這裡）如果也是 Node，請負責的人另外升到
+  22.23.4／24.22.1／26.12.1 以上。
+- **開發機都要裝 Node 26**：`nvm install 26.12.1`（Windows 用 nvm-windows），
+  Mac 的 nvm 再設 `nvm alias default 26.12.1`。版本太舊時 `npm install` 會出 `EBADENGINE` 警告。
+
 ### 0. 部署代繳交的安全修補（`09f1499`）
 
 兩支代繳交端點以前**完全沒有範圍檢查** —— 任一教師可以對任意學生、任意作業代繳交；

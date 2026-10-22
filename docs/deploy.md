@@ -40,6 +40,34 @@ bash scripts/smoke.sh http://localhost:3000
 踩過的坑：Dockerfile 原本有 `COPY tsconfig*.json ./` —— **根目錄沒有這個檔**
 （每個 workspace 各自有一份），建置會在那一步掛掉。
 
+### Node 版本
+
+正式環境的 Node 版本**只由 `apps/api/Dockerfile` 開頭的 `ARG NODE_VERSION` 決定**
+（建置與執行兩個階段共用），目前是 `26.12.1`。本機用根目錄的 `.nvmrc`，
+`package.json` 的 `engines` 是 `>=26.12.1`（版本太舊時 npm 會警告）。
+
+- **要升級：** `NODE_VERSION`、`.nvmrc`、`engines` 三處一起改，`@types/node` 的大版本跟著換。
+  Node 的安全更新通常一次修好幾條版本線，看 <https://nodejs.org/en/blog/vulnerability>
+  確認新的最低版本，再到 Docker Hub 確認 `node:<版本>-slim` 已經出了。
+- **2026-10-22 從 Node 20 升到 26.12.1**（10/21 的安全更新）。Node 20 在 2026-04-30 停止支援，
+  那次的修補沒有出 20 版。升級時在 26.12.1 上跑過：後端與前端整套測試、型別檢查、
+  兩個 workspace 的建置、用編譯後的 `dist/index.js` 啟動加冒煙測試、
+  對 `auth.ischool.com.tw`／`devapi.1campus.net`／GCS 的 TLS 連線。
+  後端正式相依裡唯一用到 Node 26 已移除 API 的是 `buffer-equal-constant-time`（`SlowBuffer`），
+  但它上層的 `jwa` 只在沒有 `crypto.timingSafeEqual` 時才載入，實際不會碰到。
+- **退回上一版：** 舊的 revision 還留著舊映像檔，把流量切回去就好（不必重建）：
+
+  ```bash
+  gcloud run revisions list --service=udn-writing-test --project=writing-classroom-672f8 --region=asia-east1
+  gcloud run services update-traffic udn-writing-test --project=writing-classroom-672f8 --region=asia-east1 \
+    --to-revisions=<舊 revision 名稱>=100
+  ```
+
+  ⚠️ 切回去之後流量會**固定**在那個 revision，下一次 `npm run deploy:run` 不會自動接手。
+  修好再部署後要跑 `update-traffic --to-latest`。
+- **建置紀錄裡的 `npm warn install-scripts`** 是 npm 11 預設不跑相依的安裝腳本，不是錯誤，
+  原因寫在 Dockerfile 的 `npm ci` 那一段。
+
 ---
 
 ## 環境變數

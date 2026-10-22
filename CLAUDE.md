@@ -26,6 +26,8 @@ npx tsc --noEmit -p apps/api/tsconfig.json
 npx tsc --noEmit -p apps/web/tsconfig.json
 ```
 
+- Node 版本看根目錄的 `.nvmrc`（26.12.1 以上）。正式環境的版本在 `apps/api/Dockerfile` 的
+  `NODE_VERSION`，兩邊要一起改（見 `docs/deploy.md` 的「Node 版本」）。
 - 只跑單一後端測試檔：在 `apps/api` 底下
   `npx tsx --env-file=../../.env --import ./src/test/setup.ts --test --test-concurrency=1 src/test/<檔名>.test.ts`
 - 後端整套測試跑的時候**不要改 `apps/api/src`**：測試檔是一支一支依序起程序的，

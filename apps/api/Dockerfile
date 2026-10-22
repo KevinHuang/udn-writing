@@ -44,11 +44,14 @@ COPY packages/shared/package.json ./packages/shared/
 
 # npm workspaces：一次裝好三個 workspace 的相依（含建置需要的 devDependencies）
 #
-# Node 26 附的 npm 11 **預設不執行相依套件的安裝腳本**，建置紀錄最後會列出
-# @google/genai、esbuild、fsevents、protobufjs 被略過（`npm warn install-scripts`）。這不是錯誤：
-# esbuild 從各平台的 @esbuild/* 套件找原生檔，不靠 postinstall；fsevents 只在 macOS 用；
+# Node 26 附的 npm 11 **預設不執行相依套件的安裝腳本**，被略過的會列在
+# `npm warn install-scripts` 底下。這不是錯誤。Cloud Build 上實際列出的是：
+#   這一步（npm ci）       @google/genai、esbuild、protobufjs
+#   執行階段的 npm install  @google/genai、protobufjs
+# （在 Mac 上 npm ci 還會多一個 fsevents —— 它只在 macOS 安裝。）
+# esbuild 從各平台的 @esbuild/* 套件找原生檔，不靠 postinstall；
 # protobufjs 的 postinstall 只是版本檢查；@google/genai 的 preinstall 只有一行 echo。
-# 略過的情況下建置、測試都實測通過（2026-10-22）。
+# 略過的情況下建置、測試都實測通過，2026-10-22 也照這樣建好上線了。
 RUN npm ci
 
 # 原始碼。

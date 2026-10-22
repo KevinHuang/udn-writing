@@ -9,16 +9,22 @@
 
 ## 🔴 立刻
 
-### 0.0 部署 Node 26.12.1（2026-10-21 的 Node.js 安全更新）
+### 0.0 Node 26.12.1 已上線，剩下驗證與收尾（2026-10-21 的 Node.js 安全更新）
 
-分支 `chore/node-26`（2026-10-22）。正式環境原本跑 `node:20-slim`，**Node 20 已停止支援，
-這次的修補（Brotli 遠端執行程式碼、TLS 主機名稱繞過等）不會出 20 版**。
-只換執行環境、不動程式，可以單獨先上。在 26.12.1 上測過什麼、怎麼退回，見 `docs/deploy.md` 的「Node 版本」。
+Cloud Run 服務原本跑 `node:20-slim`，**Node 20 已停止支援，這次的修補
+（Brotli 遠端執行程式碼、TLS 主機名稱繞過等）不會出 20 版**。
+在 26.12.1 上測過什麼、怎麼退回，見 `docs/deploy.md` 的「Node 版本」。
 
-1. `npm run deploy:build` —— Cloud Build 是**第一次真的建這個映像檔**（本機沒有跑 Docker）。
-   紀錄裡要看到 `FROM node:26.12.1-slim`；結尾的 `npm warn install-scripts` 不是錯誤。
-2. `npm run deploy:run` → `npm run deploy:smoke` → **實際登入一次**（冒煙測試碰不到資料庫）。
-3. 上線後找機會實際走一次 AI 批改與照片上傳（GCS、Vertex AI 在測試裡都是假的）。
+**2026-10-22 已部署**：revision `udn-writing-test-00015-c8x`、映像檔 `fb8eb69`（分支 `chore/node-26`）。
+Cloud Build 紀錄確認是 `node:26.12.1-slim`，冒煙測試 4/4 通過，啟動紀錄沒有錯誤或警告。
+程式與前一版（`f22535a`）完全相同，只換了 Node。還沒做的：
+
+1. **實際登入一次** —— 冒煙測試碰不到資料庫，登入寫 session 才算確認連得上。
+2. 找機會實際走一次 **AI 批改與照片上傳**（GCS、Vertex AI 在測試裡都是假的）。
+3. **把 `chore/node-26` 合併回 `main` 並 push。** 線上跑的 `fb8eb69` 在合併之前只存在
+   部署那台機器上；有人從還沒合併的 `main` 部署，就會把 Node 20 部署回去。
+4. 下課後用 Node 22 與 26 各跑一次後端整套測試做對照 —— 上線前那次在 26 上花了 44 分鐘
+   （平常約 19 分鐘），但當時是上課時段，還不能斷定是 Node 26 變慢（見 `handoff.md`）。
 
 另外兩件不在這個 repo 裡的：
 

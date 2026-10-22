@@ -55,7 +55,12 @@ bash scripts/smoke.sh http://localhost:3000
   對 `auth.ischool.com.tw`／`devapi.1campus.net`／GCS 的 TLS 連線。
   後端正式相依裡唯一用到 Node 26 已移除 API 的是 `buffer-equal-constant-time`（`SlowBuffer`），
   但它上層的 `jwa` 只在沒有 `crypto.timingSafeEqual` 時才載入，實際不會碰到。
-- **退回上一版：** 舊的 revision 還留著舊映像檔，把流量切回去就好（不必重建）：
+  當天部署為 revision `udn-writing-test-00015-c8x`（映像檔 `fb8eb69`）；
+  最後一個跑 Node 20 的是 `udn-writing-test-00014-wwc`（映像檔 `f22535a`）。
+- **Node 26 出問題時，優先改用 24.22.1，不要退回 Node 20。** 退回 `00014-wwc` 等於回到沒有修補的版本。
+  `NODE_VERSION`、`.nvmrc`、`engines` 改成 `24.22.1`，`@types/node` 換成 `^24`，重新 `npm run deploy`。
+  24.22.1 是同一次安全更新的 24 版，`node:24.22.1-slim` 已經有了。
+- **退回上一版：** 只有在連 24 都來不及建的時候才用。舊的 revision 還留著舊映像檔，把流量切回去就好（不必重建）：
 
   ```bash
   gcloud run revisions list --service=udn-writing-test --project=writing-classroom-672f8 --region=asia-east1

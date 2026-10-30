@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { GradingEditor } from "../components/GradingEditor";
 import { useAppState } from "../state/appStateContext";
@@ -24,9 +24,19 @@ export const GradingEditorPage: React.FC = () => {
   /**
    * 直接把批改頁的網址貼進來時，全域清單只有摘要（沒有作文）。
    * 補這一份作業的完整內容，否則開出來是一張空白稿。
+   *
+   * 補完之前不掛 GradingEditor：它把分數與評語收進自己的 useState，
+   * 先用摘要掛上去的話，評語是空的，完整的回來之後也不會更新。
    */
+  const [loadedFor, setLoadedFor] = useState<string | undefined>();
   useEffect(() => {
-    if (assignmentId) void ensureSubmissions(assignmentId);
+    if (!assignmentId) return;
+    let cancelled = false;
+    // 失敗也放行 —— ensureSubmissions 自己會記錯誤，有摘要總比一直轉圈好
+    void ensureSubmissions(assignmentId).then(() => {
+      if (!cancelled) setLoadedFor(assignmentId);
+    });
+    return () => { cancelled = true; };
   }, [assignmentId, ensureSubmissions]);
 
   /** 批次代繳交的辨識狀態：這一篇是不是「AI 辨識、還沒校對」、原稿在哪 */
@@ -43,6 +53,11 @@ export const GradingEditorPage: React.FC = () => {
    * 「重置批改」也不會出現。現查之後那個同步問題不存在了。
    */
   const submission = submissions.find((s) => s.id === submissionId);
+  // 已經有作文就是補過了（摘要的作文一律是空的），從清單點進來不必再等。
+  // 清單裡根本沒有這一份的，照舊交給下面的 404
+  if (submission && !submission.content && loadedFor !== assignmentId) {
+    return <div className="py-16 text-center text-text-muted text-body">載入中…</div>;
+  }
   if (!submission) return <NotFoundPage message="找不到這份作品，它可能已經被清除了。" />;
 
   const assign = assignments.find((a) => a.id === submission.assignmentId);

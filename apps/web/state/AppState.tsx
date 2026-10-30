@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   CURRENT_SEMESTER,
@@ -54,6 +54,7 @@ import {
   fetchFolders, createFolder, renameFolder, deleteFolder,
 } from "../api/folders";
 import { useApiList } from "./useApiList";
+import { rememberDetail, withDetail, type DetailCache } from "../lib/submissionDetail";
 import { selectableSemesters, type Semester } from "../lib/semester";
 import {
   fetchSession, switchIdentity, toUserRole, logout,
@@ -432,8 +433,16 @@ function useAppStateValue() {
    * 繳交分兩層：這裡載的是**摘要**（不含作文全文）—— 實測最忙的教師有
    * 2,091 筆、內容合計 2.8 MB，全部拉下來不可行。批改頁需要全文時再
    * 用 ensureSubmissions() 補那一份作業（見 api/submissions.ts）。
+   *
+   * 摘要換清單時要把補過的作文接回去，不然摘要晚一步回來就把作文蓋成空白
+   * （直接開批改頁網址時踩過，見 lib/submissionDetail.ts）。快取用 ref 而不是
+   * 讀當下的 submissions —— 補完整的 setState 可能還沒 render，讀到的會是舊的。
    */
-  const loadSubmissions = useCallback(() => fetchSubmissionSummary(), []);
+  const detailCache = useRef<DetailCache>(new Map());
+  const loadSubmissions = useCallback(
+    async () => withDetail(await fetchSubmissionSummary(), detailCache.current),
+    [],
+  );
   const {
     items: submissions, setItems: setSubmissions, reload: reloadSubmissions,
   } = useApiList<Submission>(loadSubmissions, teacherDataReady, activeIdentity);
@@ -588,6 +597,7 @@ function useAppStateValue() {
     if (!assignmentId) return;
     try {
       const full = await fetchSubmissionsByAssignment(assignmentId);
+      rememberDetail(detailCache.current, full);
       setSubmissions((prev) => {
         const others = prev.filter((s) => s.assignmentId !== assignmentId);
         return [...others, ...full];

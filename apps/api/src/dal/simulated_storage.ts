@@ -1,4 +1,7 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 /**
  * 不打 GCS 的上傳（測試與本機開發用）。
@@ -25,11 +28,34 @@ export function resetStorageCalls(): void {
 }
 
 /**
- * 回一個跟真的一樣形狀的檔名（`<prefix><uuid>.<ext>`），但不存任何東西。
+ * 本機假儲存的資料夾（系統暫存區底下）。存真的檔案，逐格辨識才讀得回照片、
+ * 本機的原稿縮圖也不再是破圖。重開機或清暫存就沒了 —— 只給開發與測試用。
+ */
+export const FAKE_STORAGE_DIR = path.join(os.tmpdir(), 'udn-writing-fake-storage');
+
+function fakePath(objectPath: string): string | null {
+    if (!objectPath || objectPath.startsWith('/') || objectPath.split('/').includes('..')) return null;
+    return path.join(FAKE_STORAGE_DIR, ...objectPath.split('/'));
+}
+
+/**
+ * 回一個跟真的一樣形狀的檔名（`<prefix><uuid>.<ext>`），檔案存在本機暫存區。
  * 形狀要一樣 —— 下游（前端補路徑、ocr-job）靠的就是這個格式。
  */
-export function fakeUpload(folder: string, fileNamePrefix: string, extension: string, bytes: number): string {
+export function fakeUpload(folder: string, fileNamePrefix: string, extension: string, data: Buffer): string {
     const fileName = `${fileNamePrefix}${crypto.randomUUID()}.${extension}`;
-    storageCalls.push({ folder, fileName, bytes });
+    storageCalls.push({ folder, fileName, bytes: data.length });
+    const p = fakePath(`${folder}/${fileName}`);
+    if (p) {
+        fs.mkdirSync(path.dirname(p), { recursive: true });
+        fs.writeFileSync(p, data);
+    }
     return fileName;
+}
+
+/** 讀回 fakeUpload 存的檔案；沒有就回 null */
+export function fakeRead(objectPath: string): Buffer | null {
+    const p = fakePath(objectPath);
+    if (!p || !fs.existsSync(p)) return null;
+    return fs.readFileSync(p);
 }

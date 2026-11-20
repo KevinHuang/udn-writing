@@ -21,6 +21,12 @@
 照 `docs/ocr-job.md` 對**一位學生、一張照片**跑一次，回答表格裡的七個問題。
 另外 Cloud Run 的服務帳號需要 `run.jobs.run`（見 `docs/deploy.md` 的第 4 點）。
 
+### 0.15 稿紙逐格辨識上線前（分支 `feat/grid-ocr`）
+
+照 `docs/grid-ocr.md` 的「部署」做：正式庫套 migration 011（**先於程式**）、部署 Python 服務 `handwriting-ocr`
+（不開放匿名）、建 Cloud Run Job `grid-ocr-job`（自動重試關掉）、設權限、API 加 `GRID_OCR_SERVICE_URL`。
+然後印一張稿紙手寫、實際代繳交跑一次，確認 Gemini 模型在 Vertex 上可用。沒設 `GRID_OCR_SERVICE_URL` 時功能不啟用，所以程式可以先上、服務晚點再部署 —— **但 migration 011 一定要先套**（辨識進度那支查詢會用到新表）。
+
 ### 0.2 上線前移除開發用登入
 
 `apps/api/src/auth/dev_login.ts` 在 `2a5efc5` 被一起 commit 進去了。

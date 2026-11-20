@@ -32,8 +32,10 @@ import {
   type ProxyStatus,
 } from '../api/proxySubmissions';
 import { prepareProxyImage } from '../lib/proxy/image';
+import { ApiError } from '../api/client';
 import {
   countStatuses,
+  failureReasonOf,
   proxyBatchSummary,
   proxyOcrStatusOf,
   retryTargets,
@@ -286,7 +288,8 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
           commitQueue(markDone(queueRef.current, job.id));
           void refresh();
         } catch (e) {
-          commitQueue(markFailed(queueRef.current, job.id, messageOf(e)));
+          // 422＝伺服器看過照片說要重拍（「我的稿紙」印的稿紙缺角、格子對不準…），重傳沒用
+          commitQueue(markFailed(queueRef.current, job.id, messageOf(e), e instanceof ApiError && e.status === 422));
         }
         pump();
       })();
@@ -606,7 +609,23 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                     </div>
                   )}
 
-                  {failedJob && (
+                  {failedJob?.retake && (
+                    <div id="proxysubmit-retake" className="flex items-center gap-3 bg-danger-100 border border-danger-200 rounded-xl px-4 py-3">
+                      <AlertTriangle size={16} className="text-danger-600 shrink-0" />
+                      <p className="flex-1 text-caption text-danger-700">
+                        {failedJob.error} 照片沒有收下，請趁稿紙還在手邊重拍。
+                      </p>
+                      <button
+                        id="proxysubmit-btn-retake"
+                        onClick={() => setScannerOpen(true)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border text-body text-text-primary hover:bg-surface-soft whitespace-nowrap"
+                      >
+                        <ScanLine size={14} className="shrink-0" />
+                        重拍
+                      </button>
+                    </div>
+                  )}
+                  {failedJob && !failedJob.retake && (
                     <div className="flex items-center gap-3 bg-danger-100 border border-danger-200 rounded-xl px-4 py-3">
                       <AlertTriangle size={16} className="text-danger-600 shrink-0" />
                       <p className="flex-1 text-caption text-danger-700">
@@ -767,8 +786,12 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                           <span className="text-caption text-text-muted font-mono shrink-0 w-10">
                             {seatText(s.seatNo)}
                           </span>
-                          <span className="flex-1 min-w-0 truncate text-body text-text-primary">
-                            {s.studentName}
+                          <span className="flex-1 min-w-0 text-body text-text-primary">
+                            <span className="block truncate">{s.studentName}</span>
+                            {/* 逐格辨識記得失敗原因（例如缺角請重拍）；ocr-job 是黑箱，沒有 */}
+                            {st === 'failed' && failureReasonOf(row, clockMs) && (
+                              <span className="block text-caption text-danger-700">{failureReasonOf(row, clockMs)}</span>
+                            )}
                           </span>
                           {row && (
                             <span className="hidden sm:inline text-caption text-text-muted shrink-0">

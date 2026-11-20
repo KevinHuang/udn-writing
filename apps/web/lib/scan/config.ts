@@ -7,13 +7,13 @@
  */
 
 /**
- * OpenCV.js 的來源，依序嘗試。
+ * OpenCV.js 的備援來源：跟著網站一起部署的那份（見 opencv.ts 的 OPENCV_URLS）下載失敗時才用。
  *
- * ⚠ 這個檔約 10MB，而且是從 CDN 下載的。正式上線前應該把 opencv.js
- * 放進專案自行託管（放在 public/ 之下），並把它排在第一個 ——
- * 學校網路擋掉 CDN 或離線時，掃描功能會整個不能用。
+ * 版本要與 package.json 的 @techstark/opencv-js 一致；升級時一併更新授權聲明
+ * public/licenses/opencv.txt（OpenCV 是 Apache 2.0，隨網站提供時要附授權條款與版權聲明）。
+ * test/scanOpencvLicense.test.tsx 會檢查三者一致。
  */
-export const OPENCV_URLS = [
+export const OPENCV_FALLBACK_URLS = [
   'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js',
   'https://docs.opencv.org/4.x/opencv.js',
 ];
@@ -89,13 +89,26 @@ export const SCAN_CONFIG = {
   detectIntervalMs: 110,
   /**
    * 連續這麼多幀找不到紙張，就跑一次完整偵測（含色彩遮罩那條路徑）。
-   * 8 幀約 1 秒。平常用快的，木紋桌面之類的情況才付那個成本。
+   * 平常用快的，木紋桌面之類的情況才付那個成本。
+   * 原本 8 幀（約 1 秒）：校園版的老師反映「不容易抓到邊」，有花紋的桌面前 1 秒都框不到。
+   * 改成 3 幀（約 0.3 秒）就換完整偵測；找到了就回到快的那條。
    */
-  fullDetectAfterMisses: 8,
+  fullDetectAfterMisses: 3,
   stillDetectLongSide: 1280,
-  stableDurationMs: 1000,
+  /**
+   * 對齊良好後要保持不動多久才自動拍。原本 1000ms，校園版的老師反映比 Google 雲端硬碟慢，
+   * 改成 600ms；拍之前仍會檢查清晰度（minSharpness），拍糊的照樣擋下來。
+   */
+  stableDurationMs: 600,
   /** 自動拍照門檻：紙張至少佔畫面 30%（太小提示「請靠近一點」） */
   minCaptureAreaRatio: 0.3,
+  /**
+   * 相機畫面上的對齊框佔相機影像多大（長邊比例，見 geometry.ts 的 guideRect）。
+   * 和 minCaptureAreaRatio、frameMarginRatio 綁在一起：稿紙填滿框時要過得了這兩條，
+   * 而且稿紙比框小一點（約 85%）也要過 —— 手機直拿拍橫式稿紙是最緊的情況（約 0.45 → 0.33）。
+   * 調小這個數字之前先跑 test/scanGeometry.test.tsx。
+   */
+  guideFill: 0.92,
   /** 自動拍照門檻：四個角與 90° 相差不超過 20°（太斜提示「請與紙面平行」） */
   maxSkewDeg: 20,
   /** 四條邊之中最差的一條，至少 55% 取樣點要貼在真實邊緣上 */
@@ -103,12 +116,19 @@ export const SCAN_CONFIG = {
   /** 四個角離畫面邊緣至少 2%（整張紙要完整入鏡） */
   frameMarginRatio: 0.02,
   edgeSamples: 24,
-  /** 四角位移容許值（畫面對角線比例） */
-  stableTolerance: 0.02,
+  /**
+   * 四角位移容許值（畫面對角線比例），超過就重新計算「保持不動」的時間。
+   * 原本 2%：拿著手機拍時手微微一晃就重來，遲遲拍不下去；放寬到 3%。
+   */
+  stableTolerance: 0.03,
   /** Laplacian 變異數下限，低於此值視為畫面模糊 */
   minSharpness: 15,
-  /** 開啟相機後等待對焦的時間 */
-  warmupMs: 1200,
+  /**
+   * 開啟相機後等待對焦的時間，這段時間內不自動拍。原本 1200ms，加上保持不動就要 2.2 秒以上；
+   * 手機已經設成持續自動對焦（focusMode: continuous），縮短成 600ms。
+   * （校園版用模擬相機實測：按下開始拍照到自動拍好 2.73 秒 → 1.73 秒）
+   */
+  warmupMs: 600,
 
   /* ---------- 文件四邊形過濾 ---------- */
   minDocAreaRatio: 0.15,

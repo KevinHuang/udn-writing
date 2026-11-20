@@ -8,7 +8,7 @@
 
 import { SCAN_CONFIG } from './config';
 import { getCv, type Mat } from './opencv';
-import { clamp, dist, orderClockwise, type Point } from './geometry';
+import { clamp, dist, orderClockwise, warpTargetSize, type Point } from './geometry';
 import { canvasToBlob } from './image';
 
 /** 結果要用哪一種樣式 */
@@ -21,32 +21,19 @@ export const VARIANT_LABEL: Record<ScanVariant, string> = {
 };
 
 /**
- * 透視變換：把四邊形拉正成矩形。
+ * 透視變換：把四邊形拉正成矩形，**保留拍到的方向**（成品尺寸見 warpTargetSize）。
  *
- * ⚠️ **一律轉成橫的**：長邊擺水平，直的稿紙就把右緣當上緣轉 90°。
- *    這是為 A3／B4 橫式稿紙寫的，直式作文稿紙拍完會變成躺著的
- *    —— 使用者得自己按結果頁的旋轉鍵轉正。要改的是這裡的假設
- *    （改成保留原方向），但那會動到既有橫式稿紙的裁切與 OCR 輸入，
- *    所以先留著，畫面上以旋轉鍵補救。
+ * ⚠️ 以前這裡一律把長邊擺水平，直式作文稿紙拍完就躺著，學生得自己按旋轉鍵。
+ *    也不要改成「猜」方向：校園版曾對國文把直的紙轉成橫的，手機轉錯邊或拍直式紙時
+ *    照片被存成轉 90° 或上下顛倒，辨識大量失敗，已撤回。拍照畫面標「上方」提醒對準，
+ *    方向還是不對時由使用者在結果頁用左轉／右轉轉正。
  */
 export function warpDocument(srcMat: Mat, points: Point[]): Mat {
   const cv = getCv();
-  let o = orderClockwise(points);
-  let width = Math.max(dist(o[0], o[1]), dist(o[3], o[2]));
-  let height = Math.max(dist(o[0], o[3]), dist(o[1], o[2]));
-
-  if (height > width) {
-    o = [o[1], o[2], o[3], o[0]];
-    [width, height] = [height, width];
-  }
-
-  let ratio = width / height;
-  // 量出來的比例接近 A3／B4 就直接採用標準比例，避免每張掃出來都差一點
-  if (Math.abs(ratio - SCAN_CONFIG.paperRatio) / SCAN_CONFIG.paperRatio < SCAN_CONFIG.snapTolerance) {
-    ratio = SCAN_CONFIG.paperRatio;
-  }
-  const W = Math.round(clamp(width * 1.2, 1000, SCAN_CONFIG.outputLongSide));
-  const H = Math.round(W / ratio);
+  const o = orderClockwise(points);
+  const measuredW = Math.max(dist(o[0], o[1]), dist(o[3], o[2]));
+  const measuredH = Math.max(dist(o[0], o[3]), dist(o[1], o[2]));
+  const { width: W, height: H } = warpTargetSize(measuredW, measuredH);
 
   const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, o.flatMap((p) => [p.x, p.y]));
   const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, W, 0, W, H, 0, H]);

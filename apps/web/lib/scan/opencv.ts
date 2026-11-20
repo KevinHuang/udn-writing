@@ -3,7 +3,17 @@
    把 any 全部關在這一個檔案裡：其他模組只透過 getCv() 取得它，
    不需要再各自宣告 any。 */
 
-import { OPENCV_URLS, SCAN_CONFIG } from './config';
+import selfHostedOpenCvUrl from '@techstark/opencv-js/dist/opencv.js?url';
+import { OPENCV_FALLBACK_URLS, SCAN_CONFIG } from './config';
+
+/**
+ * OpenCV.js 的來源，依序嘗試。
+ *
+ * 第一個是跟著本系統一起部署的那份（Vite 以 ?url 把它複製成 dist/assets 底下帶雜湊的檔案，
+ * 不會進任何 JS chunk，只有打開掃描器或 preloadOpenCv 時才下載）：
+ * 學校網路常擋外部 CDN，只靠 CDN 的話掃描功能會整個不能用。CDN 只當備援。
+ */
+export const OPENCV_URLS = [selfHostedOpenCvUrl, ...OPENCV_FALLBACK_URLS];
 
 /** OpenCV.js 的模組本體 */
 export type Cv = any;
@@ -105,6 +115,40 @@ export function loadOpenCv(): Promise<void> {
   });
 
   return loading;
+}
+
+/**
+ * 趁空檔先下載 OpenCV.js：使用者「很可能」要拍照時呼叫（老師打開批次代繳交視窗、
+ * 學生打開可以交作文的作文頁），真的按下拍照時就不用再等「影像處理工具下載中」。
+ *
+ * - 等 delayMs 後、瀏覽器有空檔才開始，不和頁面本身搶資源。
+ * - 手機開了「省數據」就不先下載（真的要拍時才載，跟原本一樣）。
+ * - 失敗不吵：loadOpenCv 失敗會清掉狀態，真的要掃描時會再試一次。
+ * @returns 取消函式（還沒開始下載前離開頁面就不下載），可以直接當 useEffect 的清除函式
+ */
+export function preloadOpenCv(delayMs = 1500): () => void {
+  if (ready || loading) return () => {};
+  const connection = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
+  if (connection?.saveData) return () => {};
+
+  let idleId: number | null = null;
+  const start = () => {
+    void loadOpenCv().catch(() => {
+      /* 真的要掃描時會再試，這裡不打擾使用者 */
+    });
+  };
+  const timer = window.setTimeout(() => {
+    if (typeof window.requestIdleCallback === 'function') {
+      idleId = window.requestIdleCallback(start, { timeout: 3000 });
+    } else {
+      start();
+    }
+  }, delayMs);
+
+  return () => {
+    window.clearTimeout(timer);
+    if (idleId !== null && typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(idleId);
+  };
 }
 
 /** 已經載好的 OpenCV。還沒載好就丟錯 —— 呼叫端應該先 await loadOpenCv() */

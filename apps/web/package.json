@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.1",
+    "@techstark/opencv-js": "4.10.0-release.1",
     "@tiptap/extension-link": "^3.31.3",
     "@tiptap/extension-table": "^3.31.3",
     "@tiptap/extension-task-item": "^3.31.3",

@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { routes } from '../lib/routes';
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ArrowLeft, 
   Send, 
@@ -37,6 +37,7 @@ import {
 } from '../lib/scan/pages';
 import { ConfirmDialog } from './ConfirmDialog';
 import { blobToBase64 } from '../lib/scan/image';
+import { preloadOpenCv } from '../lib/scan/opencv';
 import { countWords } from '../lib/wordCount';
 
 /**
@@ -150,6 +151,9 @@ export const StudentEssayEditor: React.FC<StudentEssayEditorProps> = ({
    * 已截止或已批改就不給選 —— 選了也交不出去，只是讓人白做（新版也這樣擋）。
    */
   const showMethodChooser = !isLocked && showMethodSelector && !content;
+
+  // 還能交作文時，趁空檔先下載掃描稿紙用的影像處理工具，按下拍照時不用再等「下載中」
+  useEffect(() => (isLocked ? undefined : preloadOpenCv()), [isLocked]);
 
   /**
    * 存草稿。

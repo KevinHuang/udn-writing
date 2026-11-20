@@ -1,19 +1,32 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Camera, Flashlight, RefreshCw, X } from 'lucide-react';
+import { Camera, Flashlight, RectangleHorizontal, RectangleVertical, RefreshCw, X } from 'lucide-react';
 import { SCAN_CONFIG, VIRTUAL_CAMERA_PATTERN } from '../../lib/scan/config';
 import { getCv, isCvReady, cvErrorMessage, type Mat } from '../../lib/scan/opencv';
 import { detectDocument, imageSharpness } from '../../lib/scan/detect';
 import {
   clamp,
+  guideRect,
   maxDisplacement,
   quadGeometry,
   smoothPoints,
+  topLabelPosition,
+  videoRect,
   type Point,
 } from '../../lib/scan/geometry';
 import { FrameTimings, type PerfSummary } from '../../lib/scan/perf';
 import { previewTargetSize, shouldApplyPreview } from '../../lib/scan/preview';
 import { isScanDebug, toggleScanDebug } from '../../lib/scan/debug';
+import { scanViewMode } from '../../lib/scan/orientation';
+import { readPaperOrientation, savePaperOrientation } from '../../lib/scan/paperOrientation';
+import { useViewportSize } from '../../lib/useViewportSize';
 import { ScanDebugHud } from './ScanDebugHud';
+
+/** 橫的畫面右手邊那一欄的寬度（px）。對齊框要讓出同樣的寬度，兩邊要一起改 */
+const LANDSCAPE_COLUMN_PX = 120;
+/** 直的畫面頂端那一條（關閉、對齊狀態、張數）的高度（px），「上方」小標不能放進去 */
+const PORTRAIT_TOP_BAR_PX = 72;
+/** 直的畫面下方留給快門那一排的高度（px）。相機影像縮在這上面，<video> 的高度也要一起扣 */
+const PORTRAIT_CONTROLS_PX = 100;
 
 /** 拍照當下預覽畫面最後框到的四角。高解析照片偵測失敗時可以沿用 */
 export interface LiveHint {
@@ -264,6 +277,21 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
   const startedAtRef = useRef(0);
   const autoRef = useRef(autoCapture);
 
+  /** 畫面是橫的（手機橫拿）時，快門那一排改放右手邊（lib/scan/orientation.ts） */
+  const viewport = useViewportSize();
+
+  /*
+    對齊框是橫框還是直框：跟著稿紙，不跟著手機（見 guideRect）。
+    預設橫式，使用者切換過就記在這台裝置上。疊圖在 setTimeout 的迴圈裡畫，讀 ref。
+  */
+  const [paper, setPaper] = useState(readPaperOrientation);
+  const paperRef = useRef(paper);
+  useEffect(() => {
+    paperRef.current = paper;
+    savePaperOrientation(paper);
+  }, [paper]);
+  const landscape = scanViewMode(viewport.width, viewport.height) === 'landscape';
+
   const [status, setStatus] = useState('啟動相機中…');
   const [aligned, setAligned] = useState(false);
   const [info, setInfo] = useState('');
@@ -351,19 +379,18 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cw, ch);
 
-    // A3 比例的對齊框，外圍壓暗
-    const ratio = SCAN_CONFIG.paperRatio;
-    const reserve = 100;
-    let g: { x: number; y: number; w: number; h: number };
-    if (cw >= ch) {
-      const availW = cw - reserve;
-      const w = Math.min(availW * 0.9, ch * 0.86 * ratio);
-      g = { x: (availW - w) / 2, y: (ch - w / ratio) / 2, w, h: w / ratio };
-    } else {
-      const availH = ch - reserve;
-      const h = Math.min(availH * 0.9, cw * 0.86 * ratio);
-      g = { x: (cw - h / ratio) / 2, y: (availH - h) / 2, w: h / ratio, h };
-    }
+    /*
+      相機影像完整顯示（object-fit: contain，見 geometry.ts 的 videoRect），
+      對齊框畫在影像裡面、形狀跟著稿紙方向：稿紙填滿這個框就過得了自動拍照的門檻。
+    */
+    const frame = videoRect(
+      video.videoWidth,
+      video.videoHeight,
+      cw,
+      ch,
+      cw >= ch ? LANDSCAPE_COLUMN_PX : PORTRAIT_CONTROLS_PX,
+    );
+    const g = guideRect(frame, paperRef.current);
 
     ctx.fillStyle = 'rgba(0,0,0,.28)';
     ctx.beginPath();
@@ -396,16 +423,39 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
       ctx.stroke();
     });
 
+    /*
+      「上方」標示：框的上緣畫成琥珀色，小標貼在框線外面。
+      照片照拍到的方向存（見 warpDocument），所以要提醒使用者把稿紙頂端對準這裡，
+      拍完才不用再轉。顏色是固定的琥珀色：疊在相機影像上，不跟著深淺色主題翻。
+    */
+    ctx.strokeStyle = '#EF9F27';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(g.x + len, g.y);
+    ctx.lineTo(g.x + g.w - len, g.y);
+    ctx.stroke();
+    const labelText = '⬆ 上方';
+    ctx.font = '600 12px system-ui, sans-serif';
+    const label = { w: ctx.measureText(labelText).width + 14, h: 20 };
+    const pos = topLabelPosition(g, label, 4, cw >= ch ? 0 : PORTRAIT_TOP_BAR_PX);
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.beginPath();
+    // roundRect 要 iOS 16 以上；更舊的 Safari 退回直角
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(pos.x, pos.y, label.w, label.h, 10);
+    else ctx.rect(pos.x, pos.y, label.w, label.h);
+    ctx.fill();
+    ctx.fillStyle = '#FAC775';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(labelText, pos.x + 7, pos.y + label.h / 2 + 1);
+
     if (!points) return;
 
-    // 影片座標 → 畫面座標（video 用 object-fit: cover）
+    // 影片座標 → 畫面座標（video 用 object-fit: contain，影像就在 frame 那一塊）
     const vw = video.videoWidth;
     const vh = video.videoHeight;
     if (!vw || !vh) return;
-    const s = Math.max(cw / vw, ch / vh);
-    const dx = (cw - vw * s) / 2;
-    const dy = (ch - vh * s) / 2;
-    const sp = points.map((p) => ({ x: p.x * s + dx, y: p.y * s + dy }));
+    const s = frame.w / vw;
+    const sp = points.map((p) => ({ x: p.x * s + frame.x, y: p.y * s + frame.y }));
 
     // 對齊良好是石綠，框到但還不夠好是赭石
     const color = good ? '#5C7A63' : '#BE8B5D';
@@ -862,6 +912,46 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
     }
   };
 
+  const closeButton = (
+    <button
+      id="scanner-btn-close-camera"
+      onClick={onClose}
+      title="關閉相機"
+      className="tap-target w-10 h-10 shrink-0 rounded-full bg-black/50 text-white flex items-center justify-center backdrop-blur-sm"
+    >
+      <X size={18} />
+    </button>
+  );
+  const statusPill = (
+    <div
+      className={`px-3 py-1.5 rounded-full text-caption backdrop-blur-sm ${
+        // 橫拿時在 120px 寬的欄裡，長一點的狀態（「自動拍照中，請勿移動…」）要能換行
+        landscape ? 'text-center rounded-2xl max-w-full' : 'whitespace-nowrap'
+      } ${aligned ? 'bg-success-600 text-on-solid' : 'bg-black/55 text-white'}`}
+    >
+      {status}
+    </div>
+  );
+  /*
+    頁數優先；解析度留在 title 裡，除錯時用得到。
+    長按 800ms 切換效能診斷 —— 現場遇到「這支手機特別慢」時，
+    不必重打網址就能把數字叫出來（另一條是 ?scandebug=1）。
+  */
+  const pageBadge = (
+    <div
+      id="scanner-camera-pagecount"
+      title={info}
+      onPointerDown={startDebugPress}
+      onPointerUp={cancelDebugPress}
+      onPointerLeave={cancelDebugPress}
+      onPointerCancel={cancelDebugPress}
+      onContextMenu={(e) => e.preventDefault()}
+      className="px-2 py-1.5 rounded-full bg-black/40 text-white text-caption tabular-nums whitespace-nowrap select-none max-w-full truncate"
+    >
+      {pageCount > 0 ? `已收 ${pageCount} 張` : info}
+    </div>
+  );
+
   return (
     <div className="absolute inset-0 bg-black">
       <video
@@ -869,80 +959,78 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
         playsInline
         muted
         autoPlay
-        className="absolute inset-0 w-full h-full object-cover"
+        /*
+          object-contain：整張相機影像都看得到，畫面上的邊就是相機的邊（見 geometry.ts 的 videoRect）。
+          <video> 只佔快門那一排以外的區域，尺寸要和 videoRect 的可用區域一致。
+        */
+        className={`absolute left-0 top-0 object-contain ${
+          landscape ? 'h-full w-[calc(100%-120px)]' : 'w-full h-[calc(100%-100px)]'
+        }`}
       />
       <canvas ref={overlayRef} className="absolute inset-0 w-full h-full" />
 
-      {/* 狀態列 */}
-      <div className="absolute top-0 inset-x-0 flex items-start justify-between gap-3 p-3 sm:p-4">
-        <button
-          id="scanner-btn-close-camera"
-          onClick={onClose}
-          title="關閉相機"
-          className="tap-target w-10 h-10 shrink-0 rounded-full bg-black/50 text-white flex items-center justify-center backdrop-blur-sm"
-        >
-          <X size={18} />
-        </button>
-        <div
-          className={`px-3 py-1.5 rounded-full text-caption backdrop-blur-sm whitespace-nowrap ${
-            aligned ? 'bg-success-600 text-on-solid' : 'bg-black/55 text-white'
-          }`}
-        >
-          {status}
+      {/*
+        狀態列的三樣東西：關閉、對齊狀態、張數。
+        直的畫面放頂端一條；橫的畫面（手機橫拿）收進右手邊那一欄 ——
+        橫拿時畫面只有三百多 px 高，頂端那條會直接壓在對齊框的上緣，框看不完整（2026-11-20 手機實測）。
+      */}
+      {!landscape && (
+        <div className="absolute top-0 inset-x-0 flex items-start justify-between gap-3 p-3 sm:p-4">
+          {closeButton}
+          {statusPill}
+          {pageBadge}
         </div>
-        {/*
-          頁數優先；解析度留在 title 裡，除錯時用得到。
-          長按 800ms 切換效能診斷 —— 現場遇到「這支手機特別慢」時，
-          不必重打網址就能把數字叫出來（另一條是 ?scandebug=1）。
-        */}
-        <div
-          id="scanner-camera-pagecount"
-          title={info}
-          onPointerDown={startDebugPress}
-          onPointerUp={cancelDebugPress}
-          onPointerLeave={cancelDebugPress}
-          onPointerCancel={cancelDebugPress}
-          onContextMenu={(e) => e.preventDefault()}
-          className="px-2 py-1.5 rounded-full bg-black/40 text-white text-caption tabular-nums whitespace-nowrap select-none"
-        >
-          {pageCount > 0 ? `已收 ${pageCount} 張` : info}
-        </div>
-      </div>
+      )}
 
       {/*
-        控制列。底部多留 iPhone 的安全區（home indicator 那一條），
+        控制列。直的畫面在底部，底部多留 iPhone 的安全區（home indicator 那一條），
         不留的話快門會壓在橫線上，按下去常常變成滑回主畫面。
+
+        橫的畫面（手機橫拿）改成右手邊一欄，連同關閉、對齊狀態、張數一起：
+        放在底部會蓋掉矮矮的畫面下緣，稿紙的底邊正好被壓在快門後面。
+        對齊框（guideRect）替這一欄留了 LANDSCAPE_COLUMN_PX；右側同樣留安全區（瀏海或圓角那一邊）。
       */}
-      <div className="absolute bottom-0 inset-x-0 flex items-center justify-center gap-5 sm:gap-8 p-5 sm:p-6 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
-        <button
-          id="scanner-btn-torch"
-          onClick={toggleTorch}
-          disabled={!hasTorch}
-          title={hasTorch ? '閃光燈' : '此鏡頭不支援閃光燈'}
-          className={`tap-target w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-sm transition-colors ${
-            torchOn ? 'bg-warning-500 text-on-solid' : 'bg-black/50 text-white'
-          } disabled:opacity-35`}
-        >
-          <Flashlight size={18} />
-        </button>
+      <div
+        className={
+          landscape
+            ? 'absolute right-0 inset-y-0 w-[120px] flex flex-col items-center justify-between gap-2 py-3 px-2 pr-[calc(0.5rem+env(safe-area-inset-right))] bg-black/35'
+            : 'absolute bottom-0 inset-x-0 flex items-center justify-center gap-5 sm:gap-8 p-5 sm:p-6 pb-[calc(1.25rem+env(safe-area-inset-bottom))]'
+        }
+      >
+        {landscape && closeButton}
+        {landscape && statusPill}
+        <div className={landscape ? 'flex flex-col items-center gap-3' : 'contents'}>
+          <button
+            id="scanner-btn-torch"
+            onClick={toggleTorch}
+            disabled={!hasTorch}
+            title={hasTorch ? '閃光燈' : '此鏡頭不支援閃光燈'}
+            className={`tap-target w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-sm transition-colors ${
+              torchOn ? 'bg-warning-500 text-on-solid' : 'bg-black/50 text-white'
+            } disabled:opacity-35`}
+          >
+            <Flashlight size={18} />
+          </button>
 
-        <button
-          id="scanner-btn-shutter"
-          onClick={() => void capture('manual')}
-          title="拍照"
-          className="w-16 h-16 rounded-full bg-white/95 border-4 border-white/60 shadow-lg active:scale-95 transition-transform"
-        />
+          <button
+            id="scanner-btn-shutter"
+            onClick={() => void capture('manual')}
+            title="拍照"
+            className="w-16 h-16 rounded-full bg-white/95 border-4 border-white/60 shadow-lg active:scale-95 transition-transform"
+          />
 
-        <button
-          id="scanner-btn-auto"
-          onClick={onToggleAuto}
-          title="對齊良好並保持穩定約 1 秒後自動拍攝"
-          className={`tap-target px-3 h-11 rounded-full text-caption whitespace-nowrap backdrop-blur-sm transition-colors ${
-            autoCapture ? 'bg-primary text-on-accent' : 'bg-black/50 text-white'
-          }`}
-        >
-          自動 {autoCapture ? 'ON' : 'OFF'}
-        </button>
+          <button
+            id="scanner-btn-auto"
+            onClick={onToggleAuto}
+            title="對齊良好並保持穩定約半秒後自動拍攝"
+            className={`tap-target px-3 h-11 rounded-full text-caption whitespace-nowrap backdrop-blur-sm transition-colors ${
+              autoCapture ? 'bg-primary text-on-accent' : 'bg-black/50 text-white'
+            }`}
+          >
+            自動 {autoCapture ? 'ON' : 'OFF'}
+          </button>
+        </div>
+        {landscape && pageBadge}
       </div>
 
       {/* 效能診斷。只有 ?scandebug=1 或長按解析度標籤才會出現 */}
@@ -961,7 +1049,11 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
         原本「稿紙請橫持拍攝」置中、「切換鏡頭」靠右，都在 bottom-24，
         手機寬度（390px）兩者直接疊在一起，鏡頭名稱被蓋掉一半。
       */}
-      <div className="absolute inset-x-3 bottom-24 flex flex-col items-center gap-2 pointer-events-none">
+      <div
+        className={`absolute flex flex-col items-center gap-2 pointer-events-none ${
+          landscape ? 'left-3 right-[132px] bottom-3' : 'inset-x-3 bottom-24'
+        }`}
+      >
         {/*
           取景提示。原本寫「稿紙請橫持拍攝」—— 那只對橫式稿紙成立，
           直式作文稿紙橫握反而只佔畫面 29.7%（直握 63%），解析度更差。
@@ -969,8 +1061,21 @@ export const ScannerCamera: React.FC<ScannerCameraProps> = ({
         */}
         <span className="sm:hidden inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/55 text-white text-caption whitespace-nowrap">
           <Camera size={12} />
-          讓稿紙填滿畫面
+          讓稿紙填滿框線
         </span>
+        {/*
+          對齊框的形狀。寫成「改拍…」而不是顯示目前的狀態：按鈕上寫「橫式稿紙」，
+          人分不出那是「現在是橫式」還是「按了變橫式」。
+        */}
+        <button
+          id="scanner-btn-paper-orientation"
+          onClick={() => setPaper((p) => (p === 'landscape' ? 'portrait' : 'landscape'))}
+          title="切換對齊框的方向"
+          className="pointer-events-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/55 text-white text-caption whitespace-nowrap backdrop-blur-sm"
+        >
+          {paper === 'landscape' ? <RectangleVertical size={12} /> : <RectangleHorizontal size={12} />}
+          {paper === 'landscape' ? '改拍直式稿紙' : '改拍橫式稿紙'}
+        </button>
         {/*
           切換鏡頭。以前只寫「偵測到 N 顆鏡頭」，挑錯了（例如筆電的虛擬鏡頭）也換不了。
           寫出目前這顆的名稱，老師看得出是不是開錯了。

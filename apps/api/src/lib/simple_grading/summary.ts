@@ -1,4 +1,5 @@
 import { systemConfirmedTypos, type FormatIssue, type TypoMark } from './essay';
+import type { MergedMarks } from '../manuscript/marks';
 
 /**
  * 給老師看的辨識摘要（批改頁的簡易批改區塊）：辨識完成度、確定／待確認的錯字數、格式問題。
@@ -28,6 +29,10 @@ export interface GridSummary {
     punctuationIssues: number;
 }
 
+/**
+ * @param merged 合併了老師在原稿上的決定之後的標記（lib/manuscript/marks.ts）。
+ *   有給就照它數：老師確認的算確定、否決的不算；沒給只看系統的標記。
+ */
 export function summarizeGrid(grid: {
     sheetTemplate: string | null;
     completion: number | null;
@@ -35,9 +40,11 @@ export function summarizeGrid(grid: {
     paragraphs: number | null;
     typoMarks: TypoMark[] | null;
     formatIssues: FormatIssue[] | null;
-}): GridSummary {
+}, merged?: MergedMarks): GridSummary {
     const marks = Array.isArray(grid.typoMarks) ? grid.typoMarks : [];
-    const issues = Array.isArray(grid.formatIssues) ? grid.formatIssues : [];
+    const issues = merged
+        ? merged.formats.filter((f) => f.state === 'active')
+        : (Array.isArray(grid.formatIssues) ? grid.formatIssues : []);
     const completion = typeof grid.completion === 'number' && Number.isFinite(grid.completion) ? grid.completion : null;
     return {
         template: grid.sheetTemplate,
@@ -45,8 +52,12 @@ export function summarizeGrid(grid: {
         lowCompletion: completion !== null && completion < LOW_COMPLETION,
         chars: grid.chars,
         paragraphs: grid.paragraphs,
-        confirmedTypos: systemConfirmedTypos(marks).length,
-        pendingTypos: marks.filter((m) => m?.kind === 'check').length,
+        confirmedTypos: merged
+            ? merged.typos.filter((t) => t.state === 'confirmed').length
+            : systemConfirmedTypos(marks).length,
+        pendingTypos: merged
+            ? merged.typos.filter((t) => t.state === 'pending').length
+            : marks.filter((m) => m?.kind === 'check').length,
         indentIssues: issues.filter((i) => i?.type === '段首空兩格').length,
         punctuationIssues: issues.filter((i) => i?.type === '標點在行首').length,
     };

@@ -8,6 +8,7 @@
 
 | commit | 內容 |
 |---|---|
+| 分支 `feat/manuscript-redpen`（未 commit，接在 `feat/simple-grading` 後面，2026-11-20） | **原稿紅筆，第三階段（老師端）**。稿紙代繳交的作文，批改頁左邊換成拉正的原稿加紅筆（錯字紅圈＋楷書正確字寫在行間、待確認紫色虛線、亮點波浪線、密圈、格式提醒，編號和右邊便條互相跳），可以切回「辨識文字」、放大拖曳。老師在原稿上確認／否決／改字／點字加錯字、否決格式提醒，每按一下就存（新表 `manuscript_mark_decision`，migration 013），發還後鎖住。**確定的錯別字只有一份**：簡易批改送 AI 的清單改用老師決定後的。老師加的錯字落在卡片引用上自動拿掉引用。改了錯字跨過「3 個以上或段首沒空兩格」時提醒「重新評分」（新端點，存成新的一版）。楷書用全字庫正楷體（OFL，字型檔從 1Campus 複製到 `public/fonts/tw-kai`）。測試：後端 `manuscript.test.ts` 13 條＋`simple_grading` 21 條；前端 261 條。瀏覽器用模擬 AI 實測過整個流程。**學生端還沒做**，見 [`docs/manuscript.md`](../docs/manuscript.md) |
 | 分支 `feat/simple-grading`（未 commit，接在 `feat/grid-ocr` 後面，2026-11-20） | **簡易批改，第二階段**。稿紙代繳交、經逐格辨識、老師沒改過文字的作文，按「AI 批改」（單份或批次）自動改用簡易批改：不逐句批改、辨識不確定的字不引用不批評、錯字只看系統清單。**評分規準沿用這一題的批改規範**（聯合報作文批改；使用者決定），後面接簡易批改的規則換掉輸出格式。學生看得到：級分＋評語（總評、亮點、精彩詞語、再上層樓、成語運用，老師可以改）；只給老師看：評分依據、請老師留意、系統拿掉的引用 → 新表 `simple_grading_result`（migration 012）。引用逐格檢查（不可信、有錯字標記的拿掉）、不合格重批一次、不足 100 字不送 AI。批改頁多一塊「簡易批改」。測試：後端 `simple_grading.test.ts` 21 條，`grading`／`grid_ocr`／`grading_result` 51 條照舊通過；前端 252 條。瀏覽器用模擬 AI 實測過。**真的 Gemini 沒跑過**，見 [`docs/simple-grading.md`](../docs/simple-grading.md) |
 | 分支 `feat/grid-ocr`（未 commit，2026-11-20） | **稿紙逐格辨識，第一階段：批次代繳交**。《我的稿紙》印的稿紙（四角有定位標記）改走逐格辨識，其他照片照舊走 ocr-job。① 上傳時先問辨識服務：稿紙缺角、太糊 → 422、照片不存，代繳交視窗跳「重拍」（和「網路斷了沒傳上去」分開）。② 開始辨識 → Cloud Run Job `grid-ocr-job`（同 API 映像檔，`node dist/jobs/grid_ocr_job.js`）→ 服務拉正切行 → Gemini 逐行認字 → 排回稿紙、找錯別字 → 寫 `submission`。③ 狀態明確存在新表 `handwriting_grid_result`（migration 011），失敗原因顯示在名冊上；卡住 15 分鐘可重試；重拍過的舊結果、已批改的作文不覆寫。④ 錯別字位置、格式問題、拉正的稿紙圖都存好了，給之後的簡易批改與原稿紅筆用。測試：後端 `grid_ocr.test.ts` 11 條（會自己起 Python 服務）、`proxy_submit` 33 條照舊通過；前端 `gridStatus.test.tsx`。瀏覽器用模擬 AI 實測過：缺角 → 重拍提示；重拍 → 開始辨識 → 6.5 秒「已辨識」→ 批改清單「AI 辨識未校對」。**真的 Gemini 沒跑過、服務與 job 都還沒部署**，見 [`docs/grid-ocr.md`](../docs/grid-ocr.md) |
 | 分支 `feat/portfolio-teacher-tools`（未 commit） | **AI 批改時一併產生四向度**（使用者決定，2026-10-20）。以前四向度只有管理員手動打 `/admin/grading_subscores` 才補，而且老師每存一次評語新版本就是空的。現在：① `GenAIHelper.grading()` 的回傳格式加上 `sub_scores`（四個 0-6 分數＋四段 50 字內評語），提示詞後面附加批次那份「嚴格校準版」的**四向度規準**（只有核心評量規準；「心態校準」「審查極限」會改變整體級分，沒有附加）。規準、格式、整理規則都在 `apps/api/src/lib/grading_result.ts`，批次補分改成共用同一段規準（原文逐字比對過）。② 零級分一律四向度全 0、評語空白（沿用批次）；AI 沒給齊就只存整體級分、四向度留空給批次補。③ **老師存檔沿用上一版的四向度**，改整體級分也不動（`saveFeedback` 的 `sub_scores` 參數：undefined＝沿用）。④ AI 回傳解析失敗（或沒有合法級分）改成回 502、**不存檔** —— 以前會被存成一份有效的零級分。⑤ AI 批改與題庫試批改改用 `GRADING_MODEL`（以前沒帶模型，吃到預設的 `OCR_MODEL`）。⑥ **成績管理的四向度雷達圖接上真資料**：摘要與詳細兩支查詢多帶四個分數（不帶評語），前端 `lib/categoryScores.ts` 讀取與平均，沒有四向度的作品不算、標示「M／N 份有四向度」。以前前端一律填 0，雷達圖永遠是 0。測試：`grading_result.test.ts` 14 條、`grading.test.ts` 新增 4 條、前端 `categoryScores.test.tsx`。**真的 Gemini 還沒有實跑過**（本機沒有憑證），上線前要對一兩篇實批，確認四向度有回來、`response` 的排版沒有被附加的說明影響 |
@@ -100,6 +101,13 @@
   學生作文送外部模型前要先問使用者。
 - 單篇的四向度照舊不顯示（`SHOW_CATEGORY_SCORES`）；示意圖裡的「四向度評語」因此沒有出現在批改頁。
 - 本機的 `dev-grid` 啟動設定要 `GOOGLE_GENAI_USE_VERTEXAI=false` 才會走模擬 AI（`.env` 開著 Vertex，這台沒有憑證；一般批改也一樣）。
+
+### 4-4. 原稿紅筆（分支 `feat/manuscript-redpen`，2026-11-20）
+
+- 設計、API、字型授權：[`docs/manuscript.md`](../docs/manuscript.md)。只做老師端（使用者決定）。
+- **還沒做**：學生端「我的原稿」（發還後看原稿加紅筆）；批次批改前的待確認提醒；名冊上的「錯字待確認 N」。
+- **重新評分會換掉整份評語**（1Campus 只換分數、卡片不動）：這邊卡片併在評語裡，沒辦法只換一半。按之前有確認視窗。
+- 開發庫 `writing_classroom_test2` 裡王宥人（作業 77）那一份有示範用的錯字標記與卡片（標「示範」），是實測時加的。
 
 ### 5. 管理人員在「可匯入的課程」是空的
 

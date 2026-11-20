@@ -37,6 +37,8 @@ export interface SimpleGradingInfo {
   sheet: SheetSummary | null;
   /** 簡易批改過才有 */
   detail: SimpleGradingDetail | null;
+  /** 存下的細節原樣：原稿紅筆從這裡讀卡片的格子位置與批改當下的基準（lib/manuscript.ts parseCards、parseBaseline） */
+  rawDetail: unknown;
 }
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -73,6 +75,7 @@ export function parseSimpleGradingInfo(raw: unknown): SimpleGradingInfo {
       },
       checks: Array.isArray(d.checks) ? d.checks.filter((c): c is string => typeof c === 'string') : [],
     } : null,
+    rawDetail: d ?? null,
   };
 }
 

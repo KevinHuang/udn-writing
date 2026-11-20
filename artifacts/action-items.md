@@ -33,6 +33,11 @@
 不用新的環境變數。上線前用真的 Gemini 對幾篇稿紙代繳交的作文實批（樣本由使用者決定），
 比對和一般批改的級分差、引用有沒有帶到辨識錯的字，見 `docs/simple-grading.md` 的「還沒驗證」。
 
+### 0.17 原稿紅筆上線前（分支 `feat/manuscript-redpen`）
+
+正式庫在 011、012 之後再套 `docs/migrations/013-manuscript-mark-decision.sql`（**先於程式**）。不用新的環境變數。
+上線前用實際印出來、手寫、拍照的稿紙走一次：紅筆位置對不對、楷書字有沒有載入（`/fonts/tw-kai/`）。
+
 ### 0.2 上線前移除開發用登入
 
 `apps/api/src/auth/dev_login.ts` 在 `2a5efc5` 被一起 commit 進去了。

@@ -23,7 +23,7 @@ describe('簡易批改的資訊', () => {
     assert.equal(info.sheet?.confirmedTypos, 0);
     assert.equal(info.detail?.teacherAlert.needed, false);
     assert.deepEqual(info.detail?.checks, []);
-    assert.deepEqual(parseSimpleGradingInfo(null), { eligible: false, reason: null, sheet: null, detail: null });
+    assert.deepEqual(parseSimpleGradingInfo(null), { eligible: false, reason: null, sheet: null, detail: null, rawDetail: null });
   });
 
   test('辨識完成度無條件捨去', () => {
@@ -40,7 +40,7 @@ describe('簡易批改的資訊', () => {
   });
 
   test('會用簡易批改、或之前用簡易批改批過，才出現這一塊', () => {
-    const base = { eligible: false, reason: 'no_grid' as const, sheet: null, detail: null };
+    const base = { eligible: false, reason: 'no_grid' as const, sheet: null, detail: null, rawDetail: null };
     assert.equal(showSimpleGrading(null), false);
     assert.equal(showSimpleGrading(base), false);
     assert.equal(showSimpleGrading({ ...base, eligible: true, reason: null }), true);

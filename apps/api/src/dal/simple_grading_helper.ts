@@ -10,8 +10,11 @@ import type { SimpleGradingRun } from '../lib/simple_grading/grade';
 
 export interface GridForSubmission extends StoredGridResult {
     gridId: string;
+    assignmentId: string;
     sheetTemplate: string | null;
     completion: number | null;
+    /** 拉正的稿紙圖：GCS 裸檔名，依頁序，和照片同一個資料夾（submit/assign_<id>/） */
+    pageImageFiles: string[];
 }
 
 export interface SimpleGradingEligibility {
@@ -31,8 +34,8 @@ class SimpleGradingHelper {
      */
     public static async gridForSubmission(submissionId: string): Promise<GridForSubmission | null> {
         const row = await db.default.oneOrNone(
-            `SELECT g.id::text AS grid_id, g.sheet_template, g.completion, g.marked_text, g.chars, g.paragraphs,
-                    g.pages, g.typo_marks, g.format_issues
+            `SELECT g.id::text AS grid_id, g.ref_assignment_id::text AS assignment_id, g.sheet_template, g.completion,
+                    g.marked_text, g.chars, g.paragraphs, g.pages, g.typo_marks, g.format_issues, g.page_image_files
                FROM submission s
                JOIN handwriting_grid_result g
                  ON g.ref_assignment_id = s.ref_assignment_id AND g.ref_user_id = s.ref_user_id
@@ -43,7 +46,9 @@ class SimpleGradingHelper {
         if (!row) return null;
         return {
             gridId: row.grid_id,
+            assignmentId: row.assignment_id,
             sheetTemplate: row.sheet_template,
+            pageImageFiles: Array.isArray(row.page_image_files) ? row.page_image_files : [],
             completion: row.completion === null ? null : Number(row.completion),
             markedText: row.marked_text,
             chars: row.chars,

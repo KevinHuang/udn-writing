@@ -30,6 +30,9 @@ import { dispatchGridOcr } from '../lib/grid_ocr/dispatch';
 import SimpleGradingHelper from '../dal/simple_grading_helper';
 import { createSimulatedSimpleGradingAi, gradeSimple, geminiSimpleGradingAi } from '../lib/simple_grading/grade';
 import { summarizeGrid } from '../lib/simple_grading/summary';
+import ManuscriptHelper from '../dal/manuscript_helper';
+import { decidedForGrading, loadMergedMarks, toManuscriptPages, toMarksPayload } from '../lib/manuscript/payload';
+import { cellTexts, ManuscriptDecisionError, mergeManuscriptMarks, planDecision, type Target } from '../lib/manuscript/marks';
 import SemesterHelper from '../dal/semester_helper';
 import config from '../config'
 import { DsaSyncHelper } from '../dal/dsa_sync_helper';
@@ -360,7 +363,9 @@ router.post('/grading/:submissionId', async (ctx) => {
             const ai = isAiConfigured()
                 ? geminiSimpleGradingAi(config.gradingModel)
                 : createSimulatedSimpleGradingAi();
-            const run = await gradeSimple({ grid: simple.grid, context: gradingContext, ai });
+            // 老師在原稿上確認過的錯字才算（待確認的不送 AI、不算分）
+            const decided = decidedForGrading(await loadMergedMarks(simple.grid));
+            const run = await gradeSimple({ grid: simple.grid, context: gradingContext, ai, decided });
             // 學生看得到的只有級分與評語；評分依據、請老師留意在 simple_grading_result
             const result = { score: run.outcome.score, response: run.outcome.response };
             const feedback = await InstructorHelper.saveFeedback(
@@ -459,13 +464,181 @@ router.get('/grading/:submissionId/simple', async (ctx) => {
         ctx.body = {
             eligible: simple.eligible,
             reason: simple.reason,
-            sheet: simple.grid ? summarizeGrid(simple.grid) : null,
+            sheet: simple.grid ? summarizeGrid(simple.grid, await loadMergedMarks(simple.grid)) : null,
             detail: saved?.detail ?? null,
             model: saved?.model ?? null,
             graded_at: saved?.updatedAt ?? null,
         };
     } catch (error) {
         console.error('Error in simple grading info:', error);
+        ctx.status = 500;
+        ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/*
+  ── 原稿紅筆（docs/manuscript.md）──
+  稿紙代繳交、有逐格辨識結果的作文：批改頁左邊換成拉正的原稿，紅筆畫在學生的字上；
+  老師在原稿上確認、否決、新增錯字，每按一下就存（manuscript_mark_decision）。
+  發還之後鎖住（409），要改先收回發還。只給老師：學生端沒有這幾支。
+*/
+
+/** 這篇作文的逐格辨識結果；老師看不到這篇（範圍外）回 null */
+async function manuscriptContext(ctx: Context, submissionId: string) {
+    const submission = await SubmissionHelper.getSubmissionByIdForInstructor(submissionId, await courseScopeOf(ctx));
+    if (!submission) return null;
+    const grid = await SimpleGradingHelper.gridForSubmission(submissionId);
+    return { submission, grid };
+}
+
+/**
+ * @route GET /api/instructor/grading/:submissionId/manuscript
+ * @description 原稿資料：每頁拉正的圖、有字的格子位置、合併老師決定後的錯字與格式提醒、目前的錯字狀態。
+ *              沒有逐格辨識結果回 { available: false }，批改頁照舊。
+ */
+router.get('/grading/:submissionId/manuscript', async (ctx) => {
+    try {
+        const { submissionId } = ctx.params;
+        const found = await manuscriptContext(ctx, submissionId);
+        if (!found) {
+            ctx.status = 404;
+            ctx.body = { error: 'Submission not found' };
+            return;
+        }
+        if (!found.grid || !found.grid.pageImageFiles.length) {
+            ctx.body = { available: false };
+            return;
+        }
+        ctx.body = {
+            available: true,
+            locked: await ManuscriptHelper.isReturned(submissionId),
+            template: found.grid.sheetTemplate,
+            pages: toManuscriptPages(found.grid, submissionId),
+            ...toMarksPayload(await loadMergedMarks(found.grid)),
+        };
+    } catch (error) {
+        console.error('Error in manuscript:', error);
+        ctx.status = 500;
+        ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/**
+ * @route GET /api/instructor/grading/:submissionId/manuscript/pages/:page
+ * @description 拉正的稿紙圖（第 page 頁，0 起算）。用伺服器自己的 GCS 權限讀，不靠 bucket 公開；
+ *              本機假儲存也讀得到。
+ */
+router.get('/grading/:submissionId/manuscript/pages/:page', async (ctx) => {
+    const { submissionId, page } = ctx.params;
+    const found = await manuscriptContext(ctx, submissionId);
+    const file = found?.grid?.pageImageFiles[Number(page)];
+    if (!found || !found.grid || !file || !/^\d+$/.test(page)) {
+        ctx.status = 404;
+        return;
+    }
+    const image = await StorageHelper.openImage(`submit/assign_${found.grid.assignmentId}/${file}`);
+    if (!image) {
+        ctx.status = 404;
+        return;
+    }
+    ctx.type = image.contentType;
+    // 檔名帶 UUID、內容不會變；只給這位老師的瀏覽器快取
+    ctx.set('Cache-Control', 'private, max-age=86400');
+    ctx.body = image.body;
+});
+
+/**
+ * @route POST /api/instructor/grading/:submissionId/manuscript/decisions
+ * @body { target: 'typo'|'format', cellKey, action, correct?, note? }
+ * @description 老師在原稿上的一個決定（每按一下就存），回傳更新後的標記。
+ */
+router.post('/grading/:submissionId/manuscript/decisions', async (ctx) => {
+    try {
+        const { submissionId } = ctx.params;
+        const body = (ctx.request.body ?? {}) as Record<string, unknown>;
+        const found = await manuscriptContext(ctx, submissionId);
+        if (!found) {
+            ctx.status = 404;
+            ctx.body = { error: 'Submission not found' };
+            return;
+        }
+        if (!found.grid) {
+            ctx.status = 409;
+            ctx.body = { error: '這份作文沒有稿紙逐格辨識的結果', code: 'MANUSCRIPT_NOT_AVAILABLE' };
+            return;
+        }
+        if (await ManuscriptHelper.isReturned(submissionId)) {
+            ctx.status = 409;
+            ctx.body = { error: '已發還的作文不能再改，要改請先收回發還', code: 'MANUSCRIPT_LOCKED' };
+            return;
+        }
+        const grid = found.grid;
+        const cellKey = typeof body.cellKey === 'string' ? body.cellKey : '';
+        const plan = planDecision(
+            mergeManuscriptMarks(grid, await ManuscriptHelper.listDecisions(grid.gridId)),
+            body,
+            cellTexts(grid.pages).get(cellKey) || '');
+        await ManuscriptHelper.apply({
+            gridId: grid.gridId, submissionId, target: body.target as Target, cellKey, plan,
+            userId: ctx.session.userInfo.id,
+        });
+        ctx.body = toMarksPayload(await loadMergedMarks(grid));
+    } catch (error) {
+        if (error instanceof ManuscriptDecisionError) {
+            ctx.status = error.status;
+            ctx.body = { error: error.message, code: error.status === 409 ? 'MANUSCRIPT_MARK_CHANGED' : 'INVALID_MANUSCRIPT_DECISION' };
+            return;
+        }
+        console.error('Error in manuscript decision:', error);
+        ctx.status = 500;
+        ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/**
+ * @route POST /api/instructor/grading/:submissionId/regrade
+ * @description 重新評分：老師在原稿上改了錯字之後，用目前確定的錯字再跑一次簡易批改，
+ *              存成新的一版（級分與評語都換掉 —— 前端按之前先跟老師確認）。
+ *              只給已經用簡易批改批過、還沒發還的作文。
+ */
+router.post('/grading/:submissionId/regrade', async (ctx) => {
+    try {
+        const { submissionId } = ctx.params;
+        const userId = ctx.session.userInfo.id;
+        const found = await manuscriptContext(ctx, submissionId);
+        if (!found) {
+            ctx.status = 404;
+            ctx.body = { error: 'Submission not found' };
+            return;
+        }
+        if (await ManuscriptHelper.isReturned(submissionId)) {
+            ctx.status = 409;
+            ctx.body = { error: '已發還的作文不能再改，要改請先收回發還', code: 'MANUSCRIPT_LOCKED' };
+            return;
+        }
+        const simple = await SimpleGradingHelper.eligibilityOf(submissionId, found.submission.content);
+        if (!simple.eligible || !simple.grid || !(await SimpleGradingHelper.get(submissionId))) {
+            ctx.status = 409;
+            ctx.body = { error: '這份作文還沒有用簡易批改批改過，請先按「AI 批改」', code: 'SIMPLE_GRADING_REQUIRED' };
+            return;
+        }
+        const gradingContext = await InstructorHelper.getGradingContextBySubmissionId(submissionId);
+        const ai = isAiConfigured() ? geminiSimpleGradingAi(config.gradingModel) : createSimulatedSimpleGradingAi();
+        const decided = decidedForGrading(await loadMergedMarks(simple.grid));
+        const run = await gradeSimple({ grid: simple.grid, context: gradingContext, ai, decided });
+        const result = { score: run.outcome.score, response: run.outcome.response };
+        const feedback = await InstructorHelper.saveFeedback(
+            submissionId, result.score, result, userId, await courseScopeOf(ctx),
+            run.inputTokens, run.outputTokens, true, run.outcome.subScores);
+        await SimpleGradingHelper.save(submissionId, simple.grid.gridId, feedback?.id ?? null, run);
+        ctx.body = { success: true, result, feedback, simple_grading: true };
+    } catch (error) {
+        if (error instanceof AiGradingResponseError) {
+            ctx.status = 502;
+            ctx.body = { error: 'AI 回傳的批改結果無法使用，這一篇沒有存檔，請再試一次' };
+            return;
+        }
+        console.error('Error in regrade:', error);
         ctx.status = 500;
         ctx.body = { error: 'Internal Server Error' };
     }

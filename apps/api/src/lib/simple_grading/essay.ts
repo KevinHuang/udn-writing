@@ -335,7 +335,9 @@ function describeTypos(index: EssayIndex, marks: TypoMark[]): string[] {
         const where = paragraph === null ? '' : `第 ${paragraph + 1} 段`;
         const context = contextOf(mark) || (typeof mark?.wrong === 'string' ? mark.wrong : '');
         const correct = typeof mark?.correct === 'string' && mark.correct ? mark.correct : '（系統沒有建議的字）';
-        const wrong = typeof mark?.wrong === 'string' ? mark.wrong : '';
+        let wrong = typeof mark?.wrong === 'string' ? mark.wrong : '';
+        // 老師加的錯字常是辨識把寫錯的字讀成了正確的字：辨識出來的字和正確的字一樣
+        if (mark?.source === 'teacher' && wrong === correct) wrong = '（原稿上寫錯的字）';
         return `${order + 1}. ${where}「${context}」：${wrong} → ${correct}`;
     });
 }
@@ -372,11 +374,18 @@ export interface SimpleGradingInput {
     confirmedTypos: TypoMark[];
 }
 
-export function buildSimpleGradingInput(grid: StoredGridResult): SimpleGradingInput {
+/**
+ * @param decided 老師在原稿上決定過之後的錯字與格式（lib/manuscript/marks.ts 合併的結果）。
+ *   沒給時只看系統有把握的錯字 —— 老師還沒打開原稿看過的作文。
+ */
+export function buildSimpleGradingInput(
+    grid: StoredGridResult,
+    decided?: { confirmedTypos: TypoMark[]; formatIssues: FormatIssue[] },
+): SimpleGradingInput {
     const index = buildEssayIndex(grid);
     const wordCount = Number.isInteger(grid?.chars) ? grid.chars! : index.paras.reduce((n, p) => n + p.length, 0);
     const paragraphCount = Number.isInteger(grid?.paragraphs) ? grid.paragraphs! : index.paras.length;
-    const confirmedTypos = systemConfirmedTypos(grid?.typoMarks);
+    const confirmedTypos = decided ? decided.confirmedTypos : systemConfirmedTypos(grid?.typoMarks);
     if (wordCount < MIN_CHARS) {
         return {
             index, wordCount, paragraphCount, confirmedTypos,
@@ -396,7 +405,7 @@ export function buildSimpleGradingInput(grid: StoredGridResult): SimpleGradingIn
         ...(typos.length > 0 ? typos : ['無']),
         '',
         '【格式檢查】',
-        ...describeFormat(index, grid?.formatIssues),
+        ...describeFormat(index, decided ? decided.formatIssues : grid?.formatIssues),
     ].join('\n');
     return { index, wordCount, paragraphCount, confirmedTypos, systemZero: null, essaySection };
 }

@@ -1,6 +1,6 @@
 import GenAIHelper from '../../dal/genai_helper';
 import { AiGradingResponseError } from '../grading_result';
-import { buildSimpleGradingInput, MARK, UNREADABLE, type StoredGridResult } from './essay';
+import { buildSimpleGradingInput, MARK, UNREADABLE, type FormatIssue, type StoredGridResult, type TypoMark } from './essay';
 import {
     buildSimpleGradingPrompt, buildSimpleGradingSystem, SIMPLE_GRADING_PROMPT_VERSION, type GradingContextLike,
 } from './prompt';
@@ -38,14 +38,25 @@ export async function gradeSimple(params: {
     grid: StoredGridResult;
     context: GradingContextLike;
     ai: SimpleGradingAi;
+    /**
+     * 老師在原稿上的決定合併之後（lib/manuscript/marks.ts）：
+     *   confirmedTypos  送 AI 的確定的錯別字
+     *   formatIssues    沒被否決的格式問題
+     *   flaggedTypos    卡片引用、成語要避開的錯字（含待確認、老師加的）
+     *   baseline        批改當下的錯字狀態，存進細節，之後比對要不要提醒重新評分
+     * 沒給時只看系統的標記。
+     */
+    decided?: { confirmedTypos: TypoMark[]; formatIssues: FormatIssue[]; flaggedTypos: TypoMark[]; baseline: unknown };
 }): Promise<SimpleGradingRun> {
-    const { grid, context, ai } = params;
-    const input = buildSimpleGradingInput(grid);
+    const { grid, context, ai, decided } = params;
+    const input = buildSimpleGradingInput(grid, decided);
+    const withBaseline = (run: SimpleGradingRun): SimpleGradingRun =>
+        decided ? { ...run, outcome: { ...run.outcome, detail: { ...run.outcome.detail, baseline: decided.baseline } } } : run;
     if (input.systemZero) {
-        return {
+        return withBaseline({
             outcome: buildSystemZeroOutcome(input.systemZero.reason, input.systemZero.feedback, SIMPLE_GRADING_PROMPT_VERSION),
             model: null, inputTokens: 0, outputTokens: 0, aiCalls: 0,
-        };
+        });
     }
 
     const system = buildSimpleGradingSystem(context);
@@ -64,11 +75,11 @@ export async function gradeSimple(params: {
                 details: details as Record<string, unknown>,
                 index: input.index,
                 // 引用、成語要避開所有錯字標記，包括待確認的（不只送 AI 的那份確定的錯別字）
-                typoMarks: Array.isArray(grid.typoMarks) ? grid.typoMarks : [],
+                typoMarks: decided ? decided.flaggedTypos : (Array.isArray(grid.typoMarks) ? grid.typoMarks : []),
                 promptVersion: SIMPLE_GRADING_PROMPT_VERSION,
                 retryProblems,
             });
-            return { outcome, model: ai.model, inputTokens, outputTokens, aiCalls: attempt };
+            return withBaseline({ outcome, model: ai.model, inputTokens, outputTokens, aiCalls: attempt });
         }
         console.warn('[simple-grading] 批改結果不符合規則', { attempt, problems });
         retryProblems = problems;

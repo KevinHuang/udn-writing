@@ -32,6 +32,8 @@ export interface SimpleGradingDetail {
     teacherAlert: { needed: boolean; reason: string; paragraph: number | null };
     /** 系統做了什麼：重批過、拿掉了哪些引用。給老師看 */
     checks: string[];
+    /** 批改當下的錯字狀態（lib/manuscript/marks.ts markBaseline）；原稿紅筆比對要不要提醒重新評分 */
+    baseline?: unknown;
 }
 
 export interface SimpleGradingOutcome {

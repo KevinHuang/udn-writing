@@ -160,7 +160,7 @@ API 加上：`STORAGE_FAKE=1`、`GRID_OCR_SERVICE_URL=http://127.0.0.1:8090`、`
 
 ## 之後
 
-- **第二階段：簡易批改**。`typo_marks`（錯別字對到哪一格）、`format_issues`（段首空格、標點在行首…）、
-  `completion`（寫了幾格／應寫幾格）已經存好，還沒有畫面用到。
+- **第二階段：簡易批改** —— 已做，見 [simple-grading.md](simple-grading.md)。用到 `typo_marks`、`format_issues`、
+  `completion` 與每格的字。
 - **第三階段：原稿紅筆**。`page_image_files` 是拉正後的稿紙圖，格子座標和服務的樣式一致，紅筆直接畫在它上面。
 - 學生自己拍照繳交還是走舊的整張辨識。

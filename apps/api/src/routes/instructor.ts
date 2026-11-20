@@ -27,6 +27,9 @@ import GridOcrHelper from '../dal/grid_ocr_helper';
 import { precheckSheets } from '../lib/grid_ocr/pipeline';
 import { createGridServiceClient } from '../lib/grid_ocr/service_client';
 import { dispatchGridOcr } from '../lib/grid_ocr/dispatch';
+import SimpleGradingHelper from '../dal/simple_grading_helper';
+import { createSimulatedSimpleGradingAi, gradeSimple, geminiSimpleGradingAi } from '../lib/simple_grading/grade';
+import { summarizeGrid } from '../lib/simple_grading/summary';
 import SemesterHelper from '../dal/semester_helper';
 import config from '../config'
 import { DsaSyncHelper } from '../dal/dsa_sync_helper';
@@ -348,6 +351,32 @@ router.post('/grading/:submissionId', async (ctx) => {
         }
 
         /*
+          稿紙代繳交、經逐格辨識、文字沒被老師改過 → 簡易批改（docs/simple-grading.md）。
+          學生沒有校稿：辨識不確定的字不引用、不批評；評分規準照樣用這一題的批改規範。
+          老師不用另外選 —— 單份「AI 批改」和「批次批改」都走這裡，由作文本身決定。
+        */
+        const simple = await SimpleGradingHelper.eligibilityOf(submissionId, submission.content);
+        if (simple.eligible && simple.grid) {
+            const ai = isAiConfigured()
+                ? geminiSimpleGradingAi(config.gradingModel)
+                : createSimulatedSimpleGradingAi();
+            const run = await gradeSimple({ grid: simple.grid, context: gradingContext, ai });
+            // 學生看得到的只有級分與評語；評分依據、請老師留意在 simple_grading_result
+            const result = { score: run.outcome.score, response: run.outcome.response };
+            const feedback = await InstructorHelper.saveFeedback(
+                submissionId, result.score, result, userId, await courseScopeOf(ctx),
+                run.inputTokens, run.outputTokens, true, run.outcome.subScores);
+            if (!feedback) {
+                ctx.status = 404;
+                ctx.body = { error: 'Submission not found' };
+                return;
+            }
+            await SimpleGradingHelper.save(submissionId, simple.grid.gridId, feedback.id ?? null, run);
+            ctx.body = { success: true, result, feedback, simple_grading: true };
+            return;
+        }
+
+        /*
           沒有設定 Vertex AI 憑證時走決定性的模擬批改（見 simulated_grading.ts）。
           少了這一段，開發環境沒有憑證就整條批改流程都跑不動。
           模擬結果的評語開頭會標明「示範模式」。
@@ -411,6 +440,38 @@ router.post('/grading/:submissionId', async (ctx) => {
 });
 
 /**
+ * @route GET /api/instructor/grading/:submissionId/simple
+ * @description 簡易批改的資訊（只給老師）：這篇能不能用簡易批改、辨識完成度與錯字摘要、
+ *              批改過的話，評分依據、請老師留意、系統拿掉了哪些引用。
+ *              學生端沒有對應的端點，也不讀 simple_grading_result。
+ */
+router.get('/grading/:submissionId/simple', async (ctx) => {
+    try {
+        const { submissionId } = ctx.params;
+        const submission = await SubmissionHelper.getSubmissionByIdForInstructor(submissionId, await courseScopeOf(ctx));
+        if (!submission) {
+            ctx.status = 404;
+            ctx.body = { error: 'Submission not found' };
+            return;
+        }
+        const simple = await SimpleGradingHelper.eligibilityOf(submissionId, submission.content);
+        const saved = await SimpleGradingHelper.get(submissionId);
+        ctx.body = {
+            eligible: simple.eligible,
+            reason: simple.reason,
+            sheet: simple.grid ? summarizeGrid(simple.grid) : null,
+            detail: saved?.detail ?? null,
+            model: saved?.model ?? null,
+            graded_at: saved?.updatedAt ?? null,
+        };
+    } catch (error) {
+        console.error('Error in simple grading info:', error);
+        ctx.status = 500;
+        ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/**
  * @route POST /api/instructor/grading/:submissionId
  * @description 針對特定繳交紀錄，將其所有批改結果設定為無效，也就回到待批改狀態。
  * @param {string} submissionId - 學生提交紀錄的唯一識別 ID
@@ -427,6 +488,8 @@ router.post('/grading/reset/:submissionId', async (ctx) => {
             ctx.body = { error: 'No feedback found' };
             return;
         }
+        // 簡易批改的評分依據、請老師留意跟著那一次批改走；回到待批改就不再對得上
+        await SimpleGradingHelper.remove(submissionId);
 
         ctx.body = { success: true, result };
     } catch (error) {

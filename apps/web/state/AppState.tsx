@@ -32,6 +32,7 @@ import {
   saveGrading, resetGrading, returnFeedback, gradeWithAi,
   clearSubmission, proxySubmit, submitEssay, setMark as setMarkApi, setLeave as setLeaveApi,
 } from "../api/submissions";
+import { regradeWithAi } from '../api/manuscript';
 import { ApiError } from "../api/client";
 import { fetchSemesters } from "../api/semesters";
 import { fetchCourses, fetchRoster, deleteCourse, setCourseArchived, setCourseShowcase } from "../api/courses";
@@ -934,9 +935,10 @@ function useAppStateValue() {
    * **這一支刻意讓錯誤往外丟**，不像其他 handler 自己吞掉 ——
    * 呼叫端 GradingEditor 要靠它決定是否跳出「AI 批改失敗」。
    */
-  const handleAutoGrade = async (id: string) => {
+  const handleAutoGrade = async (id: string, regrade = false) => {
     const assignmentId = submissions.find((s) => s.id === id)?.assignmentId;
-    await gradeWithAi(id);
+    // 重新評分（原稿紅筆改了錯字之後）走另一支，之後的重新整理一樣
+    await (regrade ? regradeWithAi(id) : gradeWithAi(id));
     await reloadSubmissions();
     if (assignmentId) await ensureSubmissions(assignmentId);
     await reloadMarks();
@@ -1137,6 +1139,7 @@ function useAppStateValue() {
     handleBatchReset,
     handleResetGrading,
     handleAutoGrade,
+    handleRegrade: (id: string) => handleAutoGrade(id, true),
     handleClearSubmission,
     confirmDialog,
     setConfirmDialog,

@@ -2,6 +2,7 @@ import { GoogleGenAI, Type, ThinkingLevel, HarmCategory, HarmBlockThreshold } fr
 import config from '../config';
 import { OCR_SYSTEM_PROMPT } from './constants';
 import { SUB_SCORE_INSTRUCTION, SUB_SCORES_JSON_SCHEMA, parseGradingResponse } from '../lib/grading_result';
+import { SIMPLE_GRADING_JSON_SCHEMA } from '../lib/simple_grading/prompt';
 
 // 洗牌
 const shuffleArray = (array: any[]) => {
@@ -526,6 +527,42 @@ ${results.map((text, i) => `--- 第 ${i} 頁 ---\n${text}\n-------------------`)
         };
     }
 
+
+    /**
+     * 稿紙代繳交的簡易批改（lib/simple_grading）。提示詞與回傳格式都由那邊組好，這裡只負責呼叫；
+     * 解析、檢查、重批都在 lib/simple_grading/grade.ts。
+     */
+    async simpleGrading(systemInstruction: string, promptText: string) {
+        const client = this.getAIClient();
+        const response = await client.models.generateContent({
+            model: this.modelName,
+            contents: [{ role: 'user', parts: [{ text: promptText }] }],
+            config: {
+                // 比一般批改多了評分依據與卡片；一般批改實測最多約 2,200 tokens
+                maxOutputTokens: 8000,
+                temperature: 0.3,
+                responseMimeType: 'application/json',
+                responseJsonSchema: SIMPLE_GRADING_JSON_SCHEMA,
+                thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+                systemInstruction,
+                safetySettings: [
+                    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.OFF },
+                    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.OFF },
+                    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.OFF },
+                    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.OFF }
+                ]
+            }
+        });
+        return {
+            text: response.text || '',
+            inputTokens: response.usageMetadata?.promptTokenCount || 0,
+            outputTokens: response.usageMetadata?.candidatesTokenCount || 0,
+        };
+    }
+
+    get model(): string {
+        return this.modelName;
+    }
 
     async gradingSubscores(gradingContext: any, systemInstruction: string, content: string, word_count: number) {
         const systemInstructionText = `

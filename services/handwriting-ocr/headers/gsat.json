@@ -1,0 +1,34 @@
+{
+  "template": "gsat",
+  "title": "學測格式 國語文寫作能力測驗",
+  "style": {"font": "kai", "grid_color": "#3c9c6c", "grid_width": 0.5, "frame_width": 0.9, "column_numbers": {"top": true, "bottom": true, "size": 7}, "row_numbers": {"every": 5, "left": true, "right": false, "size": 7}},
+  "pages": [
+    {
+      "elements": [
+        {"type": "table", "x": 196, "y": 18, "col_widths": [26, 26, 26], "row_heights": [6, 14], "cells": [["第三閱", "第二閱", "第一閱"]], "size": 9},
+        {"type": "field", "label": "班級", "x": 290, "y": 30, "vertical": false, "size": 12, "length": 18, "fill": "class"},
+        {"type": "field", "label": "座號", "x": 323, "y": 30, "vertical": false, "size": 12, "length": 14, "fill": "seat"},
+        {"type": "field", "label": "姓名", "x": 352, "y": 30, "vertical": false, "size": 12, "length": 40, "fill": "name"},
+        {"type": "text", "text": "從此\n起寫", "x": 381.5, "y": 42, "size": 9, "col_step": 3.4},
+        {"type": "line", "points": [[382.8, 44.2], [385.5, 44.2], [385.5, 52.4]], "arrow": true, "width": 0.6},
+        {"type": "box", "x": 391.5, "y": 58.4, "w": 13, "h": 220, "line_width": 0.8},
+        {"type": "text", "text": "第一大題作答區", "x": 400.6, "y": 61, "size": 18, "bold": true},
+        {"type": "text", "text": "注意：１．限在作答區內作答。２．請妥善分配作答時間。\n３．答案卷應保持清潔完整，不得書寫姓名以外之個人資料。", "x": 397.2, "y": 112, "size": 8, "col_step": 3.0, "wrap": 163},
+        {"type": "text", "text": "國語文寫作能力測驗", "x": 411.0, "y": 62, "size": 22, "justify": 212},
+        {"type": "idcode", "x": 170, "y": 18, "size": 18},
+        {"type": "seatmark", "x": 20, "y": 16, "size": 4, "orient": "row"}
+      ]
+    },
+    {
+      "elements": [
+        {"type": "text", "text": "從此\n起寫", "x": 389.9, "y": 42, "size": 9, "col_step": 3.4},
+        {"type": "line", "points": [[391.2, 44.2], [393.9, 44.2], [393.9, 52.4]], "arrow": true, "width": 0.6},
+        {"type": "box", "x": 399.9, "y": 58.4, "w": 13, "h": 220, "line_width": 0.8},
+        {"type": "text", "text": "第二大題作答區", "x": 409.0, "y": 61, "size": 18, "bold": true},
+        {"type": "text", "text": "注意：１．限在作答區內作答。２．請妥善分配作答時間。\n３．答案卷應保持清潔完整，不得書寫姓名以外之個人資料。", "x": 405.6, "y": 112, "size": 8, "col_step": 3.0, "wrap": 163},
+        {"type": "text", "text": "裝訂區切勿作答", "x": 9.5, "y": 90, "size": 16, "char_step": 9},
+        {"type": "idcode", "x": 170, "y": 18, "size": 18}
+      ]
+    }
+  ]
+}

@@ -23,6 +23,13 @@ import SubmissionMarkHelper from '../dal/submission_mark_helper';
 import FeaturedRuleHelper, { isRuleScore } from '../dal/featured_rule_helper';
 import AssignmentLeaveHelper from '../dal/assignment_leave_helper';
 import { checkImageList } from '../lib/image_input';
+import GridOcrHelper from '../dal/grid_ocr_helper';
+import { precheckSheets } from '../lib/grid_ocr/pipeline';
+import { createGridServiceClient } from '../lib/grid_ocr/service_client';
+import { dispatchGridOcr } from '../lib/grid_ocr/dispatch';
+import SimpleGradingHelper from '../dal/simple_grading_helper';
+import { createSimulatedSimpleGradingAi, gradeSimple, geminiSimpleGradingAi } from '../lib/simple_grading/grade';
+import { summarizeGrid } from '../lib/simple_grading/summary';
 import SemesterHelper from '../dal/semester_helper';
 import config from '../config'
 import { DsaSyncHelper } from '../dal/dsa_sync_helper';
@@ -344,6 +351,32 @@ router.post('/grading/:submissionId', async (ctx) => {
         }
 
         /*
+          稿紙代繳交、經逐格辨識、文字沒被老師改過 → 簡易批改（docs/simple-grading.md）。
+          學生沒有校稿：辨識不確定的字不引用、不批評；評分規準照樣用這一題的批改規範。
+          老師不用另外選 —— 單份「AI 批改」和「批次批改」都走這裡，由作文本身決定。
+        */
+        const simple = await SimpleGradingHelper.eligibilityOf(submissionId, submission.content);
+        if (simple.eligible && simple.grid) {
+            const ai = isAiConfigured()
+                ? geminiSimpleGradingAi(config.gradingModel)
+                : createSimulatedSimpleGradingAi();
+            const run = await gradeSimple({ grid: simple.grid, context: gradingContext, ai });
+            // 學生看得到的只有級分與評語；評分依據、請老師留意在 simple_grading_result
+            const result = { score: run.outcome.score, response: run.outcome.response };
+            const feedback = await InstructorHelper.saveFeedback(
+                submissionId, result.score, result, userId, await courseScopeOf(ctx),
+                run.inputTokens, run.outputTokens, true, run.outcome.subScores);
+            if (!feedback) {
+                ctx.status = 404;
+                ctx.body = { error: 'Submission not found' };
+                return;
+            }
+            await SimpleGradingHelper.save(submissionId, simple.grid.gridId, feedback.id ?? null, run);
+            ctx.body = { success: true, result, feedback, simple_grading: true };
+            return;
+        }
+
+        /*
           沒有設定 Vertex AI 憑證時走決定性的模擬批改（見 simulated_grading.ts）。
           少了這一段，開發環境沒有憑證就整條批改流程都跑不動。
           模擬結果的評語開頭會標明「示範模式」。
@@ -407,6 +440,38 @@ router.post('/grading/:submissionId', async (ctx) => {
 });
 
 /**
+ * @route GET /api/instructor/grading/:submissionId/simple
+ * @description 簡易批改的資訊（只給老師）：這篇能不能用簡易批改、辨識完成度與錯字摘要、
+ *              批改過的話，評分依據、請老師留意、系統拿掉了哪些引用。
+ *              學生端沒有對應的端點，也不讀 simple_grading_result。
+ */
+router.get('/grading/:submissionId/simple', async (ctx) => {
+    try {
+        const { submissionId } = ctx.params;
+        const submission = await SubmissionHelper.getSubmissionByIdForInstructor(submissionId, await courseScopeOf(ctx));
+        if (!submission) {
+            ctx.status = 404;
+            ctx.body = { error: 'Submission not found' };
+            return;
+        }
+        const simple = await SimpleGradingHelper.eligibilityOf(submissionId, submission.content);
+        const saved = await SimpleGradingHelper.get(submissionId);
+        ctx.body = {
+            eligible: simple.eligible,
+            reason: simple.reason,
+            sheet: simple.grid ? summarizeGrid(simple.grid) : null,
+            detail: saved?.detail ?? null,
+            model: saved?.model ?? null,
+            graded_at: saved?.updatedAt ?? null,
+        };
+    } catch (error) {
+        console.error('Error in simple grading info:', error);
+        ctx.status = 500;
+        ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/**
  * @route POST /api/instructor/grading/:submissionId
  * @description 針對特定繳交紀錄，將其所有批改結果設定為無效，也就回到待批改狀態。
  * @param {string} submissionId - 學生提交紀錄的唯一識別 ID
@@ -423,6 +488,8 @@ router.post('/grading/reset/:submissionId', async (ctx) => {
             ctx.body = { error: 'No feedback found' };
             return;
         }
+        // 簡易批改的評分依據、請老師留意跟著那一次批改走；回到待批改就不再對得上
+        await SimpleGradingHelper.remove(submissionId);
 
         ctx.body = { success: true, result };
     } catch (error) {
@@ -556,6 +623,21 @@ router.post('/submissions/ocr_proxy', async (ctx) => {
             return;
         }
 
+        /*
+          稿紙逐格辨識（docs/grid-ocr.md）：存進 GCS **之前**先問辨識服務（幾秒、不用 AI）。
+            我們的稿紙但要重拍（缺角、格子對不準…）→ 422，什麼都不存，老師趁紙還在手邊重拍；
+            我們的稿紙、四角都讀得到 → 之後走逐格辨識；
+            其他照片、或服務沒設定／連不上 → 照舊走 ocr-job，不擋老師。
+        */
+        const precheck = await precheckSheets(
+            checked.images.map((img, i) => ({ name: `第${i + 1}張`, data: img.base64Image })),
+            createGridServiceClient());
+        if (precheck.kind === 'problem') {
+            ctx.status = 422;
+            ctx.body = { error: precheck.message, code: 'SHEET_PROBLEM' };
+            return;
+        }
+
         // 將 base64 圖片存成 cloud storage 檔案
         const bucketFolder = `submit/assign_${assignmentId}`;
         const dt = new Date();
@@ -581,6 +663,10 @@ router.post('/submissions/ocr_proxy', async (ctx) => {
             throw e;
         }
 
+        if (precheck.kind === 'grid') {
+            await GridOcrHelper.createPending(batch.id, assignmentId, studentId, precheck.template);
+        }
+
         /*
           ⚠️ 這裡**刻意不觸發**辨識（以前會呼叫 CloudRunJobsHelper.startOCRJob）。
              老師還在拍下一位；等他按「開始辨識」才送（/submissions/ocr_proxy/start）。
@@ -591,6 +677,8 @@ router.post('/submissions/ocr_proxy', async (ctx) => {
             batchUUID: batch.batch_uuid,
             folder: bucketFolder,
             files: fileNames,
+            /** grid＝之後走稿紙逐格辨識；other＝照舊整張辨識 */
+            sheet: precheck.kind === 'grid' ? 'grid' : 'other',
         };
     } catch (error) {
         console.error('Error in proxy submission:', error);
@@ -636,7 +724,7 @@ router.post('/submissions/ocr_proxy/start', async (ctx) => {
 
         const started: Array<{ studentId: string; batchUUID: string }> = [];
         const failed: Array<{ studentId: string; error: string }> = [];
-        const skipped: Array<{ studentId: string; reason: 'not_found' | 'already_done' }> = [];
+        const skipped: Array<{ studentId: string; reason: 'not_found' | 'already_done' | 'in_progress' }> = [];
 
         const found = new Set(batches.map((b) => b.user_id));
         for (const id of wanted ?? []) {
@@ -657,8 +745,32 @@ router.post('/submissions/ocr_proxy/start', async (ctx) => {
         */
         await BatchProxySubmissionHelper.touchTriggered(toRun.map((b) => b.id));
 
-        for (let i = 0; i < toRun.length; i += OCR_START_CONCURRENCY) {
-            const chunk = toRun.slice(i, i + OCR_START_CONCURRENCY);
+        /*
+          上傳時認出是我們的稿紙的那幾批 → 稿紙逐格辨識（docs/grid-ocr.md）；其他照舊交給 ocr-job。
+          正在辨識中的不重送（同一批跑兩次會互相蓋掉），回報 in_progress。
+        */
+        const gridIds = await GridOcrHelper.gridBatchIds(toRun.map((b) => b.id));
+        const gridBatches = toRun.filter((b) => gridIds.has(b.id));
+        const legacy = toRun.filter((b) => !gridIds.has(b.id));
+        if (gridBatches.length) {
+            const queued = new Set(await GridOcrHelper.markQueued(gridBatches.map((b) => b.id), Boolean(force)));
+            for (const b of gridBatches) {
+                if (!queued.has(b.id)) skipped.push({ studentId: b.user_id, reason: 'in_progress' });
+            }
+            const results = await dispatchGridOcr(gridBatches.filter((b) => queued.has(b.id)).map((b) => b.id));
+            for (const r of results) {
+                const b = gridBatches.find((x) => x.id === r.batchId)!;
+                if (r.started) {
+                    started.push({ studentId: b.user_id, batchUUID: b.batch_uuid });
+                } else {
+                    await GridOcrHelper.saveFailed(b.id, 'UNAVAILABLE', '無法啟動稿紙辨識，請稍後按「重新辨識」');
+                    failed.push({ studentId: b.user_id, error: r.error ?? '無法啟動稿紙辨識' });
+                }
+            }
+        }
+
+        for (let i = 0; i < legacy.length; i += OCR_START_CONCURRENCY) {
+            const chunk = legacy.slice(i, i + OCR_START_CONCURRENCY);
             const results = await Promise.all(chunk.map((b) =>
                 CloudRunJobsHelper.startOCRJob(b.user_id, assignmentId, b.batch_uuid)));
             results.forEach((r, j) => {

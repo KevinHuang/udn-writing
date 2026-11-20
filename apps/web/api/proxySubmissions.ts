@@ -25,6 +25,8 @@ export interface ProxyUploadResult {
   batchUUID: string;
   /** GCS 上的裸檔名（沒有資料夾前綴，見 lib/proxy/paths.ts） */
   files: string[];
+  /** grid＝「我的稿紙」印的稿紙，之後走逐格辨識；other＝照舊整張辨識 */
+  sheet?: 'grid' | 'other';
 }
 
 /** 收一位學生的照片（整份一次送，見 lib/proxy/queue.ts 為什麼不拆張） */
@@ -43,7 +45,7 @@ export function uploadProxyImages(
 export interface ProxyStartResult {
   started: Array<{ studentId: string; batchUUID: string }>;
   failed: Array<{ studentId: string; error: string }>;
-  skipped: Array<{ studentId: string; reason: 'not_found' | 'already_done' }>;
+  skipped: Array<{ studentId: string; reason: 'not_found' | 'already_done' | 'in_progress' }>;
 }
 
 /**
@@ -74,6 +76,9 @@ interface RawProxyStatus {
     ocr_time: string | null;
     has_content: boolean;
     img_files: string[];
+    grid_status?: ProxyStatusRow['gridStatus'];
+    grid_error?: string | null;
+    grid_started_at?: string | null;
   }>;
 }
 
@@ -98,6 +103,9 @@ export async function fetchProxyStatus(assignmentId: string): Promise<ProxyStatu
       ocrTime: r.ocr_time,
       hasContent: !!r.has_content,
       imgFiles: Array.isArray(r.img_files) ? r.img_files : [],
+      gridStatus: r.grid_status ?? null,
+      gridError: r.grid_error ?? null,
+      gridStartedAt: r.grid_started_at ?? null,
     })),
   };
 }

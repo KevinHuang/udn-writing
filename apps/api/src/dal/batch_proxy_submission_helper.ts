@@ -18,6 +18,18 @@ export interface ProxyStatusRow extends BatchProxyRow {
     submission_id: string | null;
     /** 這位學生的 submission 有沒有真的拿到文字 —— `ocr_time` 有值不等於成功 */
     has_content: boolean;
+    /**
+     * 稿紙逐格辨識（handwriting_grid_result）。null＝這一批不是我們的稿紙，照舊走 ocr-job、照舊推導狀態。
+     * 有值時狀態是明確記下來的，不用推（lib/proxy/status.ts）。
+     */
+    grid_status: 'pending' | 'queued' | 'running' | 'done' | 'failed' | null;
+    grid_error: string | null;
+    grid_started_at: string | null;
+    sheet_template: string | null;
+    /** 辨識完成度（可信的格子 ÷ 有寫字的格子）；完成時才有 */
+    grid_completion: number | null;
+    /** 錯別字有幾個（確定＋待確認），完成時才有 */
+    grid_typos: number | null;
 }
 
 /**
@@ -135,12 +147,19 @@ class BatchProxySubmissionHelper {
                     b.last_update,
                     b.ocr_time,
                     s.id::text AS submission_id,
-                    COALESCE(length(btrim(s.content)) > 0, false) AS has_content
+                    COALESCE(length(btrim(s.content)) > 0, false) AS has_content,
+                    g.status AS grid_status,
+                    g.error_message AS grid_error,
+                    g.started_at AS grid_started_at,
+                    g.sheet_template,
+                    g.completion AS grid_completion,
+                    jsonb_array_length(g.typo_marks) AS grid_typos
                FROM batch_proxy_submission b
                JOIN assignment a ON a.id = b.ref_assignment_id
                LEFT JOIN submission s
                       ON s.ref_assignment_id = b.ref_assignment_id
                      AND s.ref_user_id = b.ref_user_id
+               LEFT JOIN handwriting_grid_result g ON g.ref_batch_id = b.id
               WHERE b.ref_assignment_id = $1::bigint
                 AND b.is_valid = true
                 AND a.ref_course_id IN ${courseScopeSubquery(scope)}

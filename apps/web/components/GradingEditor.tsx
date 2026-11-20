@@ -28,6 +28,9 @@ import {
 } from '../lib/submissionMarks';
 import { SubmissionStampRow } from './SubmissionStamp';
 import { SHOW_AI_MODEL_PICKER } from '../lib/features';
+import { SimpleGradingPanel } from './SimpleGradingPanel';
+import { fetchSimpleGrading } from '../api/simpleGrading';
+import { PROOFREAD_NOTE, showSimpleGrading, type SimpleGradingInfo } from '../lib/simpleGrading';
 
 /**
  * 批改結果的比較用字串。欄位固定順序序列化，
@@ -208,6 +211,22 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
    */
   const [draftIndex, setDraftIndex] = useState(0);
   const draftPage = Math.min(draftIndex, Math.max(0, draftImages.length - 1));
+
+  /**
+   * 簡易批改的資訊（只給老師看，lib/simpleGrading.ts）。只有稿紙代繳交才可能用到，
+   * 所以沒有原稿照片的不問。AI 批改完這個元件會重掛，新的評分依據自然會再抓一次；
+   * 校對存檔改了文字也要重抓（改過文字就不再用簡易批改）。
+   * 抓不到就不顯示這一塊 —— 它只是輔助資訊，不能擋住批改。
+   */
+  const [simpleInfo, setSimpleInfo] = useState<SimpleGradingInfo | null>(null);
+  useEffect(() => {
+    if (!hasDraft) return;
+    let alive = true;
+    fetchSimpleGrading(submission.id)
+      .then((info) => { if (alive) setSimpleInfo(info); })
+      .catch(() => { if (alive) setSimpleInfo(null); });
+    return () => { alive = false; };
+  }, [submission.id, submission.content, hasDraft]);
 
 
 
@@ -590,8 +609,17 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                         >
                             <AlertTriangle size={18} className="shrink-0 text-amber-600" />
                             <p className="flex-1 text-caption text-amber-700">
-                                這篇是 AI 從手寫稿辨識出來的，還沒有人校對過。辨識一定會有錯字 ——
-                                請先對照原稿校對，再批改。
+                                {simpleInfo?.eligible ? (
+                                  /* 稿紙逐格辨識的作文：簡易批改本來就是給沒校稿的文字用的，校對不是必要的 */
+                                  <span id="gradingeditor-ocr-review-simple">
+                                    這篇是從稿紙一格一格辨識出來的，還沒有人校對過。{PROOFREAD_NOTE}
+                                  </span>
+                                ) : (
+                                  <>
+                                    這篇是 AI 從手寫稿辨識出來的，還沒有人校對過。辨識一定會有錯字 ——
+                                    請先對照原稿校對，再批改。
+                                  </>
+                                )}
                             </p>
                             <button
                                 id="gradingeditor-btn-proofread"
@@ -813,6 +841,8 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                         )}
                       </div>
                     )}
+
+                    {showSimpleGrading(simpleInfo) && <SimpleGradingPanel info={simpleInfo} />}
 
                     {!result && (
                         <div className="text-center py-24 px-10">

@@ -12,6 +12,7 @@ import {
   LogOut,
   Settings,
   ShieldCheck,
+  FileText,
   Check } from 'lucide-react';
 import type { IdentityOption, IdentityType } from '../api/auth';
 import { IDENTITY_LABEL } from '../lib/identityLabels';
@@ -83,6 +84,7 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
     // 派發精靈現在只從課程頁的「新增作業」進入，沒有導覽入口。
     { key: 'grading', path: routes.gradingList(), label: '批改作業', icon: CheckSquare },
     { key: 'grades', path: routes.grades(), label: '成績管理', icon: BarChart3 },
+    { key: 'sheets', path: routes.answerSheets(), label: '我的稿紙', icon: FileText },
   ];
 
   /**
@@ -103,7 +105,11 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
     一個選單只裝一個項目，老師每次都得多按一層，五項本來就放得下。
     之後項目超過五個時再考慮收納。
   */
-  const bottomNavItems = menuItems;
+  /*
+    「我的稿紙」不放進手機底部導覽：第六項會讓五個字擠成一團，而且印稿紙多半在電腦上做。
+    手機上收在右上角的個人選單裡（見下面的 nav-btn-sheets-mobile）。
+  */
+  const bottomNavItems = menuItems.filter((item) => item.key !== 'sheets');
 
   return (
     <nav className="sticky top-0 z-40 w-full flex-none px-2 sm:px-4 lg:px-6 pt-2 sm:pt-3 transition-all duration-300">
@@ -135,13 +141,18 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
                       key={item.key}
                       id={`nav-btn-${item.key}`}
                       onClick={() => navigate(item.path)}
-                      className={`flex items-center gap-2 px-4 py-2 text-body font-bold rounded-full transition-all duration-300 whitespace-nowrap active:scale-95 group ${
+                      // lg（1024～1279）時少一點左右留白：六項（加了「我的稿紙」）在 1024 寬時才排得下
+                      className={`flex items-center gap-2 px-3 xl:px-4 py-2 text-body font-bold rounded-full transition-all duration-300 whitespace-nowrap active:scale-95 group ${
                         isActive
                           ? 'bg-secondary text-on-accent shadow-md shadow-secondary/25'
                           : 'text-text-primary hover:bg-card/60'
                       }`}
                     >
-                      <Icon size={16} className={isActive ? 'text-on-accent' : 'text-text-primary'} strokeWidth={2} />
+                      {/*
+                        lg（1025～1279）只留文字：六個項目連圖示在 1025 寬時排不下，會把右邊的頭像擠出畫面（實測差 14px）。
+                        hidden＋xl:block 兩條不衝突，不受 index.css 斷點單位混用的影響（見下面姓名膠囊的說明）。
+                      */}
+                      <Icon size={16} className={`hidden xl:block ${isActive ? 'text-on-accent' : 'text-text-primary'}`} strokeWidth={2} />
                       <span>{item.label}</span>
                     </button>
                   );
@@ -161,7 +172,14 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
                       <img src={avatarSrc ?? `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(userName || 'teacher')}`} alt="" referrerPolicy="no-referrer" className="rounded-full bg-card w-full h-full object-cover" />
                   </div>
                   {userName && (
-                    <span className="hidden sm:block max-w-[8rem] truncate text-body font-bold">{userName}</span>
+                    /*
+                      lg（1024～1279）時中間有六個導覽項目，再放姓名膠囊會被擠出畫面右緣（實測 1100 寬）：
+                      這個寬度只留頭像，姓名在 xl 以上、以及沒有頂端導覽的平板寬度才顯示。
+                      ⚠️ 不能寫 `sm:block lg:hidden`：index.css 把 lg 改成 1025px（px），sm 是 Tailwind 預設的 40rem，
+                         單位不同 Tailwind 排不出先後，產生的 CSS 裡 sm:block 排在後面、把 lg:hidden 蓋掉（實測）。
+                         用 sm:max-lg:block 讓兩個範圍互不重疊，就不靠先後順序。
+                    */
+                    <span className="hidden sm:max-lg:block xl:block max-w-[8rem] truncate text-body font-bold">{userName}</span>
                   )}
                   <ChevronDown size={14} className={`shrink-0 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
                </div>
@@ -256,6 +274,18 @@ export const Navigation: React.FC<NavigationProps> = ({ identities, activeIdenti
 
                     <div className="h-px bg-border/30 my-2"></div>
                     
+                    {/* 手機、平板沒有頂端的導覽列，「我的稿紙」從這裡進（底部導覽只放五項） */}
+                    <button
+                      id="nav-btn-sheets-mobile"
+                      onClick={() => {
+                        navigate(routes.answerSheets());
+                        setIsProfileOpen(false);
+                      }}
+                      className="lg:hidden w-full px-4 py-2 text-left text-caption text-text-primary opacity-70 hover:bg-surface hover:opacity-100 flex items-center gap-3 transition-colors"
+                    >
+                      <FileText size={16} /> 我的稿紙
+                    </button>
+
                     <button id="nav-btn-settings" 
                       onClick={() => {
                         onOpenSettings();

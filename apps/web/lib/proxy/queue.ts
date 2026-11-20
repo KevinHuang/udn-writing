@@ -18,6 +18,11 @@ export interface UploadJob {
   state: UploadState;
   attempts: number;
   error?: string;
+  /**
+   * 伺服器看過照片、說要重拍（缺角、格子對不準…，422）。重傳同一批照片沒用，要重拍。
+   * 和「網路斷了沒傳上去」分開：那種照片還在、直接重傳就好。
+   */
+  retake?: boolean;
 }
 
 /**
@@ -58,9 +63,9 @@ const update = (queue: UploadJob[], id: string, patch: Partial<UploadJob>): Uplo
 export const markUploading = (queue: UploadJob[], id: string) =>
   update(queue, id, { state: 'uploading', error: undefined });
 
-export function markFailed(queue: UploadJob[], id: string, error: string): UploadJob[] {
+export function markFailed(queue: UploadJob[], id: string, error: string, retake = false): UploadJob[] {
   const job = queue.find((j) => j.id === id);
-  return update(queue, id, { state: 'failed', error, attempts: (job?.attempts ?? 0) + 1 });
+  return update(queue, id, { state: 'failed', error, retake, attempts: (job?.attempts ?? 0) + 1 });
 }
 
 /** 傳好的直接移出佇列 —— 之後的狀態以伺服器為準 */

@@ -19,7 +19,17 @@ export interface ProxyStatusRow {
   hasContent: boolean;
   /** GCS 上的**裸檔名**（沒有 `submit/assign_<id>/` 前綴，見 paths.ts） */
   imgFiles: string[];
+  /**
+   * 稿紙逐格辨識的狀態（照片是「我的稿紙」印的稿紙時才有，docs/grid-ocr.md）。
+   * 有值時狀態是後端**明確記下來的**，不用從 ocrTime 推；null＝照舊走 ocr-job。
+   */
+  gridStatus?: GridStatus | null;
+  /** 逐格辨識失敗的原因（給老師看的一句話） */
+  gridError?: string | null;
+  gridStartedAt?: string | null;
 }
+
+export type GridStatus = 'pending' | 'queued' | 'running' | 'done' | 'failed';
 
 export type ProxyOcrStatus =
   /** 還沒收照片 */
@@ -45,6 +55,12 @@ export type ProxyOcrStatus =
  * 重試會再開一個 job，兩個 job 可能競寫同一篇作文。
  */
 export const OCR_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * 逐格辨識卡在「辨識中」多久就當作失敗（背景工作中途被關掉，那一列會永遠停在 running）。
+ * 要和後端 dal/grid_ocr_helper.ts 的 STALE_RUNNING_MINUTES 一致：過了這個時間，後端也接受重新辨識。
+ */
+export const GRID_STALE_MS = 15 * 60 * 1000;
 
 /**
  * 「有沒有按過開始辨識」。
@@ -74,6 +90,18 @@ export function proxyOcrStatusOf(
   if (opts.upload) return opts.upload;
   if (!row) return 'idle';
 
+  // 稿紙逐格辨識：狀態是記下來的，照著對應就好
+  if (row.gridStatus) {
+    switch (row.gridStatus) {
+      case 'pending': return 'queued';
+      case 'queued': return 'running';
+      case 'running':
+        return row.gridStartedAt && opts.nowMs - Date.parse(row.gridStartedAt) >= GRID_STALE_MS ? 'failed' : 'running';
+      case 'done': return 'done';
+      case 'failed': return 'failed';
+    }
+  }
+
   /*
     ⚠️ ocr_time 有值**不等於**成功。黑箱失敗時也可能蓋時間戳，
        所以要跟 submission 有沒有文字一起看。
@@ -89,6 +117,19 @@ export function proxyOcrStatusOf(
   */
   const elapsed = opts.nowMs - Date.parse(row.lastUpdate);
   return elapsed >= (opts.timeoutMs ?? OCR_TIMEOUT_MS) ? 'failed' : 'running';
+}
+
+/**
+ * 辨識失敗的原因（給老師看）。只有逐格辨識記得原因；ocr-job 是黑箱，回 null。
+ * 卡住太久的也給一句話，免得老師只看到「失敗」不知道為什麼。
+ */
+export function failureReasonOf(row: ProxyStatusRow | undefined, nowMs: number): string | null {
+  if (!row?.gridStatus) return null;
+  if (row.gridStatus === 'failed') return row.gridError || '稿紙辨識失敗，請按「重試」';
+  if (row.gridStatus === 'running' && row.gridStartedAt && nowMs - Date.parse(row.gridStartedAt) >= GRID_STALE_MS) {
+    return '辨識太久沒有完成，請按「重試」';
+  }
+  return null;
 }
 
 // 顯示文字與顏色在 lib/statusStyles.ts 的 PROXY_OCR_STYLE（全站狀態樣式的唯一來源）

@@ -1,0 +1,20 @@
+{
+  "id": "gsat",
+  "name": "學測國寫答案卷",
+  "source": "空白稿紙範本/學測國寫空白答案卷.pdf",
+  "note": "掃描檔量測，格寬實測 10.05mm，視為掃描縮放誤差，採標準 10mm 方格並以原格子中心定位。每頁 38 行 × 22 字 = 836 格。",
+  "paper_mm": [420, 297],
+  "marker_code": 0,
+  "pages": [
+    {
+      "label": "第一大題作答區",
+      "grid": {"x0": 10.5, "y0": 58.4, "cols": 38, "rows": 22,
+               "cell_w": 10.0, "cell_h": 10.0, "col_pitch": 10.0, "trailing_gutter": false}
+    },
+    {
+      "label": "第二大題作答區",
+      "grid": {"x0": 18.9, "y0": 58.4, "cols": 38, "rows": 22,
+               "cell_w": 10.0, "cell_h": 10.0, "col_pitch": 10.0, "trailing_gutter": false}
+    }
+  ]
+}

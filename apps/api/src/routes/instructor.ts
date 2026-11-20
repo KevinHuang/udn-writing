@@ -23,6 +23,10 @@ import SubmissionMarkHelper from '../dal/submission_mark_helper';
 import FeaturedRuleHelper, { isRuleScore } from '../dal/featured_rule_helper';
 import AssignmentLeaveHelper from '../dal/assignment_leave_helper';
 import { checkImageList } from '../lib/image_input';
+import GridOcrHelper from '../dal/grid_ocr_helper';
+import { precheckSheets } from '../lib/grid_ocr/pipeline';
+import { createGridServiceClient } from '../lib/grid_ocr/service_client';
+import { dispatchGridOcr } from '../lib/grid_ocr/dispatch';
 import SemesterHelper from '../dal/semester_helper';
 import config from '../config'
 import { DsaSyncHelper } from '../dal/dsa_sync_helper';
@@ -556,6 +560,21 @@ router.post('/submissions/ocr_proxy', async (ctx) => {
             return;
         }
 
+        /*
+          稿紙逐格辨識（docs/grid-ocr.md）：存進 GCS **之前**先問辨識服務（幾秒、不用 AI）。
+            我們的稿紙但要重拍（缺角、格子對不準…）→ 422，什麼都不存，老師趁紙還在手邊重拍；
+            我們的稿紙、四角都讀得到 → 之後走逐格辨識；
+            其他照片、或服務沒設定／連不上 → 照舊走 ocr-job，不擋老師。
+        */
+        const precheck = await precheckSheets(
+            checked.images.map((img, i) => ({ name: `第${i + 1}張`, data: img.base64Image })),
+            createGridServiceClient());
+        if (precheck.kind === 'problem') {
+            ctx.status = 422;
+            ctx.body = { error: precheck.message, code: 'SHEET_PROBLEM' };
+            return;
+        }
+
         // 將 base64 圖片存成 cloud storage 檔案
         const bucketFolder = `submit/assign_${assignmentId}`;
         const dt = new Date();
@@ -581,6 +600,10 @@ router.post('/submissions/ocr_proxy', async (ctx) => {
             throw e;
         }
 
+        if (precheck.kind === 'grid') {
+            await GridOcrHelper.createPending(batch.id, assignmentId, studentId, precheck.template);
+        }
+
         /*
           ⚠️ 這裡**刻意不觸發**辨識（以前會呼叫 CloudRunJobsHelper.startOCRJob）。
              老師還在拍下一位；等他按「開始辨識」才送（/submissions/ocr_proxy/start）。
@@ -591,6 +614,8 @@ router.post('/submissions/ocr_proxy', async (ctx) => {
             batchUUID: batch.batch_uuid,
             folder: bucketFolder,
             files: fileNames,
+            /** grid＝之後走稿紙逐格辨識；other＝照舊整張辨識 */
+            sheet: precheck.kind === 'grid' ? 'grid' : 'other',
         };
     } catch (error) {
         console.error('Error in proxy submission:', error);
@@ -636,7 +661,7 @@ router.post('/submissions/ocr_proxy/start', async (ctx) => {
 
         const started: Array<{ studentId: string; batchUUID: string }> = [];
         const failed: Array<{ studentId: string; error: string }> = [];
-        const skipped: Array<{ studentId: string; reason: 'not_found' | 'already_done' }> = [];
+        const skipped: Array<{ studentId: string; reason: 'not_found' | 'already_done' | 'in_progress' }> = [];
 
         const found = new Set(batches.map((b) => b.user_id));
         for (const id of wanted ?? []) {
@@ -657,8 +682,32 @@ router.post('/submissions/ocr_proxy/start', async (ctx) => {
         */
         await BatchProxySubmissionHelper.touchTriggered(toRun.map((b) => b.id));
 
-        for (let i = 0; i < toRun.length; i += OCR_START_CONCURRENCY) {
-            const chunk = toRun.slice(i, i + OCR_START_CONCURRENCY);
+        /*
+          上傳時認出是我們的稿紙的那幾批 → 稿紙逐格辨識（docs/grid-ocr.md）；其他照舊交給 ocr-job。
+          正在辨識中的不重送（同一批跑兩次會互相蓋掉），回報 in_progress。
+        */
+        const gridIds = await GridOcrHelper.gridBatchIds(toRun.map((b) => b.id));
+        const gridBatches = toRun.filter((b) => gridIds.has(b.id));
+        const legacy = toRun.filter((b) => !gridIds.has(b.id));
+        if (gridBatches.length) {
+            const queued = new Set(await GridOcrHelper.markQueued(gridBatches.map((b) => b.id), Boolean(force)));
+            for (const b of gridBatches) {
+                if (!queued.has(b.id)) skipped.push({ studentId: b.user_id, reason: 'in_progress' });
+            }
+            const results = await dispatchGridOcr(gridBatches.filter((b) => queued.has(b.id)).map((b) => b.id));
+            for (const r of results) {
+                const b = gridBatches.find((x) => x.id === r.batchId)!;
+                if (r.started) {
+                    started.push({ studentId: b.user_id, batchUUID: b.batch_uuid });
+                } else {
+                    await GridOcrHelper.saveFailed(b.id, 'UNAVAILABLE', '無法啟動稿紙辨識，請稍後按「重新辨識」');
+                    failed.push({ studentId: b.user_id, error: r.error ?? '無法啟動稿紙辨識' });
+                }
+            }
+        }
+
+        for (let i = 0; i < legacy.length; i += OCR_START_CONCURRENCY) {
+            const chunk = legacy.slice(i, i + OCR_START_CONCURRENCY);
             const results = await Promise.all(chunk.map((b) =>
                 CloudRunJobsHelper.startOCRJob(b.user_id, assignmentId, b.batch_uuid)));
             results.forEach((r, j) => {

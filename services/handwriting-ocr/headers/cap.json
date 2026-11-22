@@ -1,0 +1,28 @@
+{
+  "template": "cap",
+  "title": "會考格式 寫作測驗答案卷",
+  "style": {"font": "kai", "grid_color": "#e8609a", "grid_width": 0.5, "frame_width": 0.9},
+  "pages": [
+    {
+      "elements": [
+        {"type": "line", "points": [[318.5, 15.8], [306.15, 15.8], [306.15, 18.2]], "arrow": true, "width": 0.6},
+        {"type": "text", "text": "請從本行開始作答。", "x": 318.5, "y": 18.6, "size": 10},
+        {"type": "text", "text": "寫作測驗答案卷", "x": 333, "y": 22, "size": 32, "char_step": 14},
+        {"type": "field", "label": "班級", "x": 347.5, "y": 135, "size": 12, "length": 30, "fill": "class"},
+        {"type": "field", "label": "座號", "x": 340.5, "y": 135, "size": 12, "length": 30, "fill": "seat"},
+        {"type": "field", "label": "姓名", "x": 333.5, "y": 135, "size": 12, "length": 60, "fill": "name"},
+        {"type": "text", "text": "第一頁", "x": 318.5, "y": 226, "size": 11},
+        {"type": "text", "text": "若未完成作答，請翻背面繼續作答。", "x": 12, "y": 125, "size": 10},
+        {"type": "idcode", "x": 332, "y": 212, "size": 18},
+        {"type": "seatmark", "x": 341, "y": 20, "size": 4, "orient": "col"}
+      ]
+    },
+    {
+      "elements": [
+        {"type": "text", "text": "※此為第二頁，請由第一頁開始作答。", "x": 319, "y": 18.6, "size": 10},
+        {"type": "text", "text": "第二頁", "x": 319, "y": 226, "size": 11},
+        {"type": "idcode", "x": 332, "y": 212, "size": 18}
+      ]
+    }
+  ]
+}

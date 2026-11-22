@@ -28,6 +28,16 @@ import {
 } from '../lib/submissionMarks';
 import { SubmissionStampRow } from './SubmissionStamp';
 import { SHOW_AI_MODEL_PICKER } from '../lib/features';
+import { SimpleGradingPanel } from './SimpleGradingPanel';
+import { ManuscriptViewer } from './ManuscriptViewer';
+import { ManuscriptNotes, RegradeReminder, type AddTypoTarget } from './ManuscriptNotes';
+import { fetchManuscript, saveManuscriptDecision } from '../api/manuscript';
+import {
+  applyTeacherTypos, buildManuscriptNotes, countPendingTypos, nextPendingNoteId, parseBaseline, parseCards,
+  regradeReminder, teacherTypoKeys, type ManuscriptData, type ManuscriptDecisionInput,
+} from '../lib/manuscript';
+import { fetchSimpleGrading } from '../api/simpleGrading';
+import { PROOFREAD_NOTE, showSimpleGrading, type SimpleGradingInfo } from '../lib/simpleGrading';
 
 /**
  * 批改結果的比較用字串。欄位固定順序序列化，
@@ -66,6 +76,11 @@ interface GradingEditorProps {
    * 所以按完不需要再按儲存。失敗時要 reject，這裡才跳得出錯誤訊息。
    */
   onAutoGrade?: (submissionId: string) => Promise<void>;
+  /**
+   * 重新評分（原稿紅筆改了錯字之後）：用目前確定的錯字再跑一次簡易批改，存成新的一版。
+   * 和 onAutoGrade 一樣，完成後這個元件會被重掛。
+   */
+  onRegrade?: (submissionId: string) => Promise<void>;
   /** 全部的作品標記。這裡只讀自己這一篇的那幾筆 */
   marks?: SubmissionMarks;
   onToggleMark?: (submissionId: string, kind: MarkKind) => void;
@@ -101,6 +116,7 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
   onResetGrading,
   onPublish,
   onAutoGrade,
+  onRegrade,
   marks,
   onToggleMark,
   queuePosition,
@@ -209,6 +225,116 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
   const [draftIndex, setDraftIndex] = useState(0);
   const draftPage = Math.min(draftIndex, Math.max(0, draftImages.length - 1));
 
+  /**
+   * 簡易批改的資訊（只給老師看，lib/simpleGrading.ts）。只有稿紙代繳交才可能用到，
+   * 所以沒有原稿照片的不問。AI 批改完這個元件會重掛，新的評分依據自然會再抓一次；
+   * 校對存檔改了文字也要重抓（改過文字就不再用簡易批改）。
+   * 抓不到就不顯示這一塊 —— 它只是輔助資訊，不能擋住批改。
+   */
+  const [simpleInfo, setSimpleInfo] = useState<SimpleGradingInfo | null>(null);
+  useEffect(() => {
+    if (!hasDraft) return;
+    let alive = true;
+    fetchSimpleGrading(submission.id)
+      .then((info) => { if (alive) setSimpleInfo(info); })
+      .catch(() => { if (alive) setSimpleInfo(null); });
+    return () => { alive = false; };
+  }, [submission.id, submission.content, hasDraft]);
+
+  /*
+    原稿紅筆（docs/manuscript.md）：拉正的原稿、格子位置、錯字標記。沒有逐格辨識結果是 null，批改頁照舊。
+    老師的決定每按一下就存，回來的是更新後的標記，直接換掉（不用重抓整份）。
+  */
+  const [manuscript, setManuscript] = useState<ManuscriptData | null>(null);
+  const [manuscriptView, setManuscriptView] = useState<'manuscript' | 'text'>('manuscript');
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const [addTarget, setAddTarget] = useState<AddTypoTarget | null>(null);
+  const [decisionBusy, setDecisionBusy] = useState(false);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+  const [regrading, setRegrading] = useState(false);
+  useEffect(() => {
+    if (!hasDraft) return;
+    let alive = true;
+    fetchManuscript(submission.id)
+      .then((data) => { if (alive) setManuscript(data); })
+      .catch(() => { if (alive) setManuscript(null); });
+    return () => { alive = false; };
+  }, [submission.id, hasDraft]);
+
+  /*
+    顯示用的卡片＝簡易批改存下的卡片＋目前老師加的錯字：老師加的錯字落在引用上，那段引用先拿掉
+    （同一個詞不能又紅圈又稱讚）。評語裡也提到那句時只提醒，不自動改字。
+  */
+  const savedCards = simpleInfo ? parseCards(simpleInfo.rawDetail) : null;
+  const visibleCards = manuscript && savedCards
+    ? applyTeacherTypos(savedCards, teacherTypoKeys(manuscript), result?.feedback ? [result.feedback] : [])
+    : null;
+  const manuscriptNotes = manuscript
+    ? buildManuscriptNotes(manuscript, visibleCards, manuscript.pages.map((p) => p.prefix))
+    : [];
+  const pendingCount = countPendingTypos(manuscript);
+  const regradeMessage = manuscript && simpleInfo?.eligible
+    ? regradeReminder(parseBaseline((simpleInfo.rawDetail as { baseline?: unknown } | null)?.baseline), manuscript.current)
+    : null;
+
+  const selectNote = (id: string) => {
+    setSelectedNoteId(id);
+    setAddTarget(null);
+  };
+
+  /** 點原稿上的字：有標記就選那個便條；沒有就準備加錯字 */
+  const handleCellClick = (cellKey: string) => {
+    const note = manuscriptNotes.find((n) => (n.typo || n.format) && n.keys.includes(cellKey));
+    if (note) {
+      selectNote(note.id);
+      return;
+    }
+    const cell = manuscript?.pages.flatMap((p) => p.cells).find((c) => c.key === cellKey);
+    if (!cell?.text) return;
+    setSelectedNoteId(null);
+    setAddTarget({ cellKey, text: cell.text });
+    setDecisionError(null);
+  };
+
+  const handleDecision = async (input: ManuscriptDecisionInput, noteId: string | null): Promise<boolean> => {
+    setDecisionBusy(true);
+    setDecisionError(null);
+    try {
+      const marks = await saveManuscriptDecision(submission.id, input);
+      const next = manuscript ? { ...manuscript, ...marks } : null;
+      setManuscript(next);
+      // 確定的錯字數、待確認數變了：簡易批改區塊的摘要跟著更新
+      fetchSimpleGrading(submission.id).then(setSimpleInfo).catch(() => undefined);
+      // 處理完一個待確認，自動跳到下一個待確認
+      if (next && noteId && input.action !== 'add') {
+        const nextNotes = buildManuscriptNotes(next, visibleCards, next.pages.map((p) => p.prefix));
+        setSelectedNoteId(nextPendingNoteId(nextNotes, noteId) ?? noteId);
+      }
+      return true;
+    } catch (e) {
+      setDecisionError(e instanceof Error ? e.message : '存檔失敗，請再試一次。');
+      return false;
+    } finally {
+      setDecisionBusy(false);
+    }
+  };
+
+  /** 重新評分：級分與評語都會換成新的（老師改過的評語也會被換掉），按之前先確認 */
+  const handleRegrade = async () => {
+    if (!onRegrade) return;
+    const ok = window.confirm(
+      '重新評分會用目前確定的錯字再批一次，級分和評語都會換成新的。\n你自己改過的評語也會被換掉。要繼續嗎？');
+    if (!ok) return;
+    setRegrading(true);
+    try {
+      await onRegrade(submission.id);
+    } catch {
+      alert('重新評分失敗，請稍後再試。');
+      setRegrading(false);
+    }
+    // 成功時元件會重掛，不用解除
+  };
+
 
 
   /**
@@ -239,6 +365,9 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
    */
   const handleAutoGrade = async () => {
     if (!onAutoGrade) return;
+    // 原稿上還有待確認的錯字：提醒但不擋 —— 確認過的才算分、送給 AI；先看完就不用因為錯字重新評分
+    if (pendingCount > 0 && !window.confirm(
+      `原稿上還有 ${pendingCount} 個錯字待確認。沒確認的不算分、不送給 AI。\n要照樣批改嗎？`)) return;
     setIsGrading(true);
     try {
       await onAutoGrade(submission.id);
@@ -249,6 +378,139 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
     }
     // 成功時不解除 isGrading —— 元件緊接著就被重掛，解除只會閃一下
   };
+
+  /** 作文本身（原本左邊的樣子）；有原稿時放在「辨識文字」分頁 */
+  const paper = (
+                <div className="w-full bg-card min-h-[calc(100%-2rem)] shrink-0 shadow-card border border-border rounded-sm px-4 py-6 md:px-8 md:py-10 mb-8 relative">
+                    <h1 className="text-heading font-bold mb-6 md:mb-10 text-text-primary text-center text-balance">
+                        {assignmentTitle || "學生作品"}
+                    </h1>
+
+                    {/*
+                      作文是這個系統真正的主角，排版比照書本內文：
+                        text-essay    17px／行高 2.0／字距 0.03em（定義在 index.css）
+                        indent-[2em]  中文慣例的「空兩格」，不是固定像素
+                        max-w-[34em]  一行約 34 個字；840px 寬配 17px 會排到 49 字，太長
+
+                      原本掛的 prose / prose-slate 是 @tailwindcss/typography 的類別，
+                      但專案沒裝那個外掛，等於完全沒有作用，已移除。
+                      leading-7 md:leading-9 也拿掉 —— 會和 text-essay 自帶的行高打架。
+                    */}
+                    {ocrReview && !proofreading && (
+                        <div
+                            id="gradingeditor-ocr-review"
+                            className="mx-auto max-w-[38em] mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-amber-200 bg-amber-100 px-4 py-3"
+                        >
+                            <AlertTriangle size={18} className="shrink-0 text-amber-600" />
+                            <p className="flex-1 text-caption text-amber-700">
+                                {simpleInfo?.eligible ? (
+                                  /* 稿紙逐格辨識的作文：簡易批改本來就是給沒校稿的文字用的，校對不是必要的 */
+                                  <span id="gradingeditor-ocr-review-simple">
+                                    這篇是從稿紙一格一格辨識出來的，還沒有人校對過。{PROOFREAD_NOTE}
+                                  </span>
+                                ) : (
+                                  <>
+                                    這篇是 AI 從手寫稿辨識出來的，還沒有人校對過。辨識一定會有錯字 ——
+                                    請先對照原稿校對，再批改。
+                                  </>
+                                )}
+                            </p>
+                            <button
+                                id="gradingeditor-btn-proofread"
+                                onClick={startProofreading}
+                                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-amber-200 text-body text-amber-700 hover:bg-amber-50 whitespace-nowrap"
+                            >
+                                <PenTool size={14} className="shrink-0" />
+                                校對文字
+                            </button>
+                        </div>
+                    )}
+
+                    {proofreading ? (
+                        <div className="mx-auto max-w-[38em] space-y-3">
+                            <p className="text-caption text-text-secondary">
+                                對照原稿，把辨識錯的字改掉。存檔後就不再標示「未校對」。
+                            </p>
+                            {hasDraft && (
+                                <div className="rounded-xl border border-border bg-surface-soft p-2 space-y-2">
+                                    <img
+                                        key={draftImages[draftPage]}
+                                        src={imageUrlOf(draftImages[draftPage])}
+                                        alt={`手寫原稿第 ${draftPage + 1} 頁`}
+                                        onClick={() => setShowHandwritten(true)}
+                                        title="點一下放大"
+                                        className="w-full max-h-[55vh] object-contain cursor-zoom-in rounded-lg"
+                                    />
+                                    {draftImages.length > 1 && (
+                                        <div className="flex items-center justify-center gap-3 text-caption text-text-secondary">
+                                            <button
+                                                onClick={() => setDraftIndex(Math.max(0, draftPage - 1))}
+                                                disabled={draftPage === 0}
+                                                className="p-1 rounded-lg hover:bg-card disabled:opacity-30"
+                                                title="上一頁"
+                                            >
+                                                <ChevronLeft size={16} />
+                                            </button>
+                                            原稿 {draftPage + 1} / {draftImages.length}
+                                            <button
+                                                onClick={() => setDraftIndex(Math.min(draftImages.length - 1, draftPage + 1))}
+                                                disabled={draftPage >= draftImages.length - 1}
+                                                className="p-1 rounded-lg hover:bg-card disabled:opacity-30"
+                                                title="下一頁"
+                                            >
+                                                <ChevronRight size={16} />
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            <textarea
+                                id="gradingeditor-textarea-proofread"
+                                value={proofText}
+                                onChange={(e) => setProofText(e.target.value)}
+                                rows={18}
+                                className="w-full px-4 py-3 rounded-xl bg-card border border-border text-essay font-essay text-text-primary outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 resize-y"
+                            />
+                            {proofError && (
+                                <p className="text-caption text-danger-700 bg-danger-100 border border-danger-200 rounded-lg px-3 py-2">
+                                    {proofError}
+                                </p>
+                            )}
+                            <div className="flex items-center justify-end gap-2">
+                                <span className="mr-auto text-caption text-text-muted">{proofText.trim().length} 字</span>
+                                <button
+                                    onClick={() => setProofreading(false)}
+                                    disabled={proofSaving}
+                                    className="px-3 py-2 rounded-xl text-body text-text-secondary hover:bg-surface-soft"
+                                >
+                                    取消
+                                </button>
+                                <button
+                                    id="gradingeditor-btn-proofread-save"
+                                    onClick={saveProofreading}
+                                    disabled={proofSaving || !proofText.trim()}
+                                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-on-accent text-body hover:opacity-90 disabled:opacity-50"
+                                >
+                                    {proofSaving ? <Loader2 size={14} className="animate-spin shrink-0" /> : <CheckCircle2 size={14} className="shrink-0" />}
+                                    校對完成，存檔
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                    <div className="mx-auto max-w-[38em] text-essay font-essay text-text-primary selection:bg-primary/10 selection:text-text-primary">
+                        {submission.content
+                            .split('\n')
+                            // 段落間的空行不要變成空的 <p>，否則會多出一段間距
+                            .filter((paragraph) => paragraph.trim() !== '')
+                            .map((paragraph, idx) => (
+                                <p key={idx} className="mb-5 last:mb-0 indent-[2em] text-justify">
+                                    {paragraph}
+                                </p>
+                            ))}
+                    </div>
+                    )}
+                </div>
+  );
 
   return (
     /*
@@ -567,127 +829,23 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                     </div>
                 )}
 
-                {/* The Paper - Realistic Shadow and Texture */}
-                <div className="w-full bg-card min-h-[calc(100%-2rem)] shrink-0 shadow-card border border-border rounded-sm px-4 py-6 md:px-8 md:py-10 mb-8 relative">
-                    <h1 className="text-heading font-bold mb-6 md:mb-10 text-text-primary text-center text-balance">
-                        {assignmentTitle || "學生作品"}
-                    </h1>
-
-                    {/*
-                      作文是這個系統真正的主角，排版比照書本內文：
-                        text-essay    17px／行高 2.0／字距 0.03em（定義在 index.css）
-                        indent-[2em]  中文慣例的「空兩格」，不是固定像素
-                        max-w-[34em]  一行約 34 個字；840px 寬配 17px 會排到 49 字，太長
-
-                      原本掛的 prose / prose-slate 是 @tailwindcss/typography 的類別，
-                      但專案沒裝那個外掛，等於完全沒有作用，已移除。
-                      leading-7 md:leading-9 也拿掉 —— 會和 text-essay 自帶的行高打架。
-                    */}
-                    {ocrReview && !proofreading && (
-                        <div
-                            id="gradingeditor-ocr-review"
-                            className="mx-auto max-w-[38em] mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-amber-200 bg-amber-100 px-4 py-3"
-                        >
-                            <AlertTriangle size={18} className="shrink-0 text-amber-600" />
-                            <p className="flex-1 text-caption text-amber-700">
-                                這篇是 AI 從手寫稿辨識出來的，還沒有人校對過。辨識一定會有錯字 ——
-                                請先對照原稿校對，再批改。
-                            </p>
-                            <button
-                                id="gradingeditor-btn-proofread"
-                                onClick={startProofreading}
-                                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-amber-200 text-body text-amber-700 hover:bg-amber-50 whitespace-nowrap"
-                            >
-                                <PenTool size={14} className="shrink-0" />
-                                校對文字
-                            </button>
-                        </div>
-                    )}
-
-                    {proofreading ? (
-                        <div className="mx-auto max-w-[38em] space-y-3">
-                            <p className="text-caption text-text-secondary">
-                                對照原稿，把辨識錯的字改掉。存檔後就不再標示「未校對」。
-                            </p>
-                            {hasDraft && (
-                                <div className="rounded-xl border border-border bg-surface-soft p-2 space-y-2">
-                                    <img
-                                        key={draftImages[draftPage]}
-                                        src={imageUrlOf(draftImages[draftPage])}
-                                        alt={`手寫原稿第 ${draftPage + 1} 頁`}
-                                        onClick={() => setShowHandwritten(true)}
-                                        title="點一下放大"
-                                        className="w-full max-h-[55vh] object-contain cursor-zoom-in rounded-lg"
-                                    />
-                                    {draftImages.length > 1 && (
-                                        <div className="flex items-center justify-center gap-3 text-caption text-text-secondary">
-                                            <button
-                                                onClick={() => setDraftIndex(Math.max(0, draftPage - 1))}
-                                                disabled={draftPage === 0}
-                                                className="p-1 rounded-lg hover:bg-card disabled:opacity-30"
-                                                title="上一頁"
-                                            >
-                                                <ChevronLeft size={16} />
-                                            </button>
-                                            原稿 {draftPage + 1} / {draftImages.length}
-                                            <button
-                                                onClick={() => setDraftIndex(Math.min(draftImages.length - 1, draftPage + 1))}
-                                                disabled={draftPage >= draftImages.length - 1}
-                                                className="p-1 rounded-lg hover:bg-card disabled:opacity-30"
-                                                title="下一頁"
-                                            >
-                                                <ChevronRight size={16} />
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                            <textarea
-                                id="gradingeditor-textarea-proofread"
-                                value={proofText}
-                                onChange={(e) => setProofText(e.target.value)}
-                                rows={18}
-                                className="w-full px-4 py-3 rounded-xl bg-card border border-border text-essay font-essay text-text-primary outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 resize-y"
-                            />
-                            {proofError && (
-                                <p className="text-caption text-danger-700 bg-danger-100 border border-danger-200 rounded-lg px-3 py-2">
-                                    {proofError}
-                                </p>
-                            )}
-                            <div className="flex items-center justify-end gap-2">
-                                <span className="mr-auto text-caption text-text-muted">{proofText.trim().length} 字</span>
-                                <button
-                                    onClick={() => setProofreading(false)}
-                                    disabled={proofSaving}
-                                    className="px-3 py-2 rounded-xl text-body text-text-secondary hover:bg-surface-soft"
-                                >
-                                    取消
-                                </button>
-                                <button
-                                    id="gradingeditor-btn-proofread-save"
-                                    onClick={saveProofreading}
-                                    disabled={proofSaving || !proofText.trim()}
-                                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-on-accent text-body hover:opacity-90 disabled:opacity-50"
-                                >
-                                    {proofSaving ? <Loader2 size={14} className="animate-spin shrink-0" /> : <CheckCircle2 size={14} className="shrink-0" />}
-                                    校對完成，存檔
-                                </button>
-                            </div>
-                        </div>
-                    ) : (
-                    <div className="mx-auto max-w-[38em] text-essay font-essay text-text-primary selection:bg-primary/10 selection:text-text-primary">
-                        {submission.content
-                            .split('\n')
-                            // 段落間的空行不要變成空的 <p>，否則會多出一段間距
-                            .filter((paragraph) => paragraph.trim() !== '')
-                            .map((paragraph, idx) => (
-                                <p key={idx} className="mb-5 last:mb-0 indent-[2em] text-justify">
-                                    {paragraph}
-                                </p>
-                            ))}
-                    </div>
-                    )}
-                </div>
+                {/*
+                  稿紙代繳交、有逐格辨識結果的作文：左邊換成拉正的原稿加紅筆（docs/manuscript.md），
+                  原本的文字放在「辨識文字」分頁。校對時一律用文字（要改的是文字）。
+                */}
+                {manuscript && !proofreading ? (
+                  <ManuscriptViewer
+                    data={manuscript}
+                    notes={manuscriptNotes}
+                    selectedNoteId={selectedNoteId}
+                    onSelectNote={selectNote}
+                    selectedCellKey={addTarget?.cellKey ?? null}
+                    view={manuscriptView}
+                    onViewChange={setManuscriptView}
+                    onCellClick={manuscript.locked ? undefined : handleCellClick}
+                    textView={paper}
+                  />
+                ) : paper}
             </div>
         </div>
 
@@ -812,6 +970,30 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                           </span>
                         )}
                       </div>
+                    )}
+
+                    {showSimpleGrading(simpleInfo) && <SimpleGradingPanel info={simpleInfo} />}
+
+                    {regradeMessage && result && !manuscript?.locked && (
+                      <RegradeReminder message={regradeMessage} busy={regrading} onRegrade={handleRegrade} />
+                    )}
+
+                    {manuscript && (
+                      <ManuscriptNotes
+                        notes={manuscriptNotes}
+                        selectedNoteId={selectedNoteId}
+                        onSelect={selectNote}
+                        pendingCount={pendingCount}
+                        locked={manuscript.locked}
+                        busy={decisionBusy}
+                        onDecision={handleDecision}
+                        addTarget={addTarget}
+                        onCancelAdd={() => setAddTarget(null)}
+                        removals={visibleCards?.removals ?? []}
+                        mentions={visibleCards?.mentions ?? []}
+                        beforeGrading={!result}
+                        error={decisionError}
+                      />
                     )}
 
                     {!result && (

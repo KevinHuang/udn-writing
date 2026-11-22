@@ -23,6 +23,16 @@ import SubmissionMarkHelper from '../dal/submission_mark_helper';
 import FeaturedRuleHelper, { isRuleScore } from '../dal/featured_rule_helper';
 import AssignmentLeaveHelper from '../dal/assignment_leave_helper';
 import { checkImageList } from '../lib/image_input';
+import GridOcrHelper from '../dal/grid_ocr_helper';
+import { precheckSheets } from '../lib/grid_ocr/pipeline';
+import { createGridServiceClient } from '../lib/grid_ocr/service_client';
+import { dispatchGridOcr } from '../lib/grid_ocr/dispatch';
+import SimpleGradingHelper from '../dal/simple_grading_helper';
+import { createSimulatedSimpleGradingAi, gradeSimple, geminiSimpleGradingAi } from '../lib/simple_grading/grade';
+import { summarizeGrid } from '../lib/simple_grading/summary';
+import ManuscriptHelper from '../dal/manuscript_helper';
+import { decidedForGrading, loadMergedMarks, toManuscriptPages, toMarksPayload } from '../lib/manuscript/payload';
+import { cellTexts, ManuscriptDecisionError, mergeManuscriptMarks, planDecision, type Target } from '../lib/manuscript/marks';
 import SemesterHelper from '../dal/semester_helper';
 import config from '../config'
 import { DsaSyncHelper } from '../dal/dsa_sync_helper';
@@ -344,6 +354,34 @@ router.post('/grading/:submissionId', async (ctx) => {
         }
 
         /*
+          稿紙代繳交、經逐格辨識、文字沒被老師改過 → 簡易批改（docs/simple-grading.md）。
+          學生沒有校稿：辨識不確定的字不引用、不批評；評分規準照樣用這一題的批改規範。
+          老師不用另外選 —— 單份「AI 批改」和「批次批改」都走這裡，由作文本身決定。
+        */
+        const simple = await SimpleGradingHelper.eligibilityOf(submissionId, submission.content);
+        if (simple.eligible && simple.grid) {
+            const ai = isAiConfigured()
+                ? geminiSimpleGradingAi(config.gradingModel)
+                : createSimulatedSimpleGradingAi();
+            // 老師在原稿上確認過的錯字才算（待確認的不送 AI、不算分）
+            const decided = decidedForGrading(await loadMergedMarks(simple.grid));
+            const run = await gradeSimple({ grid: simple.grid, context: gradingContext, ai, decided });
+            // 學生看得到的只有級分與評語；評分依據、請老師留意在 simple_grading_result
+            const result = { score: run.outcome.score, response: run.outcome.response };
+            const feedback = await InstructorHelper.saveFeedback(
+                submissionId, result.score, result, userId, await courseScopeOf(ctx),
+                run.inputTokens, run.outputTokens, true, run.outcome.subScores);
+            if (!feedback) {
+                ctx.status = 404;
+                ctx.body = { error: 'Submission not found' };
+                return;
+            }
+            await SimpleGradingHelper.save(submissionId, simple.grid.gridId, feedback.id ?? null, run);
+            ctx.body = { success: true, result, feedback, simple_grading: true };
+            return;
+        }
+
+        /*
           沒有設定 Vertex AI 憑證時走決定性的模擬批改（見 simulated_grading.ts）。
           少了這一段，開發環境沒有憑證就整條批改流程都跑不動。
           模擬結果的評語開頭會標明「示範模式」。
@@ -407,6 +445,206 @@ router.post('/grading/:submissionId', async (ctx) => {
 });
 
 /**
+ * @route GET /api/instructor/grading/:submissionId/simple
+ * @description 簡易批改的資訊（只給老師）：這篇能不能用簡易批改、辨識完成度與錯字摘要、
+ *              批改過的話，評分依據、請老師留意、系統拿掉了哪些引用。
+ *              學生端沒有對應的端點，也不讀 simple_grading_result。
+ */
+router.get('/grading/:submissionId/simple', async (ctx) => {
+    try {
+        const { submissionId } = ctx.params;
+        const submission = await SubmissionHelper.getSubmissionByIdForInstructor(submissionId, await courseScopeOf(ctx));
+        if (!submission) {
+            ctx.status = 404;
+            ctx.body = { error: 'Submission not found' };
+            return;
+        }
+        const simple = await SimpleGradingHelper.eligibilityOf(submissionId, submission.content);
+        const saved = await SimpleGradingHelper.get(submissionId);
+        ctx.body = {
+            eligible: simple.eligible,
+            reason: simple.reason,
+            sheet: simple.grid ? summarizeGrid(simple.grid, await loadMergedMarks(simple.grid)) : null,
+            detail: saved?.detail ?? null,
+            model: saved?.model ?? null,
+            graded_at: saved?.updatedAt ?? null,
+        };
+    } catch (error) {
+        console.error('Error in simple grading info:', error);
+        ctx.status = 500;
+        ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/*
+  ── 原稿紅筆（docs/manuscript.md）──
+  稿紙代繳交、有逐格辨識結果的作文：批改頁左邊換成拉正的原稿，紅筆畫在學生的字上；
+  老師在原稿上確認、否決、新增錯字，每按一下就存（manuscript_mark_decision）。
+  發還之後鎖住（409），要改先收回發還。只給老師：學生端沒有這幾支。
+*/
+
+/** 這篇作文的逐格辨識結果；老師看不到這篇（範圍外）回 null */
+async function manuscriptContext(ctx: Context, submissionId: string) {
+    const submission = await SubmissionHelper.getSubmissionByIdForInstructor(submissionId, await courseScopeOf(ctx));
+    if (!submission) return null;
+    const grid = await SimpleGradingHelper.gridForSubmission(submissionId);
+    return { submission, grid };
+}
+
+/**
+ * @route GET /api/instructor/grading/:submissionId/manuscript
+ * @description 原稿資料：每頁拉正的圖、有字的格子位置、合併老師決定後的錯字與格式提醒、目前的錯字狀態。
+ *              沒有逐格辨識結果回 { available: false }，批改頁照舊。
+ */
+router.get('/grading/:submissionId/manuscript', async (ctx) => {
+    try {
+        const { submissionId } = ctx.params;
+        const found = await manuscriptContext(ctx, submissionId);
+        if (!found) {
+            ctx.status = 404;
+            ctx.body = { error: 'Submission not found' };
+            return;
+        }
+        if (!found.grid || !found.grid.pageImageFiles.length) {
+            ctx.body = { available: false };
+            return;
+        }
+        ctx.body = {
+            available: true,
+            locked: await ManuscriptHelper.isReturned(submissionId),
+            template: found.grid.sheetTemplate,
+            pages: toManuscriptPages(found.grid, submissionId),
+            ...toMarksPayload(await loadMergedMarks(found.grid)),
+        };
+    } catch (error) {
+        console.error('Error in manuscript:', error);
+        ctx.status = 500;
+        ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/**
+ * @route GET /api/instructor/grading/:submissionId/manuscript/pages/:page
+ * @description 拉正的稿紙圖（第 page 頁，0 起算）。用伺服器自己的 GCS 權限讀，不靠 bucket 公開；
+ *              本機假儲存也讀得到。
+ */
+router.get('/grading/:submissionId/manuscript/pages/:page', async (ctx) => {
+    const { submissionId, page } = ctx.params;
+    const found = await manuscriptContext(ctx, submissionId);
+    const file = found?.grid?.pageImageFiles[Number(page)];
+    if (!found || !found.grid || !file || !/^\d+$/.test(page)) {
+        ctx.status = 404;
+        return;
+    }
+    const image = await StorageHelper.openImage(`submit/assign_${found.grid.assignmentId}/${file}`);
+    if (!image) {
+        ctx.status = 404;
+        return;
+    }
+    ctx.type = image.contentType;
+    // 檔名帶 UUID、內容不會變；只給這位老師的瀏覽器快取
+    ctx.set('Cache-Control', 'private, max-age=86400');
+    ctx.body = image.body;
+});
+
+/**
+ * @route POST /api/instructor/grading/:submissionId/manuscript/decisions
+ * @body { target: 'typo'|'format', cellKey, action, correct?, note? }
+ * @description 老師在原稿上的一個決定（每按一下就存），回傳更新後的標記。
+ */
+router.post('/grading/:submissionId/manuscript/decisions', async (ctx) => {
+    try {
+        const { submissionId } = ctx.params;
+        const body = (ctx.request.body ?? {}) as Record<string, unknown>;
+        const found = await manuscriptContext(ctx, submissionId);
+        if (!found) {
+            ctx.status = 404;
+            ctx.body = { error: 'Submission not found' };
+            return;
+        }
+        if (!found.grid) {
+            ctx.status = 409;
+            ctx.body = { error: '這份作文沒有稿紙逐格辨識的結果', code: 'MANUSCRIPT_NOT_AVAILABLE' };
+            return;
+        }
+        if (await ManuscriptHelper.isReturned(submissionId)) {
+            ctx.status = 409;
+            ctx.body = { error: '已發還的作文不能再改，要改請先收回發還', code: 'MANUSCRIPT_LOCKED' };
+            return;
+        }
+        const grid = found.grid;
+        const cellKey = typeof body.cellKey === 'string' ? body.cellKey : '';
+        const plan = planDecision(
+            mergeManuscriptMarks(grid, await ManuscriptHelper.listDecisions(grid.gridId)),
+            body,
+            cellTexts(grid.pages).get(cellKey) || '');
+        await ManuscriptHelper.apply({
+            gridId: grid.gridId, submissionId, target: body.target as Target, cellKey, plan,
+            userId: ctx.session.userInfo.id,
+        });
+        ctx.body = toMarksPayload(await loadMergedMarks(grid));
+    } catch (error) {
+        if (error instanceof ManuscriptDecisionError) {
+            ctx.status = error.status;
+            ctx.body = { error: error.message, code: error.status === 409 ? 'MANUSCRIPT_MARK_CHANGED' : 'INVALID_MANUSCRIPT_DECISION' };
+            return;
+        }
+        console.error('Error in manuscript decision:', error);
+        ctx.status = 500;
+        ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/**
+ * @route POST /api/instructor/grading/:submissionId/regrade
+ * @description 重新評分：老師在原稿上改了錯字之後，用目前確定的錯字再跑一次簡易批改，
+ *              存成新的一版（級分與評語都換掉 —— 前端按之前先跟老師確認）。
+ *              只給已經用簡易批改批過、還沒發還的作文。
+ */
+router.post('/grading/:submissionId/regrade', async (ctx) => {
+    try {
+        const { submissionId } = ctx.params;
+        const userId = ctx.session.userInfo.id;
+        const found = await manuscriptContext(ctx, submissionId);
+        if (!found) {
+            ctx.status = 404;
+            ctx.body = { error: 'Submission not found' };
+            return;
+        }
+        if (await ManuscriptHelper.isReturned(submissionId)) {
+            ctx.status = 409;
+            ctx.body = { error: '已發還的作文不能再改，要改請先收回發還', code: 'MANUSCRIPT_LOCKED' };
+            return;
+        }
+        const simple = await SimpleGradingHelper.eligibilityOf(submissionId, found.submission.content);
+        if (!simple.eligible || !simple.grid || !(await SimpleGradingHelper.get(submissionId))) {
+            ctx.status = 409;
+            ctx.body = { error: '這份作文還沒有用簡易批改批改過，請先按「AI 批改」', code: 'SIMPLE_GRADING_REQUIRED' };
+            return;
+        }
+        const gradingContext = await InstructorHelper.getGradingContextBySubmissionId(submissionId);
+        const ai = isAiConfigured() ? geminiSimpleGradingAi(config.gradingModel) : createSimulatedSimpleGradingAi();
+        const decided = decidedForGrading(await loadMergedMarks(simple.grid));
+        const run = await gradeSimple({ grid: simple.grid, context: gradingContext, ai, decided });
+        const result = { score: run.outcome.score, response: run.outcome.response };
+        const feedback = await InstructorHelper.saveFeedback(
+            submissionId, result.score, result, userId, await courseScopeOf(ctx),
+            run.inputTokens, run.outputTokens, true, run.outcome.subScores);
+        await SimpleGradingHelper.save(submissionId, simple.grid.gridId, feedback?.id ?? null, run);
+        ctx.body = { success: true, result, feedback, simple_grading: true };
+    } catch (error) {
+        if (error instanceof AiGradingResponseError) {
+            ctx.status = 502;
+            ctx.body = { error: 'AI 回傳的批改結果無法使用，這一篇沒有存檔，請再試一次' };
+            return;
+        }
+        console.error('Error in regrade:', error);
+        ctx.status = 500;
+        ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/**
  * @route POST /api/instructor/grading/:submissionId
  * @description 針對特定繳交紀錄，將其所有批改結果設定為無效，也就回到待批改狀態。
  * @param {string} submissionId - 學生提交紀錄的唯一識別 ID
@@ -423,6 +661,8 @@ router.post('/grading/reset/:submissionId', async (ctx) => {
             ctx.body = { error: 'No feedback found' };
             return;
         }
+        // 簡易批改的評分依據、請老師留意跟著那一次批改走；回到待批改就不再對得上
+        await SimpleGradingHelper.remove(submissionId);
 
         ctx.body = { success: true, result };
     } catch (error) {
@@ -556,6 +796,21 @@ router.post('/submissions/ocr_proxy', async (ctx) => {
             return;
         }
 
+        /*
+          稿紙逐格辨識（docs/grid-ocr.md）：存進 GCS **之前**先問辨識服務（幾秒、不用 AI）。
+            我們的稿紙但要重拍（缺角、格子對不準…）→ 422，什麼都不存，老師趁紙還在手邊重拍；
+            我們的稿紙、四角都讀得到 → 之後走逐格辨識；
+            其他照片、或服務沒設定／連不上 → 照舊走 ocr-job，不擋老師。
+        */
+        const precheck = await precheckSheets(
+            checked.images.map((img, i) => ({ name: `第${i + 1}張`, data: img.base64Image })),
+            createGridServiceClient());
+        if (precheck.kind === 'problem') {
+            ctx.status = 422;
+            ctx.body = { error: precheck.message, code: 'SHEET_PROBLEM' };
+            return;
+        }
+
         // 將 base64 圖片存成 cloud storage 檔案
         const bucketFolder = `submit/assign_${assignmentId}`;
         const dt = new Date();
@@ -581,6 +836,10 @@ router.post('/submissions/ocr_proxy', async (ctx) => {
             throw e;
         }
 
+        if (precheck.kind === 'grid') {
+            await GridOcrHelper.createPending(batch.id, assignmentId, studentId, precheck.template);
+        }
+
         /*
           ⚠️ 這裡**刻意不觸發**辨識（以前會呼叫 CloudRunJobsHelper.startOCRJob）。
              老師還在拍下一位；等他按「開始辨識」才送（/submissions/ocr_proxy/start）。
@@ -591,6 +850,8 @@ router.post('/submissions/ocr_proxy', async (ctx) => {
             batchUUID: batch.batch_uuid,
             folder: bucketFolder,
             files: fileNames,
+            /** grid＝之後走稿紙逐格辨識；other＝照舊整張辨識 */
+            sheet: precheck.kind === 'grid' ? 'grid' : 'other',
         };
     } catch (error) {
         console.error('Error in proxy submission:', error);
@@ -636,7 +897,7 @@ router.post('/submissions/ocr_proxy/start', async (ctx) => {
 
         const started: Array<{ studentId: string; batchUUID: string }> = [];
         const failed: Array<{ studentId: string; error: string }> = [];
-        const skipped: Array<{ studentId: string; reason: 'not_found' | 'already_done' }> = [];
+        const skipped: Array<{ studentId: string; reason: 'not_found' | 'already_done' | 'in_progress' }> = [];
 
         const found = new Set(batches.map((b) => b.user_id));
         for (const id of wanted ?? []) {
@@ -657,8 +918,32 @@ router.post('/submissions/ocr_proxy/start', async (ctx) => {
         */
         await BatchProxySubmissionHelper.touchTriggered(toRun.map((b) => b.id));
 
-        for (let i = 0; i < toRun.length; i += OCR_START_CONCURRENCY) {
-            const chunk = toRun.slice(i, i + OCR_START_CONCURRENCY);
+        /*
+          上傳時認出是我們的稿紙的那幾批 → 稿紙逐格辨識（docs/grid-ocr.md）；其他照舊交給 ocr-job。
+          正在辨識中的不重送（同一批跑兩次會互相蓋掉），回報 in_progress。
+        */
+        const gridIds = await GridOcrHelper.gridBatchIds(toRun.map((b) => b.id));
+        const gridBatches = toRun.filter((b) => gridIds.has(b.id));
+        const legacy = toRun.filter((b) => !gridIds.has(b.id));
+        if (gridBatches.length) {
+            const queued = new Set(await GridOcrHelper.markQueued(gridBatches.map((b) => b.id), Boolean(force)));
+            for (const b of gridBatches) {
+                if (!queued.has(b.id)) skipped.push({ studentId: b.user_id, reason: 'in_progress' });
+            }
+            const results = await dispatchGridOcr(gridBatches.filter((b) => queued.has(b.id)).map((b) => b.id));
+            for (const r of results) {
+                const b = gridBatches.find((x) => x.id === r.batchId)!;
+                if (r.started) {
+                    started.push({ studentId: b.user_id, batchUUID: b.batch_uuid });
+                } else {
+                    await GridOcrHelper.saveFailed(b.id, 'UNAVAILABLE', '無法啟動稿紙辨識，請稍後按「重新辨識」');
+                    failed.push({ studentId: b.user_id, error: r.error ?? '無法啟動稿紙辨識' });
+                }
+            }
+        }
+
+        for (let i = 0; i < legacy.length; i += OCR_START_CONCURRENCY) {
+            const chunk = legacy.slice(i, i + OCR_START_CONCURRENCY);
             const results = await Promise.all(chunk.map((b) =>
                 CloudRunJobsHelper.startOCRJob(b.user_id, assignmentId, b.batch_uuid)));
             results.forEach((r, j) => {

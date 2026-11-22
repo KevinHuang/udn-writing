@@ -96,7 +96,8 @@ shell 歷史裡。設定完就把那個檔刪掉。
 | `STORAGE_BUCKET_NAME` / `STORAGE_API_URL` | 見 `.env` | ⚠️ 與程式寫死的 bucket 不一致，見下 |
 | `SESSION_KEY` | **另外產生一把**，不要沿用本機的 | `openssl rand -base64 48` |
 | `OCR_JOB_NAME` | 可省略 | 批次代繳交的背景辨識 job。預設 `projects/writing-classroom-672f8/locations/asia-east1/jobs/ocr-job`，見 [ocr-job.md](ocr-job.md) |
-| `STORAGE_FAKE` / `OCR_JOB_FAKE` | **不要設** | 只給測試與本機開發用（不打 GCS／不開 Cloud Run job）。`NODE_ENV=production` 時程式會忽略它們 |
+| `GRID_OCR_SERVICE_URL` | 辨識服務 `handwriting-ocr` 的網址 | 稿紙逐格辨識。**沒設就不啟用**（照片全走 ocr-job）。其他 `GRID_OCR_*` 與要建的 job、權限見 [grid-ocr.md](grid-ocr.md) |
+| `STORAGE_FAKE` / `OCR_JOB_FAKE` / `GRID_OCR_AI_FAKE` / `GRID_OCR_DISPATCH` | **不要設** | 只給測試與本機開發用（不打 GCS／不開 Cloud Run job）。`NODE_ENV=production` 時程式會忽略它們 |
 
 ### ⛔ DB_NAME 那道防護在 Cloud Run 上不會擋
 

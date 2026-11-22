@@ -1,0 +1,22 @@
+{
+  "id": "cap",
+  "name": "教育會考寫作測驗答案卷",
+  "source": "空白稿紙範本/教育會考空白稿紙.pdf",
+  "note": "向量檔量測。每行右側有行間空白（行距）。每頁 23 行 × 22 字 = 506 格。",
+  "paper_mm": [364, 257],
+  "marker_code": 1,
+  "marker_margins": {"B4": 11.5, "A3": 12.0},
+  "marker_margins_note": "第 3 版定位標記離紙邊（mm）：油印、影印時紙邊常被裁掉，2026-11-19 從 8mm 往內移。B4 左邊到作答格只夠 11.5mm；A3 用 12mm，拍照畫面的框紙（hosting/utils/scan/markers.ts）還在找紙邊的範圍內。",
+  "pages": [
+    {
+      "label": "第一頁",
+      "grid": {"x0": 20.68, "y0": 18.63, "cols": 23, "rows": 22,
+               "cell_w": 9.85, "cell_h": 9.985, "col_pitch": 12.752, "trailing_gutter": true}
+    },
+    {
+      "label": "第二頁",
+      "grid": {"x0": 21.18, "y0": 18.63, "cols": 23, "rows": 22,
+               "cell_w": 9.85, "cell_h": 9.985, "col_pitch": 12.752, "trailing_gutter": true}
+    }
+  ]
+}

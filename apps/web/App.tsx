@@ -18,6 +18,7 @@ import { FinalReportPage } from "./pages/FinalReportPage";
 import { AnthologyPage } from "./pages/AnthologyPage";
 import { GradesPage } from "./pages/GradesPage";
 import { ConcernPage } from "./pages/ConcernPage";
+import { AnswerSheetsPage } from "./pages/AnswerSheetsPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { LoginPage, SessionLoading } from "./pages/LoginPage";
 import { StudentDashboardPage } from "./pages/student/StudentDashboardPage";
@@ -61,6 +62,7 @@ export const AppRoutes: React.FC = () => (
       <Route path={routePatterns.anthology} element={<AnthologyPage />} />
       <Route path={routePatterns.grades} element={<GradesPage />} />
       <Route path={routePatterns.concern} element={<ConcernPage />} />
+      <Route path={routePatterns.answerSheets} element={<AnswerSheetsPage />} />
       {/* 打不到的網址仍然留在版面裡，才不會突然沒有導覽列 */}
       <Route path="*" element={<NotFoundPage />} />
     </Route>

@@ -72,6 +72,8 @@ export const routes = {
   anthology: (opts?: { courseId?: string }) =>
     withQuery('/anthology', { [queryKeys.course]: opts?.courseId }),
   concern: () => '/concern',
+  /** 我的稿紙：可以下載、列印的空白稿紙（靜態版，見 lib/answerSheets.ts） */
+  answerSheets: () => '/sheets',
 
   // ── 學生端 ──
   /** semester：要看哪個學期的概況。不帶就是目前學期 */
@@ -119,6 +121,7 @@ export const routePatterns: Record<keyof typeof routes, string> = {
   finalReport: '/courses/:courseId/final-report',
   anthology: '/anthology',
   concern: '/concern',
+  answerSheets: '/sheets',
   studentDashboard: '/student',
   studentAssignments: '/student/assignments',
   studentEditor: '/student/assignments/:assignmentId',

@@ -45,6 +45,23 @@ Cloud Build 紀錄確認是 `node:26.12.1-slim`，冒煙測試 4/4 通過，啟�
 照 `docs/ocr-job.md` 對**一位學生、一張照片**跑一次，回答表格裡的七個問題。
 另外 Cloud Run 的服務帳號需要 `run.jobs.run`（見 `docs/deploy.md` 的第 4 點）。
 
+### 0.15 稿紙逐格辨識上線前（分支 `feat/grid-ocr`）
+
+照 `docs/grid-ocr.md` 的「部署」做：正式庫套 migration 011（**先於程式**）、部署 Python 服務 `handwriting-ocr`
+（不開放匿名）、建 Cloud Run Job `grid-ocr-job`（自動重試關掉）、設權限、API 加 `GRID_OCR_SERVICE_URL`。
+然後印一張稿紙手寫、實際代繳交跑一次，確認 Gemini 模型在 Vertex 上可用。沒設 `GRID_OCR_SERVICE_URL` 時功能不啟用，所以程式可以先上、服務晚點再部署 —— **但 migration 011 一定要先套**（辨識進度那支查詢會用到新表）。
+
+### 0.16 簡易批改上線前（分支 `feat/simple-grading`）
+
+正式庫在 011 之後再套 `docs/migrations/012-simple-grading.sql`（**先於程式**：批改頁會查這張表）。
+不用新的環境變數。上線前用真的 Gemini 對幾篇稿紙代繳交的作文實批（樣本由使用者決定），
+比對和一般批改的級分差、引用有沒有帶到辨識錯的字，見 `docs/simple-grading.md` 的「還沒驗證」。
+
+### 0.17 原稿紅筆上線前（分支 `feat/manuscript-redpen`）
+
+正式庫在 011、012 之後再套 `docs/migrations/013-manuscript-mark-decision.sql`（**先於程式**）。不用新的環境變數。
+上線前用實際印出來、手寫、拍照的稿紙走一次：紅筆位置對不對、楷書字有沒有載入（`/fonts/tw-kai/`）。
+
 ### 0.2 上線前移除開發用登入
 
 `apps/api/src/auth/dev_login.ts` 在 `2a5efc5` 被一起 commit 進去了。

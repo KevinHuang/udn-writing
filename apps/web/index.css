@@ -272,6 +272,8 @@
   --animate-pulse-subtle: pulseSubtle 2s ease-in-out infinite;
   /* 下拉選單彈出：短、從觸發鈕的方向長出來 */
   --animate-pop-in: popIn 0.14s ease-out;
+  /* 原稿紅筆：點了便條，原稿上那個標記的選取框閃兩下（只閃圖形，不閃字） */
+  --animate-manuscript-flash: manuscriptFlash 0.9s ease-in-out 2;
 
   @keyframes fadeIn {
     0% { opacity: 0; }
@@ -284,6 +286,10 @@
   @keyframes popIn {
     0% { opacity: 0; transform: translateY(-4px) scale(0.98); }
     100% { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes manuscriptFlash {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.25; }
   }
   @keyframes pulseSubtle {
     0%, 100% { opacity: 1; transform: scale(1); }

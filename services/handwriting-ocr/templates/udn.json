@@ -1,0 +1,22 @@
+{
+  "id": "udn",
+  "name": "聯合報國中寫作稿紙",
+  "source": "headers/udn_original.pdf（聯合報提供的《聯合報國中寫作用空白稿紙》）",
+  "note": "向量檔量測（2026-11-20）：10mm 方格、行距 13mm，每頁 23 行 × 22 字 = 506 格。第一頁作答格 x 30.0～326.0、y 38.5～258.5；第二頁左側是批改區（錯字訂正、寫作能力分析、老師評語），作答格從 x 106.004 開始。印的時候整頁用原稿紙當底圖（sheet.py 的 _udn），這裡的格子座標只給辨識用，要和底圖一模一樣。",
+  "paper_mm": [420, 297],
+  "marker_code": 4,
+  "marker_margins": {"A3": 10.0, "B4": 9.0},
+  "marker_margins_note": "第 4 版（聯合報）定位標記離紙邊（mm）。右上角有聯合報 Logo（A3 原尺寸 x 384.9～401.1、y 18.0～44.0），標記放在它右上方：A3 10mm、B4（縮成 86.5%）9mm 時，標記連同 1mm 留白都碰不到 Logo。test_udn.py 檢查四角都碰不到底圖上的任何東西。",
+  "pages": [
+    {
+      "label": "第一頁",
+      "grid": {"x0": 30.0, "y0": 38.5, "cols": 23, "rows": 22,
+               "cell_w": 10.0, "cell_h": 10.0, "col_pitch": 13.0, "trailing_gutter": false}
+    },
+    {
+      "label": "第二頁",
+      "grid": {"x0": 106.004, "y0": 38.5, "cols": 23, "rows": 22,
+               "cell_w": 10.0, "cell_h": 10.0, "col_pitch": 13.0, "trailing_gutter": false}
+    }
+  ]
+}

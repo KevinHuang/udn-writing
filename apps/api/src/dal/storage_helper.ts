@@ -1,6 +1,6 @@
 import { Storage } from '@google-cloud/storage';
 import crypto from 'crypto';
-import { fakeUpload, isStorageFake } from './simulated_storage';
+import { fakeRead, fakeUpload, isStorageFake } from './simulated_storage';
 
 class StorageHelper {
     private static storage = new Storage();
@@ -30,7 +30,7 @@ class StorageHelper {
         // 測試與本機（STORAGE_FAKE=1）：不打 GCS，回一個形狀一樣的檔名（見 simulated_storage.ts）
         if (isStorageFake()) {
             return fakeUpload(folder || this.folderPath, fileNamePrefix || '', extension,
-                Math.floor(base64Data.length * 3 / 4));
+                Buffer.from(base64Data, 'base64'));
         }
 
         // 產生唯一檔名
@@ -81,13 +81,38 @@ class StorageHelper {
             : 'image/jpeg';
 
         if (isStorageFake()) {
-            return { body: FAKE_PNG, contentType: 'image/png' };
+            const stored = fakeRead(path);
+            return stored ? { body: stored, contentType } : { body: FAKE_PNG, contentType: 'image/png' };
         }
 
         const file = this.storage.bucket(this.bucketName).file(path);
         const [exists] = await file.exists();
         if (!exists) return null;
         return { body: file.createReadStream(), contentType };
+    }
+
+    /**
+     * 把一個檔案整個讀進來（逐格辨識要把代繳交的照片交給辨識服務）。
+     * 找不到回 null；路徑規則同 openImage。STORAGE_FAKE 時從本機暫存區讀。
+     */
+    public static async readFile(path: string): Promise<Buffer | null> {
+        if (!path || path.startsWith('/') || path.split('/').includes('..')) return null;
+        if (isStorageFake()) return fakeRead(path);
+        const file = this.storage.bucket(this.bucketName).file(path);
+        const [exists] = await file.exists();
+        if (!exists) return null;
+        const [data] = await file.download();
+        return data;
+    }
+
+    /**
+     * 上傳一個檔案（逐格辨識拉正的稿紙圖），回傳裸檔名（`<prefix><uuid>.<ext>`）。
+     */
+    public static async uploadBuffer(data: Buffer, folder: string, fileNamePrefix: string, extension: string, contentType: string): Promise<string> {
+        if (isStorageFake()) return fakeUpload(folder, fileNamePrefix, extension, data);
+        const fileName = `${fileNamePrefix}${crypto.randomUUID()}.${extension}`;
+        await this.storage.bucket(this.bucketName).file(`${folder}/${fileName}`).save(data, { metadata: { contentType } });
+        return fileName;
     }
 }
 

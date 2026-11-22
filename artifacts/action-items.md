@@ -29,9 +29,9 @@ Cloud Build 紀錄確認是 `node:26.12.1-slim`，冒煙測試 4/4 通過，啟�
 另外兩件不在這個 repo 裡的：
 
 - **`ocr-job` 的映像檔**（原始碼不在這裡）如果也是 Node，請負責的人另外升到
-  22.23.4／24.22.1／26.12.1 以上。
-- **開發機都要裝 Node 26**：`nvm install 26.12.1`（Windows 用 nvm-windows），
-  Mac 的 nvm 再設 `nvm alias default 26.12.1`。版本太舊時 `npm install` 會出 `EBADENGINE` 警告。
+  22.23.5／24.22.3／26.13.1 以上。
+- **開發機都要裝 Node 26**：`nvm install 26.13.1`（Windows 用 nvm-windows），
+  Mac 的 nvm 再設 `nvm alias default 26.13.1`。版本太舊時 `npm install` 會出 `EBADENGINE` 警告。
 
 ### 0. 部署代繳交的安全修補（`09f1499`）
 

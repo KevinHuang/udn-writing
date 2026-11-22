@@ -43,8 +43,8 @@ bash scripts/smoke.sh http://localhost:3000
 ### Node 版本
 
 正式環境的 Node 版本**只由 `apps/api/Dockerfile` 開頭的 `ARG NODE_VERSION` 決定**
-（建置與執行兩個階段共用），目前是 `26.12.1`。本機用根目錄的 `.nvmrc`，
-`package.json` 的 `engines` 是 `>=26.12.1`（版本太舊時 npm 會警告）。
+（建置與執行兩個階段共用），目前是 `26.13.1`。本機用根目錄的 `.nvmrc`，
+`package.json` 的 `engines` 是 `>=26.13.1`（版本太舊時 npm 會警告）。
 
 - **要升級：** `NODE_VERSION`、`.nvmrc`、`engines` 三處一起改，`@types/node` 的大版本跟著換。
   Node 的安全更新通常一次修好幾條版本線，看 <https://nodejs.org/en/blog/vulnerability>
@@ -57,9 +57,13 @@ bash scripts/smoke.sh http://localhost:3000
   但它上層的 `jwa` 只在沒有 `crypto.timingSafeEqual` 時才載入，實際不會碰到。
   當天部署為 revision `udn-writing-test-00015-c8x`（映像檔 `fb8eb69`）；
   最後一個跑 Node 20 的是 `udn-writing-test-00014-wwc`（映像檔 `f22535a`）。
-- **Node 26 出問題時，優先改用 24.22.1，不要退回 Node 20。** 退回 `00014-wwc` 等於回到沒有修補的版本。
-  `NODE_VERSION`、`.nvmrc`、`engines` 改成 `24.22.1`，`@types/node` 換成 `^24`，重新 `npm run deploy`。
-  24.22.1 是同一次安全更新的 24 版，`node:24.22.1-slim` 已經有了。
+- **2026-11-23 從 26.12.1 升到 26.13.1**（11/11 的安全更新：TLS 伺服器可被遠端弄當 CVE-2026-126051、
+  HTTPS 伺服器洩漏其他連線的記憶體 CVE-2026-123864 等）。同一條 26 線的修補版，npm 一樣是 11.20.0、
+  lockfile 只改了 `engines`。在 26.13.1 上跑過：後端整套 377 條（開 `--trace-deprecation` 沒有警告，
+  凌晨跑 27 分鐘）、前端 261 條、型別檢查、建置、`dist/index.js` 啟動加冒煙測試、Google 套件載入與 JWT、對外 TLS。
+- **Node 26 出問題時，優先改用 24.22.3，不要退回 Node 20。** 退回 `00014-wwc` 等於回到沒有修補的版本。
+  `NODE_VERSION`、`.nvmrc`、`engines` 改成 `24.22.3`，`@types/node` 換成 `^24`，重新 `npm run deploy`。
+  24.22.3 是 2026-11-11 那次安全更新的 24 版（與 26.13.1 同一批）。
 - **退回上一版：** 只有在連 24 都來不及建的時候才用。舊的 revision 還留著舊映像檔，把流量切回去就好（不必重建）：
 
   ```bash

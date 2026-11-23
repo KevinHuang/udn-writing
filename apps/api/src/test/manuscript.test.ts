@@ -5,7 +5,8 @@
  *   - 「確定的錯別字」只有一份：原稿畫面、送 AI 的清單、重新評分的基準都用它；待確認的不算；
  *   - 老師加的、確認的錯字，卡片引用要避開（同一個詞不能又紅圈又稱讚）；
  *   - 發還之後鎖住：學生看過的紅筆不能偷偷改；
- *   - 別班老師讀不到、改不到。
+ *   - 別班老師讀不到、改不到；
+ *   - 稿紙上的批改區只畫在對得上的版面（聯合報國中稿紙第二頁）：對不上寧可不畫，不要把勾打在學生的字上。
  */
 import { test, before, after, beforeEach, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +18,8 @@ import { rebuildParagraphs, renderMarkedText, type GridCell, type GridPage, type
 import {
   confirmedTypos, ManuscriptDecisionError, markBaseline, mergeManuscriptMarks, planDecision, type DecisionRow,
 } from '../lib/manuscript/marks';
-import { toManuscriptPages } from '../lib/manuscript/payload';
+import { toBlankGradingZone, toManuscriptPages } from '../lib/manuscript/payload';
+import { blankGradingZone, gradingZoneOf } from '../lib/manuscript/grading_zone';
 
 const ROWS = 22;
 type Ch = { ch: string; status: string };
@@ -122,6 +124,79 @@ describe('老師的動作 → 要存什麼', () => {
   });
 });
 
+// ── 稿紙上的批改區 ──
+
+/**
+ * 聯合報國中稿紙一頁的格子（含空白格），和辨識服務給的一樣：圖上的像素＝（版面縮放 × 稿紙上的 mm ＋ 置中留白）× 每 mm 幾個像素。
+ * x0 是作答格左緣：第一頁 30mm、第二頁 106.004mm（services/handwriting-ocr/templates/udn.json）。
+ */
+function udnCells(x0: number, opts: { ppm?: number; scale?: number; ox?: number; oy?: number; cols?: number[] } = {}) {
+  const { ppm = 10, scale = 1, ox = 0, oy = 0, cols = Array.from({ length: 23 }, (_, i) => i + 1) } = opts;
+  const px = (mm: number, o: number) => Math.round((scale * mm + o) * ppm * 10) / 10;
+  return cols.flatMap((col) => Array.from({ length: 22 }, (_, r) => {
+    const left = x0 + (23 - col) * 13;
+    const top = 38.5 + r * 10;
+    return { col, row: r + 1, text: '', status: 'blank', rect: [px(left, ox), px(top, oy), px(left + 10, ox), px(top + 10, oy)] };
+  }));
+}
+
+describe('稿紙上的批改區：位置', () => {
+  test('第二頁：三個區塊都在稿紙印的位置上（10 px/mm）', () => {
+    const zone = gradingZoneOf('udn', udnCells(106.004));
+    assert.ok(zone);
+    assert.deepEqual(zone.commentBox, [179, 1585, 959, 2585]);
+    assert.deepEqual([zone.typoColumns.length, zone.typoColumns[0].length], [6, 6]);
+    assert.deepEqual(zone.typoColumns[0][0], [829, 385, 929, 485]); // 最右邊那一行的第一格
+    assert.deepEqual(zone.typoColumns[5][5], [179, 885, 279, 985]);
+    assert.deepEqual([zone.levelCells.length, zone.levelCells[0].length], [4, 4]);
+    assert.deepEqual(zone.levelCells[0][0], [669, 1185, 799, 1285]); // 立意取材 × 極佳
+    assert.deepEqual(zone.levelCells[3][3], [179, 1485, 409, 1585]); // 錯別字格式與標點 × 待加強
+  });
+
+  test('印成 B4（整個版面縮成 86.5% 再置中）也對得上；只有最右邊一行的格子也算得準', () => {
+    const zone = gradingZoneOf('udn', udnCells(106.004, { ppm: 8, scale: 0.865, ox: 0.35, oy: 0.05, cols: [1] }));
+    assert.ok(zone);
+    const expected = [17.9, 158.5, 95.9, 258.5].map((mm, i) => (0.865 * mm + (i % 2 === 0 ? 0.35 : 0.05)) * 8);
+    zone.commentBox.forEach((v, i) => assert.ok(Math.abs(v - expected[i]) < 1, `評語欄第 ${i} 個座標差太多：${v} / ${expected[i]}`));
+  });
+
+  test('第一頁、別的稿紙、格子不夠算：不畫', () => {
+    assert.equal(gradingZoneOf('udn', udnCells(30)), null); // 第一頁的版面：作答格在左邊 76mm
+    assert.equal(gradingZoneOf('ucup', udnCells(106.004)), null);
+    assert.equal(gradingZoneOf(null, udnCells(106.004)), null);
+    assert.equal(gradingZoneOf('udn', udnCells(106.004).slice(0, 3)), null); // 格子太少
+    assert.equal(gradingZoneOf('udn', udnCells(106.004).map((c) => ({ ...c, rect: [c.rect[0], c.rect[1] * 1.2, c.rect[2], c.rect[3] * 1.2] }))), null); // 直向被拉長
+    assert.equal(gradingZoneOf('udn', []), null);
+    assert.equal(gradingZoneOf('udn', null), null);
+  });
+
+  test('原稿頁面：對得上的那一頁才帶批改區', () => {
+    const pages = toManuscriptPages({
+      sheetTemplate: 'udn',
+      pages: [{ prefix: '第1頁', page: 1, ocr: { cells: udnCells(30) } }, { prefix: '第2頁', page: 2, ocr: { cells: udnCells(106.004) } }],
+      pageImageFiles: ['a.jpg', 'b.jpg'],
+    }, '55');
+    assert.deepEqual(pages.map((p) => Boolean(p.gradingZone)), [false, true]);
+    assert.deepEqual(pages.map((p) => p.cells.length), [0, 0]); // 空白格照舊不給前端
+    assert.equal(toBlankGradingZone('udn', pages), null); // 已經畫在學生的第二頁上，不再補空白稿紙
+  });
+
+  test('只寫一頁（沒有拍第二頁）：給空白稿紙第二頁上的位置，8 px/mm', () => {
+    const pages = toManuscriptPages({
+      sheetTemplate: 'udn', pages: [{ prefix: '第1頁', page: 1, ocr: { cells: udnCells(30) } }], pageImageFiles: ['a.jpg'],
+    }, '55');
+    const blank = toBlankGradingZone('udn', pages);
+    assert.ok(blank);
+    assert.equal(blank.pxPerMm, 8);
+    assert.deepEqual(blank.zone.commentBox, [143.2, 1268, 767.2, 2068]);
+    assert.deepEqual(blank.zone.typoColumns[0][0], [663.2, 308, 743.2, 388]);
+    assert.deepEqual(blank, blankGradingZone('udn'));
+    // 別的稿紙沒有批改區
+    assert.equal(toBlankGradingZone('cap', pages), null);
+    assert.equal(toBlankGradingZone(null, pages), null);
+  });
+});
+
 // ── 路由 ──
 
 const ACCOUNT = 'manuscript@test.edu.tw';
@@ -176,8 +251,12 @@ describe('原稿紅筆：路由', () => {
     const cookie = await login(srv);
     const res = await req(srv, `/service/instructor/grading/${submission}/manuscript`, cookie);
     assert.equal(res.status, 200);
-    const body = await res.json() as { available: boolean; locked: boolean; template: string; pages: unknown[] } & Marks;
+    const body = await res.json() as {
+      available: boolean; locked: boolean; template: string; pages: Array<{ gradingZone: unknown }>; blankGradingZone: unknown;
+    } & Marks;
     assert.deepEqual([body.available, body.locked, body.template, body.pages.length], [true, false, 'udn', 1]);
+    // 批改區：不是畫在某一頁上，就是補一頁空白稿紙，兩個剛好有一個
+    assert.equal(Boolean(body.pages[0].gradingZone), !body.blankGradingZone);
     assert.deepEqual(body.typos.map((t) => t.state), ['confirmed', 'pending']);
     assert.equal(body.current.confirmedTypoCount, 1);
 

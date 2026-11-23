@@ -60,7 +60,7 @@
 |---|---|---|
 | 級分 | `submission_feedback.score` | 都看得到 |
 | 總評＋亮點、精彩詞語（密圈）、再上層樓（建議）、成語運用 | `submission_feedback.content.response`（markdown） | 都看得到；老師可以在評語欄改 |
-| 四向度級分與評語 | `submission_feedback.sub_scores` | 照現在的規則（單篇目前不顯示，`SHOW_CATEGORY_SCORES`） |
+| 四向度級分與評語 | `submission_feedback.sub_scores` | 照現在的規則（單篇目前不顯示，`SHOW_CATEGORY_SCORES`）；聯合報國中稿紙的「寫作能力分析」用它打勾，見 [manuscript.md](manuscript.md)「稿紙上的批改區」。提示詞第 2 版起補了第四向度 5、6 級分怎麼分 |
 | 評分依據、判 0 級分的原因、**請老師留意**、系統拿掉了哪些引用、卡片每個字在哪一格 | `simple_grading_result`（migration 012） | **只有老師**（批改頁的「簡易批改」區塊） |
 
 卡片要併進評語，因為這個系統的評語只有一個欄位：老師改評語＝存新的一版，學生端也只讀這一欄。

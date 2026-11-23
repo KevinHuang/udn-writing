@@ -14,6 +14,7 @@ import { AssignmentFeaturedRule } from "../components/AssignmentFeaturedRule";
 import { effectiveRule } from "../lib/featuredRule";
 import { useProxyStatus } from "../lib/proxy/useProxyStatus";
 import { countStatuses, proxyBatchSummary } from "../lib/proxy/status";
+import { originalsState } from "../lib/proxy/paths";
 import { GradingHub } from "../components/GradingHub";
 import { PageHeader, PAGE_CONTAINER } from "../components/PageHeader";
 import { useAppState } from "../state/appStateContext";
@@ -225,8 +226,13 @@ export const GradingListPage: React.FC = () => {
           ? gradedOf(selectedSubmissionIds)
           : 0;
 
-        // Helper to simulate has draft check (same logic as Editor)
-        const hasDraft = (id: string) => id.charCodeAt(id.length - 1) % 2 === 0;
+        /*
+          「原稿」欄的燈號：和批改頁看同一組照片（繳交自己的，沒有才退回批次代繳交的）。
+          以前這裡是原型留下來的模擬，用繳交編號的奇偶數決定顏色。
+        */
+        const batchFilesOf = new Map(proxy.rows.map((r) => [r.userId, r.imgFiles]));
+        const originalsOf = (s: (typeof sortedSubmissions)[number]) =>
+          originalsState(s, batchFilesOf.get(s.studentId));
 
         return (
           <div className={`${PAGE_CONTAINER} space-y-6`}>
@@ -562,7 +568,7 @@ export const GradingListPage: React.FC = () => {
               </div>
 
               {sortedSubmissions.map((s) => {
-                const hasDraftFile = hasDraft(s.id);
+                const hasDraftFile = originalsOf(s) === 'has';
                 const score = s.result?.totalScore;
                 const isSelected = selectedSubmissionIds.includes(s.id);
 
@@ -726,7 +732,7 @@ export const GradingListPage: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-ink-100">
                     {sortedSubmissions.map((s) => {
-                      const hasDraftFile = hasDraft(s.id);
+                      const originals = originalsOf(s);
                       const score = s.result?.totalScore;
 
                       return (
@@ -778,7 +784,13 @@ export const GradingListPage: React.FC = () => {
                                   className="w-3 h-3 rounded-full bg-ink-200"
                                   title="未繳交"
                                 ></div>
-                              ) : hasDraftFile ? (
+                              ) : originals === 'unknown' ? (
+                                // 完整內容還沒到：先不表態，不要先亮「沒有原稿」再變「有」
+                                <div
+                                  className="w-3 h-3 rounded-full bg-ink-200"
+                                  title="讀取中"
+                                ></div>
+                              ) : originals === 'has' ? (
                                 <div
                                   className="w-3 h-3 rounded-full bg-success-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
                                   title="有手寫原稿"

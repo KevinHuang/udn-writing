@@ -17,7 +17,7 @@ export const GradingEditorPage: React.FC = () => {
   const {
     assignments, courses, questions, submissions, gradingResetSeq,
     selectedAiModel, setSelectedAiModel, handleSaveGrading, handleResetGrading,
-    handleAutoGrade, handleRegrade, handlePublishOne,
+    handleAutoGrade, handleRegrade, handlePublishOne, handleUnpublishOne,
     submissionMarks, toggleMark, ensureSubmissions,
   } = useAppState();
 
@@ -121,6 +121,7 @@ export const GradingEditorPage: React.FC = () => {
       onSelectAiModel={(model) => setSelectedAiModel(model)}
       onResetGrading={handleResetGrading}
       onPublish={handlePublishOne}
+      onUnpublish={handleUnpublishOne}
       onAutoGrade={handleAutoGrade}
       onRegrade={handleRegrade}
       marks={submissionMarks}

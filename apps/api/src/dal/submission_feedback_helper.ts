@@ -29,6 +29,33 @@ class SubmissionFeedbackHelper {
     }
 
     /**
+     * 收回發還：把有效那一版改回「已批改、還沒發還」。分數與評語都留著，不是重置。
+     *
+     * 為什麼要有：原稿上的紅筆發還之後會鎖住（學生看過的東西不能偷偷改），畫面與錯誤訊息一直叫老師
+     * 「要改請先收回發還」，但以前沒有這個動作 —— 唯一能解鎖的是重置批改，會把分數與評語一起清掉。
+     *
+     * 收回期間學生端回到還沒發還的樣子（分數、評語、佳作章、作品集都看不到 —— 那些查詢本來就看
+     * is_returned）；再發還一次就回來。學生填過的公開意願（submission_publish_consent）不動。
+     *
+     * 範圍和發還同一套：只動呼叫者教的班，別班的 id 會被安靜略過。只動目前已發還的那幾筆，
+     * 回傳真的收回了哪些。
+     */
+    public static async unreturnFeedback(submissionIds: string[], scope: CourseScope) {
+        return await db.default.manyOrNone<{ id: string; ref_submission_id: string }>(`
+            UPDATE submission_feedback SET is_returned = false, returned_time = NULL
+            WHERE ref_submission_id = ANY($1::bigint[])
+              AND is_valid = true
+              AND is_returned = true
+              AND ref_submission_id IN (
+                    SELECT s.id FROM submission s
+                        INNER JOIN assignment a ON a.id = s.ref_assignment_id
+                    WHERE a.ref_course_id IN ${courseScopeSubquery(scope)}
+              )
+            RETURNING id, ref_submission_id::text
+        `, [submissionIds]);
+    }
+
+    /**
      * 學生看自己某一篇的批改結果。**只有發還之後才回傳**，還沒發還就是 null。
      *
      * ⚠️ 以前少了 is_returned 的條件：老師批改完、還沒按發還，學生就能從這支

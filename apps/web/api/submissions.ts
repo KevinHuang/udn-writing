@@ -162,6 +162,14 @@ export async function returnFeedback(submissionIds: string[]): Promise<void> {
   await api.post('/service/instructor/submission_feedback/return', { submissionIds });
 }
 
+/**
+ * 收回發還：退回「已批改、還沒發還」。分數與評語留著（和重置不一樣），
+ * 學生端在再次發還之前看不到這一篇的成績；原稿上的紅筆解鎖。
+ */
+export async function unreturnFeedback(submissionIds: string[]): Promise<void> {
+  await api.post('/service/instructor/submission_feedback/unreturn', { submissionIds });
+}
+
 /** 用 AI 批改某一份作品。後端會寫入一筆 `is_ai = true` 的版本。 */
 export async function gradeWithAi(submissionId: string): Promise<void> {
   await api.post(`/service/instructor/grading/${submissionId}`);

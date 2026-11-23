@@ -29,7 +29,7 @@ import { orderedAssignments } from "../lib/assignmentOrder";
 import { routes, type SemesterFilter } from "../lib/routes";
 import {
   fetchSubmissionSummary, fetchSubmissionsByAssignment, fetchMarks, fetchLeaves,
-  saveGrading, resetGrading, returnFeedback, gradeWithAi,
+  saveGrading, resetGrading, returnFeedback, unreturnFeedback, gradeWithAi,
   clearSubmission, proxySubmit, submitEssay, setMark as setMarkApi, setLeave as setLeaveApi,
 } from "../api/submissions";
 import { regradeWithAi } from '../api/manuscript';
@@ -864,6 +864,21 @@ function useAppStateValue() {
   };
 
   /**
+   * 單筆收回發還 —— 發還之後才發現要改（原稿上的紅筆發還後會鎖住）。
+   *
+   * 退回「已批改」，分數與評語留著；改完再按發還，學生看到的就是新的那一版。
+   * 只做單筆：收回會讓學生看不到成績，整班一起收回太容易誤按。
+   * 失敗要丟出去 —— 畫面要告訴老師沒有收回成功，不然他會以為已經解鎖、改了卻存不進去。
+   */
+  const handleUnpublishOne = async (submissionId: string) => {
+    const target = submissions.find((s) => s.id === submissionId);
+    if (!target || target.status !== 'Published') return;
+    await unreturnFeedback([submissionId]);
+    await reloadSubmissions();
+    await ensureSubmissions(target.assignmentId);
+  };
+
+  /**
    * 代繳交：老師替學生登錄紙本作文。
    *
    * 不能沿用 handleSubmitEssay —— 那一支寫死示範學生的 STUDENT_ID，
@@ -1140,6 +1155,7 @@ function useAppStateValue() {
     handleBatchGrade,
     handleBatchPublish,
     handlePublishOne,
+    handleUnpublishOne,
     handleProxySubmit,
     handleBatchReset,
     handleResetGrading,

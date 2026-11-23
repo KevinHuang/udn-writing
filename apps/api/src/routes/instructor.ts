@@ -1006,6 +1006,29 @@ router.post('/submission_feedback/return', async (ctx) => {
     }
 });
 
+/**
+ * 收回發還：退回「已批改、還沒發還」，分數與評語留著（不是重置）。
+ * 原稿上的紅筆因此解鎖；學生端在再次發還之前看不到這一篇的成績。
+ */
+router.post('/submission_feedback/unreturn', async (ctx) => {
+    try {
+        const { submissionIds } = ctx.request.body as { submissionIds: string[] };
+        if (!Array.isArray(submissionIds) || submissionIds.length === 0
+            || !submissionIds.every((id) => /^\d+$/.test(String(id)))) {
+            ctx.status = 400;
+            ctx.body = { error: 'Missing submissionIds' };
+            return;
+        }
+        // 只會收回呼叫者教的班 —— 別班的 id 混進陣列裡會被安靜略過
+        const feedback = await SubmissionFeedbackHelper.unreturnFeedback(submissionIds, await courseScopeOf(ctx));
+        ctx.body = { success: true, feedback };
+    } catch (error) {
+        console.error('Error unreturning feedback:', error);
+        ctx.status = 500;
+        ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
 /*
   ── 共同題庫只有聯合報管理人員能動 ─────────────────────────────
   授課教師對共同題庫**唯讀**：不能新增、修改、封存、刪除題目與資料夾，

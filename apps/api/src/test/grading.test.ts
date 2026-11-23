@@ -153,6 +153,57 @@ describe('教師修改評語 = 新版本，不是新欄位', () => {
     assert.notEqual(row.is_returned, true);
   });
 
+describe('收回發還', () => {
+  const returnIt = (cookie: string, ids: string[]) =>
+    req(srv, '/service/instructor/submission_feedback/return', cookie, { method: 'POST', ...json({ submissionIds: ids }) });
+  const unreturn = (cookie: string, ids: unknown) =>
+    req(srv, '/service/instructor/submission_feedback/unreturn', cookie, { method: 'POST', ...json({ submissionIds: ids }) });
+  const validRow = (subId: string) => rawDb.one(
+    `SELECT id::text, score, content, is_returned, returned_time FROM submission_feedback
+      WHERE ref_submission_id = $1 AND is_valid = true`, [subId]);
+
+  test('退回已批改：分數與評語原封不動，還是同一版（不是重置）', async () => {
+    const { mySubmission, me, cookie } = await scenario();
+    await aiGraded(mySubmission, me.id, 5);
+    await returnIt(cookie, [mySubmission]);
+    const before = await validRow(mySubmission);
+    assert.equal(before.is_returned, true);
+
+    assert.equal((await unreturn(cookie, [mySubmission])).status, 200);
+
+    const row = await validRow(mySubmission);
+    assert.equal(row.id, before.id, '同一筆批改，沒有產生新版本、也沒有失效');
+    assert.equal(row.is_returned, false);
+    assert.equal(row.returned_time, null);
+    assert.equal(Number(row.score), 5);
+    assert.equal(row.content, before.content);
+  });
+
+  test('收回之後可以再發還', async () => {
+    const { mySubmission, me, cookie } = await scenario();
+    await aiGraded(mySubmission, me.id, 5);
+    await returnIt(cookie, [mySubmission]);
+    await unreturn(cookie, [mySubmission]);
+    await returnIt(cookie, [mySubmission]);
+    assert.equal((await validRow(mySubmission)).is_returned, true);
+  });
+
+  test('還沒發還的收回：什麼都不動，回傳空的', async () => {
+    const { mySubmission, me, cookie } = await scenario();
+    await aiGraded(mySubmission, me.id, 5);
+    const res = await unreturn(cookie, [mySubmission]);
+    assert.equal(res.status, 200);
+    assert.deepEqual((await res.json() as { feedback: unknown[] }).feedback, []);
+  });
+
+  test('沒給編號、或編號不是數字 → 400', async () => {
+    const { cookie } = await scenario();
+    assert.equal((await unreturn(cookie, [])).status, 400);
+    assert.equal((await unreturn(cookie, ['1; DROP TABLE submission'])).status, 400);
+    assert.equal((await unreturn(cookie, 'abc')).status, 400);
+  });
+});
+
 describe('授權：不能碰別班的批改', () => {
   test('批改別班的作品 → 403，而且什麼都沒寫進去', async () => {
     const s = await scenario();
@@ -190,6 +241,23 @@ describe('授權：不能碰別班的批改', () => {
       `SELECT is_returned FROM submission_feedback WHERE ref_submission_id = $1`, [s.theirSubmission]);
     assert.equal(mine.is_returned, true, '自己的班要發還成功');
     assert.equal(theirs.is_returned, false, '別班的絕對不能被發還');
+  });
+
+  test('收回發還：別班的 id 混進陣列會被略過', async () => {
+    const s = await scenario();
+    await aiGraded(s.mySubmission, s.me.id);
+    await aiGraded(s.theirSubmission, s.other.id);
+    await rawDb.none(`UPDATE submission_feedback SET is_returned = true, returned_time = now()`);
+
+    const res = await req(srv, '/service/instructor/submission_feedback/unreturn', s.cookie,
+      { method: 'POST', ...json({ submissionIds: [s.mySubmission, s.theirSubmission] }) });
+    assert.equal(res.status, 200);
+    const body = await res.json() as { feedback: { ref_submission_id: string }[] };
+    assert.deepEqual(body.feedback.map((f) => f.ref_submission_id), [String(s.mySubmission)]);
+
+    const theirs = await rawDb.one(
+      `SELECT is_returned FROM submission_feedback WHERE ref_submission_id = $1`, [s.theirSubmission]);
+    assert.equal(theirs.is_returned, true, '別班已發還的成績不能被我收回');
   });
 
   test('重置別班的批改 → 404，而且對方的批改還有效', async () => {

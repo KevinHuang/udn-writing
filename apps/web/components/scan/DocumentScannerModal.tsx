@@ -7,6 +7,7 @@ import {
   Image as ImageIcon,
   Loader2,
   Plus,
+  RefreshCw,
   RotateCcw,
   RotateCw,
   ScanLine,
@@ -24,6 +25,9 @@ import {
 } from '../../lib/scan/enhance';
 import { blobToCanvas, describeSize, nextFrame } from '../../lib/scan/image';
 import { type Point } from '../../lib/scan/geometry';
+import { isCompactLandscape } from '../../lib/scan/orientation';
+import { enterScanFullscreen, exitScanFullscreen } from '../../lib/scan/fullscreen';
+import { useViewportSize } from '../../lib/useViewportSize';
 import { canAddMore, limitHint, pagesButtonLabel, trayFull } from '../../lib/scan/pages';
 import { ScannerCamera, type LiveHint } from './ScannerCamera';
 import { CornerEditor } from './CornerEditor';
@@ -80,6 +84,9 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   onPages,
 }) => {
   const [step, setStep] = useState<Step>('home');
+  /** 手機橫拿時，結果頁改成照片在左、按鈕在右（lib/scan/orientation.ts） */
+  const viewport = useViewportSize();
+  const compactLandscape = isCompactLandscape(viewport.width, viewport.height);
   const [cvState, setCvState] = useState<'loading' | 'ready' | 'error'>(
     isCvReady() ? 'ready' : 'loading',
   );
@@ -138,7 +145,12 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     typeof navigator !== 'undefined' &&
     /\bLine\/|FBAN|FBAV|FB_IAB|Instagram|MicroMessenger/i.test(navigator.userAgent);
 
-  /* OpenCV 只在真的打開掃描器時才載入 —— 這個檔約 10MB */
+  /*
+    OpenCV 只在真的打開掃描器時才載入 —— 這個檔約 10MB
+    （作文頁與批次代繳交視窗會先用 preloadOpenCv 趁空檔下載，多半已經好了）。
+    cvAttempt 每加一就重下載一次：loadOpenCv 失敗時會清掉狀態，再呼叫就是重新下載。
+  */
+  const [cvAttempt, setCvAttempt] = useState(0);
   useEffect(() => {
     let alive = true;
     loadOpenCv().then(
@@ -152,7 +164,35 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     return () => {
       alive = false;
     };
-  }, []);
+  }, [cvAttempt]);
+  const retryCv = () => {
+    setCvState('loading');
+    setCvError('');
+    setCvAttempt((n) => n + 1);
+  };
+
+  /*
+    打開相機時請瀏覽器進入全螢幕（lib/scan/fullscreen.ts）：從 LINE 等 App 開的內嵌瀏覽器
+    頂端有一條網頁畫不到的工具列，手機橫拿時會吃掉對齊框。只在觸控裝置、只在按按鈕的當下。
+    進入了就維持到關掉掃描視窗（結果頁在全螢幕裡也比較寬敞），只退出自己進入的。
+  */
+  const fullscreenRef = useRef(false);
+  const requestFullscreen = () => {
+    if (fullscreenRef.current) return;
+    void enterScanFullscreen().then((ok) => {
+      if (ok) fullscreenRef.current = true;
+    });
+  };
+  const goCamera = () => {
+    requestFullscreen();
+    setStep('camera');
+  };
+  useEffect(
+    () => () => {
+      if (fullscreenRef.current) exitScanFullscreen();
+    },
+    [],
+  );
 
   /* 離開時把 WebAssembly 的影像記憶體釋放掉 */
   useEffect(
@@ -340,6 +380,8 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   const acceptCurrent = async (next: 'camera' | 'done') => {
     const result = resultRef.current;
     if (!result || adding) return;
+    // 要在第一個 await 之前：全螢幕只能在使用者按下按鈕的當下要求
+    if (next === 'camera') requestFullscreen();
     setAdding(true);
     setBusy('收下這一張…');
     await nextFrame();
@@ -432,7 +474,12 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     <div className="fixed inset-0 z-[1100] bg-surface flex flex-col">
       {/* 標題列。相機與微調是全黑畫面，那兩步自己有控制列，不重複顯示 */}
       {(step === 'home' || step === 'result') && (
-        <div className="shrink-0 flex items-start justify-between gap-3 px-4 sm:px-6 py-4 border-b border-border bg-card/60">
+        <div
+          className={`shrink-0 flex items-start justify-between gap-3 px-4 sm:px-6 border-b border-border bg-card/60 ${
+            // 手機橫拿時高度只有 390 左右，標題列省一點，結果頁右欄的「使用這張」才不會被切掉
+            compactLandscape ? 'py-2' : 'py-4'
+          }`}
+        >
           <div className="min-w-0">
             <h2 className="text-title font-bold text-text-primary flex items-center gap-2">
               <ScanLine size={18} className="shrink-0 text-primary" />
@@ -482,12 +529,34 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
             )}
 
             <p className={`text-caption ${cvBadge.cls}`}>{cvBadge.text}</p>
+            {/*
+              下載失敗時給一條路走。不在這裡自動改開系統相機（2026-09 已拿掉那個選項）：
+              作文頁與批次代繳交視窗本來就有「上傳照片」「直接拍照」，指過去就好。
+            */}
+            {cvState === 'error' && (
+              <div className="flex flex-col gap-2 rounded-brand border border-danger-200 bg-danger-50 px-3.5 py-3">
+                <p className="text-caption text-danger-700">
+                  掃描需要先下載影像處理工具，這次沒有下載成功（學校網路有時會擋）。
+                  可以再試一次；還是不行的話，關閉這個視窗，改用直接拍照或上傳照片。
+                </p>
+                <button
+                  id="scanner-btn-retry-cv"
+                  type="button"
+                  onClick={retryCv}
+                  className="self-start inline-flex items-center gap-2 px-3 py-2 rounded-brand bg-card border border-border-strong text-text-primary text-body hover:bg-surface-soft transition-colors"
+                >
+                  <RefreshCw size={14} />
+                  重新下載
+                </button>
+              </div>
+            )}
 
             <div className="flex flex-col gap-2.5">
               <button
                 id="scanner-btn-open-camera"
-                onClick={() => setStep('camera')}
-                disabled={insecure || atLimit}
+                onClick={goCamera}
+                /* 影像工具沒載到時拍了也拉不正（process 要用它），先擋下來，由上面的「重新下載」處理 */
+                disabled={insecure || atLimit || cvState === 'error'}
                 className="inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-brand bg-primary text-on-accent text-ui shadow-sm hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
               >
                 <Camera size={18} />
@@ -505,7 +574,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
                   className="hidden"
-                  disabled={atLimit}
+                  disabled={atLimit || cvState === 'error'}
                   onChange={onPickFile}
                 />
               </label>
@@ -550,7 +619,13 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                      剛好卡在 minCaptureAreaRatio(0.3) 的邊緣，反而更容易框不到
                      （實測：直握 63%、橫握 29.7%）。重點是「讓稿紙填滿畫面」。
                 */}
-                <li>稿紙是直的就直握手機、橫的就橫握，讓稿紙填滿畫面</li>
+                {/*
+                  2026-11-20 起對齊框跟著稿紙方向（預設橫式），手機直拿也能拍橫式稿紙，
+                  不再要求「稿紙是直的就直握、橫的就橫握」。
+                */}
+                <li>手機直拿、橫拿都可以，讓稿紙填滿畫面上的框；用直式稿紙時按「改拍直式稿紙」</li>
+                {/* 照片照拍到的方向存（見 lib/scan/enhance.ts 的 warpDocument），不會自動轉正 */}
+                <li>稿紙的頂端對準畫面上標「上方」的那一邊；拍完方向不對可以按旋轉鍵</li>
               </ul>
             </div>
 
@@ -558,7 +633,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
               <span className="text-body text-text-primary">
                 防手震自動拍照
                 <span className="block text-caption text-text-secondary">
-                  對齊良好並保持穩定約 1 秒後自動拍攝
+                  對齊良好並保持穩定約半秒後自動拍攝
                 </span>
               </span>
               <input
@@ -592,7 +667,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
           <CornerEditor
             source={source}
             detected={detected}
-            onRetake={() => setStep('camera')}
+            onRetake={goCamera}
             onRedetect={() => {
               if (!sourceRef.current || !isCvReady()) return null;
               try {
@@ -609,9 +684,20 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
         )}
 
         {/* ── 結果 ── */}
+        {/*
+          手機橫拿（又寬又矮的畫面）時改成照片在左、其他全部收在右邊一欄：
+          照原本上下排，照片只剩一條、要一直捲才看得到按鈕。用 grid 擺位置，
+          元件只寫一份 —— 分兩份 JSX 的話，下次改按鈕一定有一邊漏改。
+        */}
         {step === 'result' && (
-          <div className="max-w-3xl mx-auto px-4 sm:px-6 py-5 flex flex-col gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+          <div
+            className={
+              compactLandscape
+                ? 'px-4 py-3 grid grid-cols-[minmax(0,1fr)_16rem] gap-x-4 gap-y-3 items-start content-start'
+                : 'max-w-3xl mx-auto px-4 sm:px-6 py-5 flex flex-col gap-4'
+            }
+          >
+            <div className={`flex flex-wrap items-center justify-between gap-3 ${compactLandscape ? 'col-start-2' : ''}`}>
               <div className="inline-flex rounded-brand border border-border-strong overflow-hidden">
                 {(['color', 'gray', 'binary'] as ScanVariant[]).map((v) => (
                   <button
@@ -648,17 +734,38 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
               </div>
             </div>
 
-            <div className="rounded-brand border border-border bg-card p-2 overflow-hidden">
-              <canvas ref={previewRef} className="w-full h-auto block" />
+            <div
+              className={`rounded-brand border border-border bg-card p-2 overflow-hidden ${
+                compactLandscape ? 'col-start-1 row-start-1 row-span-4' : ''
+              }`}
+            >
+              <canvas
+                ref={previewRef}
+                className={
+                  compactLandscape
+                    ? 'block mx-auto max-w-full w-auto h-auto max-h-[calc(100dvh-7.5rem)]'
+                    : 'w-full h-auto block'
+                }
+              />
             </div>
-            <p className="text-caption text-text-muted tabular-nums">{resultInfo}</p>
+            <p className={`text-caption text-text-muted tabular-nums ${compactLandscape ? 'col-start-2' : ''}`}>
+              {resultInfo}
+            </p>
 
-            <ScanTray pages={pending} onRemove={removePage} />
+            <div className={compactLandscape ? 'col-start-2' : ''}>
+              <ScanTray pages={pending} onRemove={removePage} />
+            </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div
+              className={
+                compactLandscape
+                  ? 'col-start-2 flex flex-col items-stretch gap-2 [&>button]:py-2'
+                  : 'flex flex-wrap items-center gap-2'
+              }
+            >
               <button
                 id="scanner-btn-result-retake"
-                onClick={() => setStep('camera')}
+                onClick={goCamera}
                 className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-brand border border-border text-text-secondary text-body hover:bg-surface-soft transition-colors whitespace-nowrap"
               >
                 <RotateCcw size={15} />
@@ -684,7 +791,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 onClick={() => void acceptCurrent('camera')}
                 disabled={adding || !canAddMore(pending.length)}
                 title={limitHint(pending.length) || undefined}
-                className="ml-auto inline-flex items-center gap-1.5 px-4 py-2.5 rounded-brand border border-border-strong text-text-primary text-body hover:bg-surface-soft disabled:opacity-50 transition-colors whitespace-nowrap"
+                className={`${compactLandscape ? '' : 'ml-auto'} inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-brand border border-border-strong text-text-primary text-body hover:bg-surface-soft disabled:opacity-50 transition-colors whitespace-nowrap`}
               >
                 <Plus size={15} />
                 再拍下一張

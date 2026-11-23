@@ -58,6 +58,7 @@ import {
 } from '../lib/proxy/queue';
 import { PROXY_OCR_STYLE } from '../lib/statusStyles';
 import { DocumentScannerModal, type ScannedPage } from './scan/DocumentScannerModal';
+import { preloadOpenCv } from '../lib/scan/opencv';
 import { ConfirmDialog } from './ConfirmDialog';
 
 type Tab = 'register' | 'progress';
@@ -200,6 +201,9 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
   const active = students.find((s) => s.studentId === activeStudentId);
   const activeStatus = active ? statusOf(active.studentId) : 'idle';
   const activeRow = active ? rowsByStudent.get(active.studentId) : undefined;
+
+  // 打開批次代繳交就是要拍照：趁空檔先下載影像處理工具，按下拍照時不用再等「下載中」
+  useEffect(() => preloadOpenCv(300), []);
 
   // ── 狀態載入與輪詢 ────────────────────────────────────────────
   /*

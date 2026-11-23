@@ -61,10 +61,27 @@
   - `.env` 的 `DEV_LOGIN_TOKEN`
 - ⚠️ 拿掉之後手機就登入不了（1Campus 的 OAuth 回呼綁在 `localhost:3001`），要先想好手機測試怎麼辦。
 
-### 4. 使用者決定先不修的
+### 4. 稿紙掃描：從校園版搬回來的改進（分支 `feat/scan-improvements`，2026-11-20）
 
-- **直式稿紙掃完一律變橫的**：`apps/web/lib/scan/enhance.ts` 的 `warpDocument` 強制把長邊擺水平。
-  目前靠結果頁的旋轉鍵補救（教學影片也這樣教）。要改的話會動到橫式稿紙的裁切與 OCR 輸入，要一起測。
+- **直式稿紙不再一律變橫的**：`warpDocument` 改成照拍到的方向存（`lib/scan/geometry.ts` 的 `warpTargetSize`）。
+  橫式稿紙的輸出尺寸與以前完全相同（`test/scanGeometry.test.tsx` 有對照舊算法）。不猜方向是校園版踩過的教訓。
+  相機畫面的對齊框上緣標「上方」。
+- **對齊框跟著稿紙方向，不跟著手機**（使用者決定，2026-11-20）：預設橫式，手機直拿也顯示橫框，
+  不用轉手機就能拍橫式稿紙；拍照畫面有「改拍直式稿紙」切換鈕，選擇記在裝置上（`lib/scan/paperOrientation.ts`）。
+  取代了以前「稿紙是直的就直握、橫的就橫握」的提示。
+- **相機影像完整顯示（object-fit: contain），對齊框畫在影像裡、佔影像的 92%**：以前影像被裁邊（cover），
+  自動拍照看的是整個相機畫面，稿紙對準框反而永遠「請靠近一點」（使用者 iPhone 實測）。
+  `test/scanGeometry.test.tsx` 釘住「稿紙對準框就過得了自動拍照門檻」。
+- 找邊與自動拍照加快（`config.ts` 四個數值，照校園版）；作文頁與批次代繳交視窗會先下載 OpenCV（`preloadOpenCv`）。
+- OpenCV.js 跟著網站一起部署（`@techstark/opencv-js`，Vite `?url`），CDN 只當備援；
+  授權聲明在 `apps/web/public/licenses/opencv.txt`。
+- OpenCV 下載失敗時掃描視窗有「重新下載」，並指向直接拍照／上傳照片（沒有自動改開系統相機：2026-09 刻意拿掉了）。
+- 手機橫拿時，快門、關閉、對齊狀態、張數都收進右邊一欄（頂端那條會壓住對齊框）；結果頁照片在左、按鈕在右（`lib/scan/orientation.ts`）。
+- 觸控裝置打開相機時請瀏覽器進入全螢幕（`lib/scan/fullscreen.ts`）：從 LINE 等 App 開的內嵌瀏覽器頂端有一條
+  網頁畫不到的工具列，正式部署後也在。iPhone 的 Safari 不支援，維持原樣。
+- 2026-11-20 使用者用 Android 手機（從 App 內嵌瀏覽器開啟）與 iPhone 實測過：橫拿版面、全螢幕（只有 Android）、
+  對齊框、直拿拍橫式稿紙、對準框就自動拍，都正常。iPhone 不支援網頁全螢幕，內嵌瀏覽器的工具列會留著。
+- **學生教學影片**裡「按旋轉鍵把直式稿紙轉正」那段，改完之後不需要了，影片要跟著調整。
 
 ### 4-1. 《我的稿紙》靜態版（分支 `feat/my-sheets`，2026-11-20）
 

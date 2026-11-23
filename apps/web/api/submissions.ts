@@ -85,7 +85,7 @@ function resultOf(r: RawSubmissionBase, feedbackText: string): GradingResult | u
 function toSubmission(
   r: RawSubmissionBase,
   assignmentId: string,
-  opts: { content?: string; feedbackText?: string; picFiles?: string[] } = {},
+  opts: { content?: string; feedbackText?: string; picFiles?: string[]; detailed?: boolean } = {},
 ): Submission {
   return {
     /**
@@ -108,6 +108,8 @@ function toSubmission(
       isReturned: r.is_returned,
     }),
     result: resultOf(r, opts.feedbackText ?? ''),
+    feedbackId: r.feedback_id != null ? String(r.feedback_id) : undefined,
+    detailed: opts.detailed,
   };
 }
 
@@ -127,6 +129,7 @@ export async function fetchSubmissionsByAssignment(assignmentId: string): Promis
       content: r.content ?? '',
       feedbackText: feedbackTextOf(r.ai_analysis),
       picFiles: picFilesOf(r.pic_files),
+      detailed: true,
     }),
   );
 }

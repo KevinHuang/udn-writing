@@ -33,6 +33,7 @@ import {
   clearSubmission, proxySubmit, submitEssay, setMark as setMarkApi, setLeave as setLeaveApi,
 } from "../api/submissions";
 import { regradeWithAi } from '../api/manuscript';
+import { mergeSubmissionSummary } from '../lib/submissionMerge';
 import { ApiError } from "../api/client";
 import { fetchSemesters } from "../api/semesters";
 import { fetchCourses, fetchRoster, deleteCourse, setCourseArchived, setCourseShowcase } from "../api/courses";
@@ -433,11 +434,15 @@ function useAppStateValue() {
    * 繳交分兩層：這裡載的是**摘要**（不含作文全文）—— 實測最忙的教師有
    * 2,091 筆、內容合計 2.8 MB，全部拉下來不可行。批改頁需要全文時再
    * 用 ensureSubmissions() 補那一份作業（見 api/submissions.ts）。
+   *
+   * 摘要回來時用**合併**的（lib/submissionMerge.ts），不整份換掉：開頁時摘要要撈全部班級，
+   * 常常比單一作業的完整內容晚到，整份換掉會把剛補好的作文與評語抹掉 ——
+   * 批改頁因此出現過「辨識文字空白」「評語空白」（2026-11-23）。
    */
   const loadSubmissions = useCallback(() => fetchSubmissionSummary(), []);
   const {
     items: submissions, setItems: setSubmissions, reload: reloadSubmissions,
-  } = useApiList<Submission>(loadSubmissions, teacherDataReady, activeIdentity);
+  } = useApiList<Submission>(loadSubmissions, teacherDataReady, activeIdentity, mergeSubmissionSummary);
 
   /**
    * 學生端的全部資料。

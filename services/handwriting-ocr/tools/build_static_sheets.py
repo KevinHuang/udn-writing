@@ -39,6 +39,11 @@ SHEETS = [
 ]
 PREVIEW_DPI = 60          # A3 約 990×700 像素：網站上的縮圖、放大看得出版面就好
 
+# 原稿批改頁補「空白第二頁」放批改區用的底圖（學生只寫一頁、沒有拍第二頁時；docs/manuscript.md「稿紙上的批改區」）。
+# 聯合報國中稿紙 A3 原尺寸的第二頁，灰階、整張紙。每 mm 幾個像素要和 apps/api/src/lib/manuscript/grading_zone.ts
+# 的 BLANK_SHEET_PX_PER_MM、apps/web/lib/gradingZone.ts 的 BLANK_GRADING_SHEETS 一樣（網站的測試會檢查圖的寬度）。
+GRADING_BASE = {"stem": "udn_A3", "page": 2, "px_per_mm": 8, "suffix": "_p2_grading.png"}
+
 
 def file_stem(req):
     return f"{req['format']}_{req['paper']}"
@@ -64,12 +69,19 @@ def main(out_dir):
         fonts = check_fonts(doc, stem)
         pdf = doc.tobytes(garbage=3, deflate=True)
         previews = [page.get_pixmap(dpi=PREVIEW_DPI).tobytes("png") for page in doc]
-        built.append((stem, pdf, previews, fonts))
+        extras = {}
+        if stem == GRADING_BASE["stem"]:
+            zoom = GRADING_BASE["px_per_mm"] * 25.4 / 72
+            pix = doc[GRADING_BASE["page"] - 1].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), colorspace=pymupdf.csGRAY, alpha=False)
+            extras[stem + GRADING_BASE["suffix"]] = pix.tobytes("png")
+        built.append((stem, pdf, previews, fonts, extras))
     # 全部產生成功、字型都檢查過才寫檔，免得留下一半新一半舊
-    for stem, pdf, previews, fonts in built:
+    for stem, pdf, previews, fonts, extras in built:
         (out / f"{stem}.pdf").write_bytes(pdf)
         for i, png in enumerate(previews, 1):
             (out / f"{stem}_p{i}.png").write_bytes(png)
+        for name, png in extras.items():
+            (out / name).write_bytes(png)
         print(f"{stem}.pdf  {len(pdf) // 1024} KB  {len(previews)} 頁  字型：{', '.join(fonts) or '（沒有文字）'}")
 
 

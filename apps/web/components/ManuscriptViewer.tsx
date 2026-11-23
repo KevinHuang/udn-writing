@@ -2,9 +2,13 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { ChevronDown, ZoomIn, ZoomOut } from 'lucide-react';
 import {
   CORRECT_CHAR_BOLD_RATIO, CORRECT_CHAR_FONT, NOTE_COLORS, ZOOM_LEVELS,
-  columnRuns, correctLabelLayout, rightNeighborKey, sideX, splitCellKey, toCellBox, wavyPath,
+  columnRuns, correctLabelLayout, readingOrder, rightNeighborKey, sideX, splitCellKey, toCellBox, wavyPath,
   type CellBox, type ManuscriptData, type ManuscriptNote, type NoteKind,
 } from '../lib/manuscript';
+import {
+  layoutVerticalText, sheetGradingHints, sheetTypoColumns,
+  type GradingZone, type SheetGrading, type SheetTypos, type VerticalLayout,
+} from '../lib/gradingZone';
 
 /**
  * 原稿紅筆的左邊（docs/manuscript.md）：拉正的原稿，紅筆畫在學生的字上；
@@ -63,6 +67,8 @@ const LEGEND: LegendItem[] = [
   { key: 'format', label: '格式提醒', kinds: ['format', 'vetoedFormat'], mark: symbol('┐', 'format') },
   { key: 'suggestion', label: '可以再加強', kinds: ['suggestion'], mark: symbol('┆', 'suggestion') },
 ];
+// 稿紙上的批改區不是便條（沒有 kinds）：有這一區的稿紙才出現在圖例裡，一樣可以暫時隱藏（看照片上原本寫了什麼）
+const ZONE_LEGEND: LegendItem = { key: 'zone', label: '稿紙上的批改區', kinds: [], mark: symbol('✓', 'typo') };
 
 /** 直寫的小字（正確的字、移上行、空兩格）：一個字一個字往下排 */
 const VerticalLabel: React.FC<{ x: number; y: number; text: string; size: number; color: string; handwritten?: boolean }> = ({
@@ -165,6 +171,60 @@ const NoteMark: React.FC<{ note: ManuscriptNote; boxes: Map<string, CellBox>; te
   }
 };
 
+/** 錯字訂正欄裡正確的字的大小：佔格子寬的幾成（和原稿上錯字旁的字一樣大） */
+const ZONE_TYPO_SCALE = 0.8;
+
+/**
+ * 稿紙上的批改區（聯合報國中稿紙第二頁左側，lib/gradingZone.ts）：錯字訂正欄寫正確的字、
+ * 寫作能力分析打勾、老師評語直寫。都用紅筆的顏色和楷書，像老師親手填的；不擋下面的點擊。
+ */
+const GradingZoneMarks: React.FC<{
+  id: string; zone: GradingZone; typos: SheetTypos; levels: Array<number | null>; comment: VerticalLayout;
+}> = ({ id, zone, typos, levels, comment }) => {
+  const color = NOTE_COLORS.typo;
+  const [cx0, , cx1] = zone.typoColumns[0][0];
+  const unit = cx1 - cx0;
+  const kai = (size: number) => ({
+    fontSize: size, fontFamily: CORRECT_CHAR_FONT.family, fontWeight: CORRECT_CHAR_FONT.weight, textAnchor: 'middle' as const,
+    fill: color, stroke: color, strokeWidth: size * CORRECT_CHAR_BOLD_RATIO, strokeLinejoin: 'round' as const,
+  });
+  // 字的基線：字框正中間往下 0.35 個字（和 VerticalLabel 一樣）
+  const baseline = (cy: number, size: number) => cy + size * 0.35;
+  return (
+    <g id={id} pointerEvents="none">
+      {typos.columns.map((chars, ci) => chars.map((ch, ri) => {
+        const [x0, y0, x1, y1] = zone.typoColumns[ci][ri];
+        const size = (x1 - x0) * ZONE_TYPO_SCALE;
+        return <text key={`typo-${ci}-${ri}`} x={(x0 + x1) / 2} y={baseline((y0 + y1) / 2, size)} {...kai(size)}>{ch}</text>;
+      }))}
+      {levels.map((level, di) => {
+        if (level === null) return null;
+        const [x0, y0, x1, y1] = zone.levelCells[di][level];
+        const cx = (x0 + x1) / 2;
+        const cy = (y0 + y1) / 2;
+        return (
+          <polyline
+            key={`level-${di}`}
+            points={`${cx - unit * 0.26},${cy + unit * 0.02} ${cx - unit * 0.08},${cy + unit * 0.22} ${cx + unit * 0.3},${cy - unit * 0.26}`}
+            fill="none" stroke={color} strokeWidth={Math.max(unit * 0.06, 2)} strokeLinecap="round" strokeLinejoin="round"
+          />
+        );
+      })}
+      {comment.glyphs.map((g, i) => (
+        <text
+          key={`comment-${i}`}
+          x={g.x}
+          y={baseline(g.y, comment.size)}
+          transform={g.rotate ? `rotate(90 ${g.x} ${g.y})` : undefined}
+          {...kai(comment.size)}
+        >
+          {g.ch}
+        </text>
+      ))}
+    </g>
+  );
+};
+
 interface ManuscriptViewerProps {
   data: ManuscriptData;
   notes: ManuscriptNote[];
@@ -177,6 +237,8 @@ interface ManuscriptViewerProps {
   onCellClick?: (cellKey: string) => void;
   /** 「辨識文字」：原本左邊的樣子 */
   textView: React.ReactNode;
+  /** 畫面上當下的批改內容：有批改區的稿紙（聯合報國中稿紙第二頁）直接填進去 */
+  sheetGrading?: SheetGrading | null;
 }
 
 /** 選到的標記不在看得到的範圍時，捲到正中間；已經看得到就不動 */
@@ -191,10 +253,12 @@ const revealOutside = (element: Element, root: HTMLElement | null) => {
 };
 
 export const ManuscriptViewer: React.FC<ManuscriptViewerProps> = ({
-  data, notes, selectedNoteId, onSelectNote, selectedCellKey = null, view, onViewChange, onCellClick, textView,
+  data, notes, selectedNoteId, onSelectNote, selectedCellKey = null, view, onViewChange, onCellClick, textView, sheetGrading = null,
 }) => {
   const idPrefix = 'gradingeditor-manuscript';
   const multiPage = data.pages.length > 1;
+  // 學生的照片有幾頁（補上的空白稿紙不算）
+  const photoPages = data.pages.filter((p) => !p.blank).length;
   const rootRef = useRef<HTMLDivElement | null>(null);
   // 每頁圖的實際大小（格子位置是圖上的像素），用圖的網址記
   const [loaded, setLoaded] = useState<Record<string, { width: number; height: number }>>({});
@@ -299,8 +363,11 @@ export const ManuscriptViewer: React.FC<ManuscriptViewerProps> = ({
     e.preventDefault();
   };
 
-  const hiddenKinds = new Set(LEGEND.filter((l) => hiddenLegend.has(l.key)).flatMap((l) => l.kinds));
-  const hiddenCount = LEGEND.filter((l) => hiddenLegend.has(l.key)).length;
+  const hasZone = Boolean(sheetGrading) && data.pages.some((p) => p.gradingZone);
+  const legend = hasZone ? [...LEGEND, ZONE_LEGEND] : LEGEND;
+  const hiddenKinds = new Set(legend.filter((l) => hiddenLegend.has(l.key)).flatMap((l) => l.kinds));
+  const hiddenCount = legend.filter((l) => hiddenLegend.has(l.key)).length;
+  const cellOrder = useMemo(() => readingOrder(data.pages.map((p) => p.prefix)), [data.pages]);
   const toggleLegend = (key: string) => setHiddenLegend((cur) => {
     const next = new Set(cur);
     if (next.has(key)) next.delete(key); else next.add(key);
@@ -317,9 +384,21 @@ export const ManuscriptViewer: React.FC<ManuscriptViewerProps> = ({
     const selectedRuns = selectedNote ? columnRuns(selectedNote.keys, boxes) : [];
     const selectedCell = selectedCellKey ? boxes.get(selectedCellKey) : undefined;
     const dragging = draggingPage === index;
+    const zone = sheetGrading && !hiddenLegend.has(ZONE_LEGEND.key) ? page.gradingZone : null;
+    const zoneTypos = zone && sheetGrading ? sheetTypoColumns(sheetGrading.typos, cellOrder, zone) : null;
+    const zoneComment = zone && sheetGrading
+      ? layoutVerticalText(sheetGrading.comment, zone.commentBox, zone.typoColumns[0][0][2] - zone.typoColumns[0][0][0])
+      : null;
+    const zoneHints = zoneTypos && zoneComment ? sheetGradingHints(zoneTypos, zoneComment) : [];
+    // 補上的空白稿紙只為了放批改區：批改區在圖例裡被隱藏時，整頁不出現（空白稿紙沒有東西可以看）
+    if (page.blank && !zone) return null;
     return (
       <section key={page.prefix} id={`${idPrefix}-page-${number}`} className="space-y-1.5">
-        {multiPage && <p className="pl-0.5 text-caption text-text-secondary">第 {number} 頁</p>}
+        {multiPage && (
+          <p className="pl-0.5 text-caption text-text-secondary">
+            {page.blank ? '批改區（這份作文沒有第二頁的照片，放在空白稿紙的第二頁上）' : `第 ${number} 頁`}
+          </p>
+        )}
         {/* 只用來讀圖的實際大小；畫面上的原稿和紅筆一起畫在下面的 SVG 裡 */}
         {page.imageUrl && !imageFailed && (
           <img
@@ -336,7 +415,7 @@ export const ManuscriptViewer: React.FC<ManuscriptViewerProps> = ({
         <div className="w-full overflow-hidden rounded-sm bg-sheet-paper shadow-paper">
           {!page.imageUrl || imageFailed ? (
             <p className="p-8 text-center text-caption text-text-secondary">
-              這一頁的原稿圖讀不到，可以改看「辨識文字」或上方的原始照片。
+              {page.blank ? '空白稿紙的底圖讀不到，批改區暫時沒辦法顯示。' : '這一頁的原稿圖讀不到，可以改看「辨識文字」或上方的原始照片。'}
             </p>
           ) : (
             !size && <p className="p-8 text-center text-caption text-text-secondary">原稿載入中…</p>
@@ -360,7 +439,7 @@ export const ManuscriptViewer: React.FC<ManuscriptViewerProps> = ({
                 style={{ width: `${zoom * 100}%`, aspectRatio: `${size.width} / ${size.height}` }}
                 viewBox={`0 0 ${size.width} ${size.height}`}
                 role="img"
-                aria-label={`拉正的原稿第 ${number} 頁與紅筆標記`}
+                aria-label={page.blank ? '空白稿紙第二頁上的批改區' : `拉正的原稿第 ${number} 頁與紅筆標記`}
               >
                 <image href={page.imageUrl as string} x={0} y={0} width={size.width} height={size.height} preserveAspectRatio="none" />
                 {selectedRuns.map((run, ri) => (
@@ -386,6 +465,9 @@ export const ManuscriptViewer: React.FC<ManuscriptViewerProps> = ({
                   />
                 )}
                 {shown.map((n) => <NoteMark key={n.id} note={n} boxes={boxes} template={data.template} />)}
+                {zone && sheetGrading && zoneTypos && zoneComment && (
+                  <GradingZoneMarks id={`${idPrefix}-zone-${number}`} zone={zone} typos={zoneTypos} levels={sheetGrading.levels} comment={zoneComment} />
+                )}
                 {onCellClick && page.cells.map((c) => {
                   const b = boxes.get(c.key) as CellBox;
                   return (
@@ -410,6 +492,9 @@ export const ManuscriptViewer: React.FC<ManuscriptViewerProps> = ({
             </div>
           )}
         </div>
+        {zoneHints.map((hint) => (
+          <p key={hint} className="pl-0.5 text-caption text-text-secondary">{hint}</p>
+        ))}
       </section>
     );
   };
@@ -451,7 +536,11 @@ export const ManuscriptViewer: React.FC<ManuscriptViewerProps> = ({
         )}
         {view === 'manuscript' && (
           <div className="ml-auto flex items-center gap-2">
-            {multiPage && <span className="text-caption text-text-secondary">共 {data.pages.length} 頁，往下捲</span>}
+            {multiPage && (
+              <span className="text-caption text-text-secondary">
+                {photoPages < data.pages.length ? `共 ${photoPages} 頁，批改區在最下面` : `共 ${data.pages.length} 頁，往下捲`}
+              </span>
+            )}
             {zoomed && <span className="text-caption text-text-secondary">按住原稿可以拖曳</span>}
             <div className="inline-flex items-center gap-1 text-caption text-text-secondary">
               <button id={`${idPrefix}-zoom-out`} type="button" aria-label="縮小原稿" disabled={zoomIndex === 0} onClick={() => changeZoom(zoomIndex - 1)} className={iconButton}>
@@ -471,7 +560,7 @@ export const ManuscriptViewer: React.FC<ManuscriptViewerProps> = ({
           {legendOpen && (
             <div id={`${idPrefix}-legend`} className="space-y-2 rounded-xl border border-border-card bg-card px-3 py-2.5 text-caption text-text-primary">
               <ul className="flex flex-wrap gap-2">
-                {LEGEND.map((item) => {
+                {legend.map((item) => {
                   const hidden = hiddenLegend.has(item.key);
                   return (
                     <li key={item.key}>

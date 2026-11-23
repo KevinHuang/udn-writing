@@ -4,6 +4,7 @@ import {
     activeFormatIssues, confirmedTypos, flaggedTypos, markBaseline, mergeManuscriptMarks,
     type MergedMarks,
 } from './marks';
+import { blankGradingZone, gradingZoneOf, type BlankGradingZonePayload, type GradingZonePayload } from './grading_zone';
 
 /**
  * 原稿紅筆 API 的回傳內容（docs/manuscript.md）。
@@ -19,13 +20,18 @@ export interface ManuscriptPagePayload {
     imageUrl: string | null;
     /** 有寫字的格子；rect 是拉正的稿紙圖上的 [左, 上, 右, 下] 像素 */
     cells: Array<{ key: string; rect: number[]; text: string; status: string }>;
+    /** 稿紙上的批改區（聯合報國中稿紙的第二頁才有）；其他頁、其他稿紙是 null */
+    gradingZone: GradingZonePayload | null;
 }
 
 /**
  * 每頁拉正的稿紙圖與有字的格子位置。純函式。
  * 只給有字的格子：空格子不畫標記，也不能加錯字（沒有字可以錯）。
  */
-export function toManuscriptPages(grid: Pick<GridForSubmission, 'pages' | 'pageImageFiles'>, submissionId: string): ManuscriptPagePayload[] {
+export function toManuscriptPages(
+    grid: Pick<GridForSubmission, 'pages' | 'pageImageFiles'> & { sheetTemplate?: string | null },
+    submissionId: string,
+): ManuscriptPagePayload[] {
     return (Array.isArray(grid.pages) ? grid.pages : []).map((page, order) => {
         const number = page?.page ?? order + 1;
         const prefix = page?.prefix || `第${number}頁`;
@@ -44,9 +50,19 @@ export function toManuscriptPages(grid: Pick<GridForSubmission, 'pages' | 'pageI
                 ? `/service/instructor/grading/${submissionId}/manuscript/pages/${order}`
                 : null,
             cells,
+            // 位置用整頁的格子（含空白格）反推：第二頁只寫了幾個字也對得準
+            gradingZone: gradingZoneOf(grid.sheetTemplate, page?.ocr?.cells),
         };
     });
 }
+
+/**
+ * 沒有任何一頁對得上批改區（學生只寫了一頁、沒有拍第二頁）：給空白稿紙第二頁上的位置，前端補一頁空白稿紙來放。
+ * 有一頁對得上就不給 —— 批改區只畫一次，畫在學生真的那張紙上。
+ */
+export const toBlankGradingZone = (
+    template: string | null | undefined, pages: Pick<ManuscriptPagePayload, 'gradingZone'>[],
+): BlankGradingZonePayload | null => (pages.some((p) => p.gradingZone) ? null : blankGradingZone(template));
 
 /** 合併後的標記與目前的錯字狀態（每次寫入決定後也回傳這一份） */
 export const toMarksPayload = (merged: MergedMarks) => ({

@@ -20,7 +20,8 @@ import {
 import { gradeSimple, type SimpleGradingAi } from '../lib/simple_grading/grade';
 import { composeStudentResponse } from '../lib/simple_grading/result';
 import { summarizeGrid } from '../lib/simple_grading/summary';
-import { AiGradingResponseError } from '../lib/grading_result';
+import { AiGradingResponseError, SUB_SCORE_INSTRUCTION, SUB_SCORE_RUBRIC } from '../lib/grading_result';
+import { buildSimpleGradingSystem } from '../lib/simple_grading/prompt';
 
 // ── 假的稿紙：照辨識服務的規則排進格子（每段開頭空兩格、一行 ROWS 格） ──
 
@@ -106,6 +107,17 @@ function fakeAi(replies: string[]): SimpleGradingAi & { calls: string[][] } {
 const CONTEXT = { system_instruction: '【聯合報作文批改規範】會考六級分', title: '那年暑假', description: '寫一段回憶', note: null };
 
 describe('組給 AI 的資料', () => {
+  /*
+    使用者指定（2026-11-23）：為了稿紙上的批改區補的規則只能用在原稿批改（簡易批改的提示詞）。
+    其他作文走一般批改，那邊的提示詞與回饋要維持原樣 —— 共用的四向度規準也不能為了稿紙去改。
+  */
+  test('稿紙專用的規則只在簡易批改的提示詞裡；一般批改的提示詞與共用的四向度規準沒有', () => {
+    const rule = '5、6 級分這樣分';
+    assert.ok(buildSimpleGradingSystem({ title: '那年暑假' }).includes(rule));
+    assert.ok(!SUB_SCORE_INSTRUCTION.includes(rule));
+    assert.ok(!SUB_SCORE_RUBRIC.includes(rule));
+  });
+
   test('格子重建和存下的全文一致 → 精確模式；不確定的字後面有〔?〕', () => {
     const index = buildEssayIndex(GRID);
     assert.equal(index.exact, true);

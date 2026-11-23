@@ -31,7 +31,7 @@ import SimpleGradingHelper from '../dal/simple_grading_helper';
 import { createSimulatedSimpleGradingAi, gradeSimple, geminiSimpleGradingAi } from '../lib/simple_grading/grade';
 import { summarizeGrid } from '../lib/simple_grading/summary';
 import ManuscriptHelper from '../dal/manuscript_helper';
-import { decidedForGrading, loadMergedMarks, toManuscriptPages, toMarksPayload } from '../lib/manuscript/payload';
+import { decidedForGrading, loadMergedMarks, toBlankGradingZone, toManuscriptPages, toMarksPayload } from '../lib/manuscript/payload';
 import { cellTexts, ManuscriptDecisionError, mergeManuscriptMarks, planDecision, type Target } from '../lib/manuscript/marks';
 import SemesterHelper from '../dal/semester_helper';
 import config from '../config'
@@ -509,11 +509,13 @@ router.get('/grading/:submissionId/manuscript', async (ctx) => {
             ctx.body = { available: false };
             return;
         }
+        const pages = toManuscriptPages(found.grid, submissionId);
         ctx.body = {
             available: true,
             locked: await ManuscriptHelper.isReturned(submissionId),
             template: found.grid.sheetTemplate,
-            pages: toManuscriptPages(found.grid, submissionId),
+            pages,
+            blankGradingZone: toBlankGradingZone(found.grid.sheetTemplate, pages),
             ...toMarksPayload(await loadMergedMarks(found.grid)),
         };
     } catch (error) {

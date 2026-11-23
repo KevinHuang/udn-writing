@@ -6,6 +6,8 @@
  * 卡片也已經併進評語（老師在評語欄改），所以拿掉了卡片改寫、學測專用的提醒。
  */
 
+import { parseBlankGradingPage, parseGradingZone, type GradingZone } from './gradingZone';
+
 // ---------- 資料（GET /instructor/grading/:id/manuscript） ----------
 
 export interface ManuscriptCell {
@@ -21,7 +23,14 @@ export interface ManuscriptPage {
   prefix: string;
   imageUrl: string | null;
   cells: ManuscriptCell[];
+  /** 稿紙上的批改區（聯合報國中稿紙的第二頁才有），見 lib/gradingZone.ts */
+  gradingZone: GradingZone | null;
+  /** 不是學生的照片：學生只寫了一頁，補一頁空白稿紙的第二頁來放批改區（沒有格子、不能點字） */
+  blank: boolean;
 }
+
+/** 補上的空白稿紙那一頁的前綴：沒有格子，不會出現在格子鍵裡 */
+export const BLANK_PAGE_PREFIX = '批改區';
 
 export type TypoState = 'confirmed' | 'pending' | 'vetoed';
 
@@ -123,19 +132,23 @@ export function parseMarks(raw: unknown): ManuscriptMarks {
 export function parseManuscript(raw: unknown): ManuscriptData | null {
   const r = (raw ?? {}) as Record<string, unknown>;
   if (r.available !== true || !Array.isArray(r.pages)) return null;
-  return {
-    ...parseMarks(raw),
-    locked: r.locked === true,
-    template: typeof r.template === 'string' ? r.template : null,
-    pages: r.pages.map((p: Record<string, unknown>, i: number) => ({
-      page: typeof p.page === 'number' ? p.page : i + 1,
-      prefix: str(p.prefix) || `第${i + 1}頁`,
-      imageUrl: typeof p.imageUrl === 'string' ? p.imageUrl : null,
-      cells: (Array.isArray(p.cells) ? p.cells : [])
-        .filter((c: Record<string, unknown>) => typeof c?.key === 'string' && isRect(c.rect))
-        .map((c: Record<string, unknown>) => ({ key: c.key as string, rect: c.rect as ManuscriptCell['rect'], text: str(c.text), status: str(c.status) })),
-    })),
-  };
+  const template = typeof r.template === 'string' ? r.template : null;
+  const pages: ManuscriptPage[] = r.pages.map((p: Record<string, unknown>, i: number) => ({
+    page: typeof p.page === 'number' ? p.page : i + 1,
+    prefix: str(p.prefix) || `第${i + 1}頁`,
+    imageUrl: typeof p.imageUrl === 'string' ? p.imageUrl : null,
+    cells: (Array.isArray(p.cells) ? p.cells : [])
+      .filter((c: Record<string, unknown>) => typeof c?.key === 'string' && isRect(c.rect))
+      .map((c: Record<string, unknown>) => ({ key: c.key as string, rect: c.rect as ManuscriptCell['rect'], text: str(c.text), status: str(c.status) })),
+    gradingZone: parseGradingZone(p.gradingZone),
+    blank: false,
+  }));
+  // 沒有任何一頁有批改區（學生只寫了一頁、沒有拍第二頁）：補一頁空白稿紙的第二頁，批改區畫在那上面
+  const blank = pages.some((p) => p.gradingZone) ? null : parseBlankGradingPage(template, r.blankGradingZone);
+  if (blank) {
+    pages.push({ page: pages.length + 1, prefix: BLANK_PAGE_PREFIX, imageUrl: blank.imageUrl, cells: [], gradingZone: blank.zone, blank: true });
+  }
+  return { ...parseMarks(raw), locked: r.locked === true, template, pages };
 }
 
 /** simple_grading_result.detail → 卡片與成語（舊的批改結果沒有格子位置：不畫線、不編號） */

@@ -36,6 +36,7 @@ import {
   applyTeacherTypos, buildManuscriptNotes, countPendingTypos, nextPendingNoteId, parseBaseline, parseCards,
   regradeReminder, teacherTypoKeys, type ManuscriptData, type ManuscriptDecisionInput,
 } from '../lib/manuscript';
+import { sheetComment, sheetLevels, type SheetGrading } from '../lib/gradingZone';
 import { fetchSimpleGrading } from '../api/simpleGrading';
 import { PROOFREAD_NOTE, showSimpleGrading, type SimpleGradingInfo } from '../lib/simpleGrading';
 
@@ -273,6 +274,13 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
     ? buildManuscriptNotes(manuscript, visibleCards, manuscript.pages.map((p) => p.prefix))
     : [];
   const pendingCount = countPendingTypos(manuscript);
+  /*
+    稿紙上的批改區（聯合報國中稿紙第二頁，lib/gradingZone.ts）：用畫面上當下的批改結果填 ——
+    老師在右邊改評語、在原稿上確認錯字，稿紙上的評語欄、錯字訂正欄跟著變，不用等存檔。
+  */
+  const sheetGrading: SheetGrading | null = manuscript
+    ? { typos: manuscript.typos, levels: sheetLevels(result?.categoryScores), comment: sheetComment(result?.feedback) }
+    : null;
   const regradeMessage = manuscript && simpleInfo?.eligible
     ? regradeReminder(parseBaseline((simpleInfo.rawDetail as { baseline?: unknown } | null)?.baseline), manuscript.current)
     : null;
@@ -844,6 +852,7 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                     onViewChange={setManuscriptView}
                     onCellClick={manuscript.locked ? undefined : handleCellClick}
                     textView={paper}
+                    sheetGrading={sheetGrading}
                   />
                 ) : paper}
             </div>

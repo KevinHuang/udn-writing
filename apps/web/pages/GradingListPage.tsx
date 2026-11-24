@@ -21,6 +21,7 @@ import { useAppState } from "../state/appStateContext";
 import { useGoBack } from "../lib/useGoBack";
 import { routes, queryKeys } from "../lib/routes";
 import { canMark, hasMark } from "../lib/submissionMarks";
+import { resetTargets } from "../lib/resetGrading";
 import { rosterOf, seatText } from "../lib/gradingQueue";
 import {
   assignmentsForCourse, firstWorthGrading, isLateSubmission,
@@ -205,11 +206,14 @@ export const GradingListPage: React.FC = () => {
           else handleBatchGrade(selectedAssignmentId);
         };
         /*
-          兩顆按鈕的目標都是「已批改、還沒發還」（status === 'Graded'），
-          但啟動條件刻意不同：
+          兩顆按鈕的啟動條件刻意不同：
 
-            發還     自動偵測。沒勾選就是整批全發，勾了就只發勾到的。
-            重置批改 一定要先勾選。沒勾選時是 0、停用 ——
+            發還     目標是「已批改、還沒發還」（status === 'Graded'）。
+                     自動偵測：沒勾選就是整批全發，勾了就只發勾到的。
+            重置批改 目標是「已批改」**與「已發還」**（lib/resetGrading.ts 的
+                     resetTargets —— 和真正執行的 handleBatchReset 問同一支，
+                     以前這裡只數 Graded，勾了已發還的作品會寫 (2) 卻動 5 份）。
+                     一定要先勾選。沒勾選時是 0、停用 ——
                      它會清掉分數與評語，不該有「沒選就全部重置」這種預設。
         */
         const gradedOf = (ids?: string[]) =>
@@ -223,7 +227,7 @@ export const GradingListPage: React.FC = () => {
           ? gradedOf(selectedSubmissionIds)
           : graded;
         const selectedResetCount = hasSelection
-          ? gradedOf(selectedSubmissionIds)
+          ? resetTargets(filteredSubmissions, selectedSubmissionIds).length
           : 0;
 
         /*
@@ -463,9 +467,9 @@ export const GradingListPage: React.FC = () => {
                   disabled={isBatchGrading || selectedResetCount === 0}
                   title={
                     !hasSelection
-                      ? "請先勾選已批改、尚未發還的作業"
+                      ? "請先勾選已批改或已發還的作業"
                       : selectedResetCount === 0
-                        ? "勾選的項目裡沒有「已批改」的作業"
+                        ? "勾選的項目裡沒有批改完成的作業"
                         : `清除這 ${selectedResetCount} 份的分數與評語，退回「待批改」`
                   }
                   className="flex-1 lg:flex-none flex items-center justify-center gap-2 bg-card hover:bg-danger-50 text-danger-700 border border-danger-200 hover:border-danger-300 px-3 md:px-4 py-2 md:py-2.5 rounded-xl text-body transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"

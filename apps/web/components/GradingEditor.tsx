@@ -26,6 +26,7 @@ import {
   type MarkKind,
   type SubmissionMarks,
 } from '../lib/submissionMarks';
+import { canResetGrading } from '../lib/resetGrading';
 import { SubmissionStampRow } from './SubmissionStamp';
 import { SHOW_AI_MODEL_PICKER } from '../lib/features';
 import { SimpleGradingPanel } from './SimpleGradingPanel';
@@ -671,14 +672,19 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
               </button>
             )}
 
-            {/* 已批改或已發還都能重置 —— 發還出去才發現評語寫錯是常有的事 */}
-            {(isGraded || isPublished) && (
+            {/*
+              已批改或已發還都能重置 —— 發還出去才發現評語寫錯是常有的事。
+              範圍問 canResetGrading()，和清單那顆批次按鈕同一支（lib/resetGrading.ts）。
+              按下去會先跳確認視窗（handleResetGrading）：已發還的那一份會把學生
+              看到的成績收回，只想改紅筆的話旁邊的「收回發還」才是要按的。
+            */}
+            {canResetGrading(submission.status) && (
               <button
                   id="gradingeditor-btn-reset"
                   onClick={() => onResetGrading?.(submission.id)}
                   className="shrink-0 whitespace-nowrap flex items-center gap-1 md:gap-2 px-2 md:px-4 py-2 md:py-2.5 rounded-xl text-body font-bold bg-danger-600 text-on-accent hover:opacity-90 shadow-lg shadow-danger-600/20 transition-all active:scale-95"
                   /* danger-600 是量出來的：500 在碑拓模式只有 3.88，過不了 4.5 */
-                  title="清除分數與評語，退回「待批改」"
+                  title="清除分數與評語，退回「待批改」（會先確認）"
               >
                   <RotateCcw size={14} className="md:w-[18px] md:h-[18px]" />
                   {/* 只寫「重置」，完整說明交給滑鼠停留的 title */}

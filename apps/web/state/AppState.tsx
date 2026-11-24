@@ -24,6 +24,7 @@ import {
   type MarkKind,
   type SubmissionMarks,
 } from "../lib/submissionMarks";
+import { canResetGrading, resetConfirmText, resetTargets } from "../lib/resetGrading";
 import { useResetDemo } from "../lib/usePersistentState";
 import { orderedAssignments } from "../lib/assignmentOrder";
 import { routes, type SemesterFilter } from "../lib/routes";
@@ -921,26 +922,40 @@ function useAppStateValue() {
    *
    * **一定要先勾選** —— 與按鈕的啟動條件一致。這一步會清掉分數與評語，
    * 不該有「沒選就整批重置」的預設行為。
+   *
+   * 會動到哪幾份一律問 `resetTargets()`，清單上那顆按鈕的數字也問同一支 ——
+   * 以前按鈕只數 Graded、這裡卻連 Published 一起重置，勾了已發還的作品時
+   * 按鈕寫 (2)、實際動 5 份。
+   *
+   * 按下去**先確認**：已發還的那幾份會把學生已經看到的成績收回，
+   * 而且簡易批改的評分依據會一併刪掉（文案在 lib/resetGrading.ts）。
    */
-  const handleBatchReset = async (selectedAssignmentId: string) => {
-    if (selectedSubmissionIds.length === 0) return;
-    const targets = submissions.filter(
-      (s) => s.assignmentId === selectedAssignmentId
-        && selectedSubmissionIds.includes(s.id)
-        && (s.status === 'Graded' || s.status === 'Published'),
+  const handleBatchReset = (selectedAssignmentId: string) => {
+    const targets = resetTargets(
+      submissions.filter((s) => s.assignmentId === selectedAssignmentId),
+      selectedSubmissionIds,
     );
     if (targets.length === 0) return;
 
-    try {
-      for (const s of targets) await resetGrading(s.id);
-      await reloadSubmissions();
-      await ensureSubmissions(selectedAssignmentId);
-      setGradingResetSeq((n) => n + 1);
-    } catch (e) {
-      console.error('批次重置失敗:', e);
-    } finally {
-      setSelectedSubmissionIds([]);
-    }
+    const { title, message } = resetConfirmText(targets);
+    setConfirmDialog({
+      isOpen: true,
+      title,
+      message,
+      onConfirm: async () => {
+        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        try {
+          for (const s of targets) await resetGrading(s.id);
+          await reloadSubmissions();
+          await ensureSubmissions(selectedAssignmentId);
+          setGradingResetSeq((n) => n + 1);
+        } catch (e) {
+          console.error('批次重置失敗:', e);
+        } finally {
+          setSelectedSubmissionIds([]);
+        }
+      },
+    });
   };
 
   /**
@@ -968,18 +983,33 @@ function useAppStateValue() {
   /**
    * 重置批改：把有效的那一筆設為失效，狀態退回待批改。**作文還在。**
    * 歷史紀錄留著（is_valid = false），老師會重批。
+   *
+   * 與批次重置走同一套判斷與文案（lib/resetGrading.ts）：清除繳交、刪作業、
+   * 換題、重新評分都有確認視窗，只有這一顆沒有 —— 而它對**已發還**的作品
+   * 一樣生效（學生看到的成績無聲消失），還會刪掉簡易批改的評分依據。
    */
-  const handleResetGrading = async (id: string) => {
-    try {
-      await resetGrading(id);
-      await reloadSubmissions();
-      const assignmentId = submissions.find((s) => s.id === id)?.assignmentId;
-      if (assignmentId) await ensureSubmissions(assignmentId);
-      // 只有重置需要把 GradingEditor 重掛 —— 它把結果收在自己的 state 裡
-      setGradingResetSeq((n) => n + 1);
-    } catch (e) {
-      console.error('重置批改失敗:', e);
-    }
+  const handleResetGrading = (id: string) => {
+    const target = submissions.find((s) => s.id === id);
+    if (!target || !canResetGrading(target.status)) return;
+
+    const { title, message } = resetConfirmText([target]);
+    setConfirmDialog({
+      isOpen: true,
+      title,
+      message,
+      onConfirm: async () => {
+        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        try {
+          await resetGrading(id);
+          await reloadSubmissions();
+          await ensureSubmissions(target.assignmentId);
+          // 只有重置需要把 GradingEditor 重掛 —— 它把結果收在自己的 state 裡
+          setGradingResetSeq((n) => n + 1);
+        } catch (e) {
+          console.error('重置批改失敗:', e);
+        }
+      },
+    });
   };
 
   /**

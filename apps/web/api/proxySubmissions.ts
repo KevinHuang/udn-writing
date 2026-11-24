@@ -79,6 +79,7 @@ interface RawProxyStatus {
     grid_status?: ProxyStatusRow['gridStatus'];
     grid_error?: string | null;
     grid_started_at?: string | null;
+    grid_updated_at?: string | null;
   }>;
 }
 
@@ -106,6 +107,7 @@ export async function fetchProxyStatus(assignmentId: string): Promise<ProxyStatu
       gridStatus: r.grid_status ?? null,
       gridError: r.grid_error ?? null,
       gridStartedAt: r.grid_started_at ?? null,
+      gridUpdatedAt: r.grid_updated_at ?? null,
     })),
   };
 }

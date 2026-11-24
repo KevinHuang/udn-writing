@@ -25,6 +25,12 @@ export interface ProxyStatusRow extends BatchProxyRow {
     grid_status: 'pending' | 'queued' | 'running' | 'done' | 'failed' | null;
     grid_error: string | null;
     grid_started_at: string | null;
+    /**
+     * 這一列最後一次變動的時間。**queued 卡住要用它算**：
+     * 背景工作還沒領取（claim）之前 started_at 是空的，只有 updated_at 有值
+     * （markQueued 會推它）。見 lib/proxy/status.ts 的 queued 那一格。
+     */
+    grid_updated_at: string | null;
     sheet_template: string | null;
     /** 辨識完成度（可信的格子 ÷ 有寫字的格子）；完成時才有 */
     grid_completion: number | null;
@@ -151,6 +157,7 @@ class BatchProxySubmissionHelper {
                     g.status AS grid_status,
                     g.error_message AS grid_error,
                     g.started_at AS grid_started_at,
+                    g.updated_at AS grid_updated_at,
                     g.sheet_template,
                     g.completion AS grid_completion,
                     jsonb_array_length(g.typo_marks) AS grid_typos

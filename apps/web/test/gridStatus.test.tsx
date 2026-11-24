@@ -40,6 +40,34 @@ describe('逐格辨識的狀態對應', () => {
     assert.match(failureReasonOf(r, T0) ?? '', /太久/);
   });
 
+  /*
+    queued 卡住：job 啟動了卻在領取（claim）之前就掛掉 —— started_at 永遠是空的。
+    以前這一格只對應成「辨識中」，而逾時只看 running，於是那一列永遠轉圈，
+    而「重試」只出現在失敗的人身上，老師沒有任何辦法讓它動。
+  */
+  test('送出去卻一直沒被領取（queued 卡住超過 15 分鐘）→ 失敗', () => {
+    const r = row({ gridStatus: 'queued', gridUpdatedAt: new Date(T0 - GRID_STALE_MS - 1000).toISOString() });
+    assert.equal(proxyOcrStatusOf(r, { nowMs: T0 }), 'failed');
+    assert.match(failureReasonOf(r, T0) ?? '', /一直沒有開始/);
+  });
+
+  test('queued 還沒超過 15 分鐘 → 還是「辨識中」，不要嚇老師', () => {
+    const r = row({ gridStatus: 'queued', gridUpdatedAt: new Date(T0 - 60_000).toISOString() });
+    assert.equal(proxyOcrStatusOf(r, { nowMs: T0 }), 'running');
+    assert.equal(failureReasonOf(r, T0), null);
+  });
+
+  test('舊資料沒有 gridUpdatedAt → 不當成卡住（維持現況）', () => {
+    assert.equal(proxyOcrStatusOf(row({ gridStatus: 'queued' }), { nowMs: T0 }), 'running');
+  });
+
+  test('卡住的兩種原因分得開：領到了沒跑完 vs 根本沒領到', () => {
+    const stuckRunning = row({ gridStatus: 'running', gridStartedAt: new Date(T0 - GRID_STALE_MS - 1).toISOString() });
+    const stuckQueued = row({ gridStatus: 'queued', gridUpdatedAt: new Date(T0 - GRID_STALE_MS - 1).toISOString() });
+    assert.match(failureReasonOf(stuckRunning, T0) ?? '', /太久沒有完成/);
+    assert.match(failureReasonOf(stuckQueued, T0) ?? '', /一直沒有開始/);
+  });
+
   test('失敗原因：逐格辨識有，ocr-job 沒有', () => {
     assert.equal(failureReasonOf(row({ gridStatus: 'failed', gridError: '右上角定位標記看不清楚，請重拍' }), T0),
       '右上角定位標記看不清楚，請重拍');

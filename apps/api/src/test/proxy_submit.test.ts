@@ -495,6 +495,14 @@ describe('GET /assignments/:id/proxy_status', () => {
     assert.equal(row.has_content, false);
     assert.equal(row.img_files.length, 1);
     assert.equal('content' in row, false, '輪詢不帶作文全文');
+    /*
+      逐格辨識的三個時間戳都要帶出來（這一批不是我們的稿紙，所以都是 null）。
+      grid_updated_at 是「queued 卡住」唯一算得出來的基準 —— 背景工作還沒領取時
+      started_at 是空的。少帶這一欄，前端那一列就會永遠顯示「辨識中」。
+    */
+    assert.equal('grid_started_at' in row, true);
+    assert.equal('grid_updated_at' in row, true);
+    assert.equal(row.grid_updated_at, null);
   });
 
   test('別人班的作業 → 空清單（不是 403，與其他查詢一致）', async () => {

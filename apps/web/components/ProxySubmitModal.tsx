@@ -352,6 +352,18 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
   };
 
   // ── 開始辨識／重試 ────────────────────────────────────────────
+  /**
+   * 重試一定要帶 `force`。
+   *
+   * ⚠️ 失敗最常見的一種是「辨識跑完了，但結果是空的」——那一列的 ocr_time 有值，
+   *    而 /ocr_proxy/start 會把「已經有 ocr_time」的跳過（reason: already_done），
+   *    除非帶 force。先前單人的「重試」帶了，「全部重試失敗的 N 位」沒帶，
+   *    於是整批按下去一個都不會動，畫面只回一句「沒有需要辨識的學生」。
+   *
+   * 對象只有失敗的那幾位（retryTargets），所以 force 不會去重跑辨識成功的人。
+   */
+  const retry = (studentIds: string[]) => start(studentIds, true);
+
   const start = async (studentIds?: string[], force = false) => {
     setStarting(true);
     setNotice(null);
@@ -763,7 +775,7 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                 {toRetry.length > 1 && (
                   <button
                     id="proxysubmit-btn-retry-all"
-                    onClick={() => start(toRetry)}
+                    onClick={() => retry(toRetry)}
                     disabled={starting}
                     className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-card border border-border-strong text-body text-text-primary hover:bg-surface-soft disabled:opacity-50"
                   >
@@ -803,7 +815,7 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                             <>
                               <button
                                 id={`proxysubmit-btn-retry-${s.studentId}`}
-                                onClick={() => start([s.studentId], true)}
+                                onClick={() => retry([s.studentId])}
                                 disabled={starting}
                                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-card border border-border text-caption text-text-primary hover:bg-surface-soft disabled:opacity-50 whitespace-nowrap"
                               >

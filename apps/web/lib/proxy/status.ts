@@ -26,7 +26,10 @@ export interface ProxyStatusRow {
   gridStatus?: GridStatus | null;
   /** 逐格辨識失敗的原因（給老師看的一句話） */
   gridError?: string | null;
+  /** 背景工作**領到**這一批的時間（claim）。沒領到就是 null */
   gridStartedAt?: string | null;
+  /** 這一列最後一次變動的時間。queued 卡住只能用它算 —— 那時候還沒有 started_at */
+  gridUpdatedAt?: string | null;
 }
 
 export type GridStatus = 'pending' | 'queued' | 'running' | 'done' | 'failed';
@@ -57,10 +60,23 @@ export type ProxyOcrStatus =
 export const OCR_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
- * 逐格辨識卡在「辨識中」多久就當作失敗（背景工作中途被關掉，那一列會永遠停在 running）。
+ * 逐格辨識卡住多久就當作失敗。
  * 要和後端 dal/grid_ocr_helper.ts 的 STALE_RUNNING_MINUTES 一致：過了這個時間，後端也接受重新辨識。
+ *
+ * **兩種卡住都要算**，時間基準不同：
+ *   running  背景工作領到了卻沒跑完（中途被關掉）→ 算 gridStartedAt
+ *   queued   背景工作**根本沒領到**（job 啟動了卻在 claim 之前就掛掉、映像檔壞了、
+ *            配額滿了）→ 那時候還沒有 started_at，只能算 gridUpdatedAt
+ *
+ * ⚠️ queued 這一格以前沒有出口：它顯示成「辨識中」，而逾時只看 running，
+ *    所以那一列會永遠轉圈，而「重試」只出現在失敗的人身上 —— 老師沒有任何辦法
+ *    讓它動。後端的 markQueued 本來就接受重新排隊 queued，缺的只是畫面上的出口。
  */
 export const GRID_STALE_MS = 15 * 60 * 1000;
+
+/** 這個時間點到現在有沒有超過 GRID_STALE_MS。沒有時間戳就不算卡住（舊資料） */
+const stale = (at: string | null | undefined, nowMs: number): boolean =>
+  !!at && nowMs - Date.parse(at) >= GRID_STALE_MS;
 
 /**
  * 「有沒有按過開始辨識」。
@@ -93,10 +109,11 @@ export function proxyOcrStatusOf(
   // 稿紙逐格辨識：狀態是記下來的，照著對應就好
   if (row.gridStatus) {
     switch (row.gridStatus) {
+      // 還沒按「開始辨識」—— 不是卡住，放多久都還是「待辨識」
       case 'pending': return 'queued';
-      case 'queued': return 'running';
-      case 'running':
-        return row.gridStartedAt && opts.nowMs - Date.parse(row.gridStartedAt) >= GRID_STALE_MS ? 'failed' : 'running';
+      // 已經送出去了，等背景工作領取。領不到就一直是 queued，所以也要算卡住
+      case 'queued': return stale(row.gridUpdatedAt, opts.nowMs) ? 'failed' : 'running';
+      case 'running': return stale(row.gridStartedAt, opts.nowMs) ? 'failed' : 'running';
       case 'done': return 'done';
       case 'failed': return 'failed';
     }
@@ -126,8 +143,12 @@ export function proxyOcrStatusOf(
 export function failureReasonOf(row: ProxyStatusRow | undefined, nowMs: number): string | null {
   if (!row?.gridStatus) return null;
   if (row.gridStatus === 'failed') return row.gridError || '稿紙辨識失敗，請按「重試」';
-  if (row.gridStatus === 'running' && row.gridStartedAt && nowMs - Date.parse(row.gridStartedAt) >= GRID_STALE_MS) {
+  if (row.gridStatus === 'running' && stale(row.gridStartedAt, nowMs)) {
     return '辨識太久沒有完成，請按「重試」';
+  }
+  // 送出去了卻一直沒有開始 —— 背景工作沒領到這一批（和「跑到一半停住」不是同一件事）
+  if (row.gridStatus === 'queued' && stale(row.gridUpdatedAt, nowMs)) {
+    return '辨識一直沒有開始，請按「重試」';
   }
   return null;
 }

@@ -40,6 +40,43 @@ bash scripts/smoke.sh http://localhost:3000
 踩過的坑：Dockerfile 原本有 `COPY tsconfig*.json ./` —— **根目錄沒有這個檔**
 （每個 workspace 各自有一份），建置會在那一步掛掉。
 
+### Node 版本
+
+正式環境的 Node 版本**只由 `apps/api/Dockerfile` 開頭的 `ARG NODE_VERSION` 決定**
+（建置與執行兩個階段共用），目前是 `26.13.1`。本機用根目錄的 `.nvmrc`，
+`package.json` 的 `engines` 是 `>=26.13.1`（版本太舊時 npm 會警告）。
+
+- **要升級：** `NODE_VERSION`、`.nvmrc`、`engines` 三處一起改，`@types/node` 的大版本跟著換。
+  Node 的安全更新通常一次修好幾條版本線，看 <https://nodejs.org/en/blog/vulnerability>
+  確認新的最低版本，再到 Docker Hub 確認 `node:<版本>-slim` 已經出了。
+- **2026-10-22 從 Node 20 升到 26.12.1**（10/21 的安全更新）。Node 20 在 2026-04-30 停止支援，
+  那次的修補沒有出 20 版。升級時在 26.12.1 上跑過：後端與前端整套測試、型別檢查、
+  兩個 workspace 的建置、用編譯後的 `dist/index.js` 啟動加冒煙測試、
+  對 `auth.ischool.com.tw`／`devapi.1campus.net`／GCS 的 TLS 連線。
+  後端正式相依裡唯一用到 Node 26 已移除 API 的是 `buffer-equal-constant-time`（`SlowBuffer`），
+  但它上層的 `jwa` 只在沒有 `crypto.timingSafeEqual` 時才載入，實際不會碰到。
+  當天部署為 revision `udn-writing-test-00015-c8x`（映像檔 `fb8eb69`）；
+  最後一個跑 Node 20 的是 `udn-writing-test-00014-wwc`（映像檔 `f22535a`）。
+- **2026-11-23 從 26.12.1 升到 26.13.1**（11/11 的安全更新：TLS 伺服器可被遠端弄當 CVE-2026-126051、
+  HTTPS 伺服器洩漏其他連線的記憶體 CVE-2026-123864 等）。同一條 26 線的修補版，npm 一樣是 11.20.0、
+  lockfile 只改了 `engines`。在 26.13.1 上跑過：後端整套 377 條（開 `--trace-deprecation` 沒有警告，
+  凌晨跑 27 分鐘）、前端 261 條、型別檢查、建置、`dist/index.js` 啟動加冒煙測試、Google 套件載入與 JWT、對外 TLS。
+- **Node 26 出問題時，優先改用 24.22.3，不要退回 Node 20。** 退回 `00014-wwc` 等於回到沒有修補的版本。
+  `NODE_VERSION`、`.nvmrc`、`engines` 改成 `24.22.3`，`@types/node` 換成 `^24`，重新 `npm run deploy`。
+  24.22.3 是 2026-11-11 那次安全更新的 24 版（與 26.13.1 同一批）。
+- **退回上一版：** 只有在連 24 都來不及建的時候才用。舊的 revision 還留著舊映像檔，把流量切回去就好（不必重建）：
+
+  ```bash
+  gcloud run revisions list --service=udn-writing-test --project=writing-classroom-672f8 --region=asia-east1
+  gcloud run services update-traffic udn-writing-test --project=writing-classroom-672f8 --region=asia-east1 \
+    --to-revisions=<舊 revision 名稱>=100
+  ```
+
+  ⚠️ 切回去之後流量會**固定**在那個 revision，下一次 `npm run deploy:run` 不會自動接手。
+  修好再部署後要跑 `update-traffic --to-latest`。
+- **建置紀錄裡的 `npm warn install-scripts`** 是 npm 11 預設不跑相依的安裝腳本，不是錯誤，
+  原因寫在 Dockerfile 的 `npm ci` 那一段。
+
 ---
 
 ## 環境變數

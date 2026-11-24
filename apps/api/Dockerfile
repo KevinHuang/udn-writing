@@ -19,8 +19,22 @@
 # `/app/public` 這個位置是 app.ts 寫死的（`path.join(__dirname, '../public')`），
 # 不要改。
 
+# Node 版本。兩個階段共用這一個值，要升級只改這裡（本機的 .nvmrc 一起改）。
+#
+# 26.13.1 是 2026-11-11 安全更新（TLS 伺服器可被遠端弄當 CVE-2026-126051、
+# HTTPS 伺服器洩漏其他連線的記憶體 CVE-2026-123864 等）的最低版本，不要往回調。
+# 再之前的 26.12.1 是 2026-10-21 那次（Brotli 遠端執行程式碼、TLS 主機名稱繞過）。
+# 最早是 node:20-slim —— Node 20 在 2026-04-30 就停止支援，這次的修補**根本不會出**
+# （Docker Hub 上的 node:20-slim 最後一次更新是 2026-04-22）。
+#
+# 刻意釘到完整版號、不用浮動的 node:26-slim：每次建出來的東西要一樣，
+# 代價是之後的安全更新要有人回來改這個數字。
+# node:26.x-slim 是 Debian 13（trixie），原本的 node:20-slim 是 Debian 12（bookworm）；
+# 這裡沒有 apt-get 裝任何東西，所以沒有影響。
+ARG NODE_VERSION=26.13.1
+
 # ── 第一階段：建置 ──────────────────────────────────────────
-FROM node:20-slim AS builder
+FROM node:${NODE_VERSION}-slim AS builder
 WORKDIR /repo
 
 # 先只複製 manifest，讓相依安裝這一層可以被快取
@@ -30,6 +44,15 @@ COPY apps/web/package.json ./apps/web/
 COPY packages/shared/package.json ./packages/shared/
 
 # npm workspaces：一次裝好三個 workspace 的相依（含建置需要的 devDependencies）
+#
+# Node 26 附的 npm 11 **預設不執行相依套件的安裝腳本**，被略過的會列在
+# `npm warn install-scripts` 底下。這不是錯誤。Cloud Build 上實際列出的是：
+#   這一步（npm ci）       @google/genai、esbuild、protobufjs
+#   執行階段的 npm install  @google/genai、protobufjs
+# （在 Mac 上 npm ci 還會多一個 fsevents —— 它只在 macOS 安裝。）
+# esbuild 從各平台的 @esbuild/* 套件找原生檔，不靠 postinstall；
+# protobufjs 的 postinstall 只是版本檢查；@google/genai 的 preinstall 只有一行 echo。
+# 略過的情況下建置、測試都實測通過，2026-10-22 也照這樣建好上線了。
 RUN npm ci
 
 # 原始碼。
@@ -46,7 +69,7 @@ RUN npm run build -w @udn/web
 RUN npm run build -w @udn/api
 
 # ── 第二階段：執行 ──────────────────────────────────────────
-FROM node:20-slim AS runtime
+FROM node:${NODE_VERSION}-slim AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production

@@ -27,6 +27,7 @@ import {
   type SubmissionMarks,
 } from '../lib/submissionMarks';
 import { canResetGrading } from '../lib/resetGrading';
+import { countWords } from '../lib/wordCount';
 import { SubmissionStampRow } from './SubmissionStamp';
 import { SHOW_AI_MODEL_PICKER } from '../lib/features';
 import { SimpleGradingPanel } from './SimpleGradingPanel';
@@ -511,7 +512,7 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                                 </p>
                             )}
                             <div className="flex items-center justify-end gap-2">
-                                <span className="mr-auto text-caption text-text-muted">{proofText.trim().length} 字</span>
+                                <span className="mr-auto text-caption text-text-muted">{countWords(proofText)} 字</span>
                                 <button
                                     onClick={() => setProofreading(false)}
                                     disabled={proofSaving}

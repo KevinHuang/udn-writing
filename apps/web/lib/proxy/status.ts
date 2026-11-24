@@ -201,3 +201,50 @@ export function startTargets(
 ): string[] {
   return entries.filter((e) => e.status === 'queued').map((e) => e.studentId);
 }
+
+/* ══════════════════════════════════════════════════════════════
+   批次批改前：要不要先勸老師校對
+   ══════════════════════════════════════════════════════════════ */
+
+/**
+ * 辨識完成、還沒有人校對的作品，分兩種 —— **該不該先校對，答案相反**：
+ *
+ *   legacy  整張照片交給 ocr-job 辨識的。文字沒有逐格的可信度，錯字會直接被拿去打分數，
+ *           所以批改前要先對照原稿校對。
+ *   grid    「我的稿紙」逐格辨識的。按「AI 批改」會用**簡易批改**：辨識不確定的字
+ *           不引用、不批評，本來就是給沒校稿的文字用的；先校對改過文字，反而會
+ *           改用一般批改（見 lib/simpleGrading.ts 的 PROOFREAD_NOTE）。
+ *
+ * ⚠️ 批改頁早就分這兩種講了，批次批改前的那一關以前沒分：只要「辨識完成」就一律勸
+ *    老師「先校對再批改」—— 老師在清單上被勸去做一件批改頁說「不必做、做了還會
+ *    改用一般批改」的事。
+ */
+export type UnproofreadKind = 'legacy' | 'grid';
+
+/** 這一位是哪一種「未校對」；不是未校對（沒登錄、還在辨識、失敗、已退役）回 null */
+export function unproofreadKindOf(
+  row: ProxyStatusRow | undefined,
+  status: ProxyOcrStatus,
+): UnproofreadKind | null {
+  if (!row || status !== 'done') return null;
+  return row.gridStatus ? 'grid' : 'legacy';
+}
+
+/**
+ * 批次批改前那個確認視窗的內容。**只有 legacy 才需要擋**；全部都是逐格辨識就回 null，直接批改。
+ * 兩種混在一起時，順便說明另外那幾篇會用簡易批改，免得老師以為也要先校對。
+ */
+export function proofreadGateMessage(counts: Record<UnproofreadKind, number>): string | null {
+  if (counts.legacy <= 0) return null;
+  const lines = [
+    `這次要批改的作品裡，有 ${counts.legacy} 篇是 AI 從手寫稿整張辨識出來的，還沒有人對照原稿校對過。`,
+    '辨識一定會有錯字 —— 直接批改的話，分數會建立在錯的文字上。',
+    '建議先點進去對照原稿校對，再批改。',
+  ];
+  if (counts.grid > 0) {
+    lines.push(
+      `（另外 ${counts.grid} 篇是稿紙逐格辨識的，會用簡易批改：辨識不確定的字不會被引用或批評，不必先校對。）`,
+    );
+  }
+  return lines.join('\n');
+}

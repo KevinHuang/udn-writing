@@ -13,7 +13,9 @@ import { FeaturedByLevelDialog } from "../components/FeaturedByLevelDialog";
 import { AssignmentFeaturedRule } from "../components/AssignmentFeaturedRule";
 import { effectiveRule } from "../lib/featuredRule";
 import { useProxyStatus } from "../lib/proxy/useProxyStatus";
-import { countStatuses, proxyBatchSummary } from "../lib/proxy/status";
+import {
+  countStatuses, proofreadGateMessage, proxyBatchSummary, unproofreadKindOf,
+} from "../lib/proxy/status";
 import { originalsState } from "../lib/proxy/paths";
 import { GradingHub } from "../components/GradingHub";
 import { PageHeader, PAGE_CONTAINER } from "../components/PageHeader";
@@ -98,7 +100,7 @@ export const GradingListPage: React.FC = () => {
   /** 從 pill 打開代繳交視窗時直接停在進度分頁 */
   const [proxyInitialTab, setProxyInitialTab] = useState<"register" | "progress">("register");
   /** 批次批改前發現有未校對的作品 → 先問一聲 */
-  const [unproofreadGate, setUnproofreadGate] = useState<number | null>(null);
+  const [unproofreadGate, setUnproofreadGate] = useState<string | null>(null);
   /** 「依級分蓋佳作」視窗 */
   const [isFeaturedByLevelOpen, setIsFeaturedByLevelOpen] = useState(false);
   const setSelectedAssignmentId = (id: string) =>
@@ -192,17 +194,27 @@ export const GradingListPage: React.FC = () => {
           文字會先進資料庫 —— 真正會造成傷害的是「拿錯字連篇的文本去打分數」，
           所以擋在這裡。
         */
-        const unproofreadInBatch = filteredSubmissions.filter(
-          (s) =>
-            s.status === "Pending" &&
-            (selectedSubmissionIds.length === 0 || selectedSubmissionIds.includes(s.id)) &&
-            proxy.isUnproofread(s.studentId),
-        ).length;
+        /*
+          未校對分兩種，該不該先校對答案相反（lib/proxy/status.ts 的 unproofreadKindOf）：
+          整張辨識的要擋；稿紙逐格辨識的會用簡易批改，不必校對，所以不擋。
+          以前不分，逐格辨識的也一律勸老師「先校對」，和批改頁上說的相反。
+        */
+        const unproofreadCounts = { legacy: 0, grid: 0 };
+        for (const s of filteredSubmissions) {
+          if (s.status !== "Pending") continue;
+          if (selectedSubmissionIds.length > 0 && !selectedSubmissionIds.includes(s.id)) continue;
+          const kind = unproofreadKindOf(
+            proxy.rows.find((r) => r.userId === s.studentId),
+            proxy.statusOf(s.studentId),
+          );
+          if (kind) unproofreadCounts[kind] += 1;
+        }
+        const proofreadGate = proofreadGateMessage(unproofreadCounts);
         const proxySummary = proxyBatchSummary(
           countStatuses(proxy.rows.map((r) => proxy.statusOf(r.userId))),
         );
         const startBatchGrade = () => {
-          if (unproofreadInBatch > 0) setUnproofreadGate(unproofreadInBatch);
+          if (proofreadGate) setUnproofreadGate(proofreadGate);
           else handleBatchGrade(selectedAssignmentId);
         };
         /*
@@ -524,7 +536,7 @@ export const GradingListPage: React.FC = () => {
             {unproofreadGate !== null && (
               <ConfirmDialog
                 title="有作品還沒校對"
-                message={`這次要批改的作品裡，有 ${unproofreadGate} 篇是 AI 從手寫稿辨識出來的，還沒有人對照原稿校對過。\n辨識一定會有錯字 —— 直接批改的話，分數會建立在錯的文字上。\n建議先點進去對照原稿校對，再批改。`}
+                message={unproofreadGate}
                 confirmLabel="照樣批改"
                 onConfirm={() => {
                   setUnproofreadGate(null);

@@ -23,6 +23,7 @@ import { Assignment, Submission } from '../types';
      那其實是使用者編號，而這個班的 seat_no 全是 null）。
 */
 import { seatText } from '../lib/gradingQueue';
+import { countWords } from '../lib/wordCount';
 import { checkImageFile } from '../lib/questionMeta';
 import { imageUrlOf } from '../api/ai';
 import {
@@ -747,7 +748,7 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                         className="w-full px-4 py-3 rounded-xl bg-card border border-border text-essay font-essay text-text-primary outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-colors resize-y"
                       />
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-caption text-text-muted">{typed.trim().length} 字</span>
+                        <span className="text-caption text-text-muted">{countWords(typed)} 字</span>
                         <button
                           id="proxysubmit-btn-save"
                           onClick={saveTyped}

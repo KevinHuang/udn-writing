@@ -198,7 +198,13 @@ export async function proxySubmit(
     assignment_id: assignmentId,
     user_id: studentId,
     content,
-    word_count: content.length,
+    /*
+      和學生自己繳交同一支 countWords()（不算空白與換行）。這裡以前是 content.length ——
+      學生端早就改掉了（見 lib/wordCount.ts 的說明），老師端的代繳交與「校對文字」存檔
+      卻還留著：校對完一存檔，那篇的字數就因為分段的換行而跳高，而成績管理與
+      「不足 100 字」讀的都是資料庫這一欄。逐格辨識寫回時用的也是不含空白的字數。
+    */
+    word_count: countWords(content),
     files,
     ...(opts.confirmOcr ? { confirm_ocr: true } : {}),
   });

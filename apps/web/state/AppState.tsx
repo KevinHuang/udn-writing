@@ -25,6 +25,7 @@ import {
   type SubmissionMarks,
 } from "../lib/submissionMarks";
 import { canResetGrading, resetConfirmText, resetTargets } from "../lib/resetGrading";
+import { clearSubmissionText } from "../lib/clearSubmission";
 import { useResetDemo } from "../lib/usePersistentState";
 import { orderedAssignments } from "../lib/assignmentOrder";
 import { routes, type SemesterFilter } from "../lib/routes";
@@ -1018,19 +1019,28 @@ function useAppStateValue() {
    * 不是清空內容、也不是改狀態，而是**移除整筆** —— 批改清單與學生端
    * 都是「找不到紀錄就當作未繳交」（見 lib/gradingQueue.ts 的
    * assignmentRoster 與 StudentAssignments 的 `submission?.status || 'Unsubmitted'`），
-   * 所以刪掉之後兩邊自動回到一份全新作業的樣子，學生可以重新繳交。
+   * 所以刪掉之後兩邊自動回到一份全新作業的樣子。**但學生自己能不能再交，
+   * 要看那份作業還收不收件**（文案由 lib/clearSubmission.ts 決定）。
+   *
+   * 後端同一個交易裡還會把代繳交的那一批退役（is_valid = false，見
+   * SubmissionHelper.deleteById）—— 不然清單上那一列會同時是「未繳交」與
+   * 「AI 辨識未校對」，而且老師按「重試」會把剛清掉的作文寫回來。
    *
    * 不可復原，一定要先確認。
    */
   const handleClearSubmission = (submission: Submission) => {
+    /*
+      「學生可以重新繳交」要看作業收不收件 —— 已截止又不收遲交時他交不了
+      （後端 /student/submit 會 409），文案不能一律那樣寫。見 lib/clearSubmission.ts。
+    */
+    const { title, message } = clearSubmissionText(
+      submission.studentName,
+      assignments.find((a) => a.id === submission.assignmentId),
+    );
     setConfirmDialog({
       isOpen: true,
-      title: "清除繳交內容",
-      message:
-        `確定要清除 ${submission.studentName} 這一份的繳交內容嗎？\n\n` +
-        "作文內容、分數與評語都會被刪除，學生端也會一併清空，" +
-        "這份作業會回到「未繳交」，學生可以重新繳交。\n\n" +
-        "此操作無法復原。",
+      title,
+      message,
       onConfirm: async () => {
         setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
         try {

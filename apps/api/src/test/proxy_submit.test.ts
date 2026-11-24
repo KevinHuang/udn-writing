@@ -16,7 +16,7 @@ import { test, before, after, beforeEach, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   resetDb, rawDb, seedUser, seedSchool, seedCourse, seedInstructor, seedLearner,
-  seedTask, seedAssignment, seedSystemAdmin, seedSchoolAdmin,
+  seedTask, seedAssignment, seedSubmission, seedSystemAdmin, seedSchoolAdmin,
   startFakeIdp, startServer, login, req,
   type TestServer,
 } from './helpers';
@@ -533,5 +533,66 @@ describe('校對完成（confirm_ocr）', () => {
     });
     const status = await (await req(srv, `/service/instructor/assignments/${s.assignA}/proxy_status`, cookie)).json();
     assert.equal(status.rows.length, 1);
+  });
+});
+
+describe('清除繳交（DELETE /submissions/:id）', () => {
+  /** 辨識完成的狀態：照片收好、有 ocr_time、作文已經寫進 submission，批次還是現行的 */
+  async function proxiedAndRecognized(cookie: string, assignmentId: string, studentId: string) {
+    await upload(cookie, assignmentId, studentId, [JPEG]);
+    await rawDb.none(`UPDATE batch_proxy_submission SET ocr_time = now() WHERE is_valid`);
+    await post(cookie, '/service/instructor/submissions/proxy', {
+      assignment_id: assignmentId, user_id: studentId,
+      content: '辨識出來的作文', word_count: 7, files: [],
+    });
+    return (await rawDb.one<{ id: string }>(`SELECT id::text FROM submission`)).id;
+  }
+
+  const del = (cookie: string, submissionId: string) =>
+    req(srv, `/service/instructor/submissions/${submissionId}`, cookie, { method: 'DELETE' });
+
+  test('⚠️ 代繳交那一批一起退役 —— 清掉的作文不會被「重試」寫回來', async () => {
+    const s = await twoClasses();
+    const cookie = await login(srv);
+    const submissionId = await proxiedAndRecognized(cookie, s.assignA, s.mine.id);
+
+    assert.equal((await del(cookie, submissionId)).status, 200);
+    assert.equal(await countSubmissions(), 0);
+
+    // ① 清單上那一列只剩「未繳交」，不會同時掛著辨識的徽章
+    const status = await (await req(srv, `/service/instructor/assignments/${s.assignA}/proxy_status`, cookie)).json();
+    assert.deepEqual(status.rows, [], '以前這裡還有一列，徽章會顯示「AI 辨識未校對」或「辨識失敗」');
+
+    // ② 按「重試」（連 force 一起）也不會再去辨識，作文不會復活
+    resetOcrJobCalls();
+    const retry = await startOcr(cookie, { assignmentId: s.assignA, studentIds: [s.mine.id], force: true });
+    assert.deepEqual((await retry.json()).started, []);
+    assert.equal(ocrJobCalls.length, 0, '以前會再跑一次辨識，把剛剛清掉的作文寫回來');
+    assert.equal(await countSubmissions(), 0);
+
+    // ③ 照片留在雲端（這個系統沒有刪檔的路徑），只是這一批不再是現行的
+    assert.equal(await countBatches(), 1);
+    const batch = await rawDb.one<{ is_valid: boolean }>(`SELECT is_valid FROM batch_proxy_submission`);
+    assert.equal(batch.is_valid, false);
+  });
+
+  test('別人班的繳交清不掉，那一班的批次也不會被退役', async () => {
+    const s = await twoClasses();
+    const cookie = await login(srv);
+
+    /*
+      別人班的作文與批次直接寫進資料庫 —— 那一班不是登入者教的，
+      走 API 本來就會被擋（那是上面幾個測試在釘的事）。
+    */
+    await rawDb.none(
+      `INSERT INTO batch_proxy_submission (ref_user_id, ref_assignment_id, submitter_id, img_files, batch_uuid)
+       VALUES ($1::bigint, $2::bigint, $1::bigint, '["x.jpg"]'::json, 'uuid-other')`,
+      [s.theirs.id, s.assignB]);
+    const submissionId = await seedSubmission(s.assignB, s.theirs.id, '別班學生的作文');
+
+    assert.equal((await del(cookie, submissionId)).status, 403);
+    assert.equal(await countSubmissions(), 1, '別人班的作文還在');
+    const batch = await rawDb.one<{ is_valid: boolean }>(`SELECT is_valid FROM batch_proxy_submission`);
+    assert.equal(batch.is_valid, true, '退役只能發生在擋過範圍之後');
   });
 });

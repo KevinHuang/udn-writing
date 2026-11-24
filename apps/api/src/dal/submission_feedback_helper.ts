@@ -97,20 +97,44 @@ class SubmissionFeedbackHelper {
         return (await db.default.manyOrNone(sql, [submission_id])) || [];
     }
 
+    /**
+     * 管理員的四向度批次補分（routes/admin.ts 的 /admin/grading_subscores）：
+     * 把算好的四向度與這一次花掉的 token 寫回那一版批改。
+     *
+     * ⚠️ 用**具名參數**，不要回去用 $1、$2。原本是這樣寫的：
+     *
+     *     SET sub_scores = $4, sub_scores_input_tokens = $1, sub_scores_output_tokens = $2
+     *     WHERE id = $1
+     *     -- 參數是 [feedback_id, inputTokens, outputTokens, sub_scores]
+     *
+     * 整排往左錯一格：`sub_scores_input_tokens` 存進去的是 **feedback id**、
+     * `sub_scores_output_tokens` 存的是 inputTokens，outputTokens 根本沒有被寫入。
+     * `WHERE id = $1` 剛好是對的，所以補分功能看起來完全正常 —— 只有花費統計
+     * 一直是錯的，而且數字很大（id 是 bigint），看起來像真的 token 數。
+     * 沒有任何畫面或查詢讀這兩欄，所以除了對帳沒有別的影響。**既有資料仍是錯的**：
+     * 清理在 `docs/migrations/014-subscores-token-columns.sql`（人工決定與執行，不急）——
+     * input 可以從 output 挪回來，真正的 outputTokens 當初沒寫進去，救不回來。
+     */
     public static async saveSubscores(feedback_id: string, inputTokens: number = 0, outputTokens: number = 0, sub_scores: any = undefined) {
 
         const sql = `
-            UPDATE public.submission_feedback 
-            SET 
-                sub_scores = $4::jsonb,
-                sub_scores_input_tokens = $1,
-                sub_scores_output_tokens = $2,
+            UPDATE public.submission_feedback
+            SET
+                sub_scores = $(subScores)::jsonb,
+                sub_scores_input_tokens = $(inputTokens),
+                sub_scores_output_tokens = $(outputTokens),
                 sub_scores_time = now()
             WHERE
-                id = $1
+                id = $(feedbackId)
             RETURNING id;
         `;
-        return await db.default.oneOrNone(sql, [feedback_id, inputTokens, outputTokens, JSON.stringify(sub_scores)]);
+        return await db.default.oneOrNone(sql, {
+            feedbackId: feedback_id,
+            inputTokens,
+            outputTokens,
+            // 與 saveFeedback 同一個寫法：沒有四向度就寫 null，不要寫 "undefined"
+            subScores: sub_scores == null ? null : JSON.stringify(sub_scores),
+        });
     }
 
     /**

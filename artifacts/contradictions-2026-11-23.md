@@ -28,9 +28,10 @@
 | commit | 對應 |
 |---|---|
 | `4fd8b6b` 重置批改加確認視窗、份數與動作對齊 | **第 2 項，已修**（新 `lib/resetGrading.ts`） |
-| 本次（清除繳交一併退役代繳交那一批、文案依作業狀態講實話） | **第 4 項，已修**（`SubmissionHelper.deleteById`、新 `lib/clearSubmission.ts`） |
+| `2184c01` 清除繳交一併退役代繳交那一批、文案依作業狀態講實話 | **第 4 項，已修**（`SubmissionHelper.deleteById`、新 `lib/clearSubmission.ts`） |
+| 本次（`saveSubscores` 改用具名參數） | **第 10 項，已修**；既有資料的清理是 `docs/migrations/014`（人工決定與執行，不急） |
 
-其餘各項（第 5～13 項）在 `98b67ba` 上重新確認過，都還沒修。
+其餘各項（第 5～9、11～13 項）在 `98b67ba` 上重新確認過，都還沒修。
 
 `b512234` 那個洞值得記一下為什麼漏掉：它不是靜態讀程式看得出來的矛盾，而是
 兩層載入（摘要／完整）**回來的先後順序**造成的，要跑起來才會現形。這一份掃描
@@ -208,7 +209,7 @@ job 啟動成功但在領取前就掛掉（映像檔、配額、容器崩潰）�
 
 ---
 
-## 🔴 10. `saveSubscores()` 的參數接錯位，token 欄位存的是別的東西
+## ✅ 10.（已修）`saveSubscores()` 的參數接錯位，token 欄位存的是別的東西
 
 ```sql
 -- apps/api/src/dal/submission_feedback_helper.ts:73-88

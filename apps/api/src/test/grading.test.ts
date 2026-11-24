@@ -17,6 +17,7 @@ import {
   seedTask, seedAssignment, seedSubmission, startFakeIdp, startServer, login, req,
   type TestServer,
 } from './helpers';
+import SubmissionFeedbackHelper from '../dal/submission_feedback_helper';
 
 const ACCOUNT = 'me@test.edu.tw';
 let srv: TestServer;
@@ -418,6 +419,40 @@ describe('四向度：AI 批改時一併產生，老師存檔沿用', () => {
     assert.equal(Number(after.score), newScore);
     assert.deepEqual(after.sub_scores, before.sub_scores, '整體級分改了，四向度維持不變');
     assert.equal(after.sub_scores_time?.getTime(), before.sub_scores_time?.getTime(), '產生時間也跟著沿用');
+  });
+
+  /*
+    管理員的批次補分（routes/admin.ts → SubmissionFeedbackHelper.saveSubscores）。
+
+    ⚠️ 那一句 SQL 的位置參數原本整排往左錯一格（$1 同時當 feedback id 與
+       input tokens、$2 當 output tokens），所以 sub_scores_input_tokens 存進去的是
+       **feedback id**、outputTokens 根本沒寫入。四向度本身是對的，所以畫面完全
+       看不出來 —— 只有花費統計一直是錯的。改成具名參數，並在這裡釘住三個欄位。
+  */
+  test('批次補分：四向度與 token 各自寫進對的欄位', async () => {
+    const { mySubmission, me } = await scenario();
+    await aiGraded(mySubmission, me.id, 4);
+    const { id } = await rawDb.one<{ id: string }>(
+      `SELECT id::text FROM submission_feedback WHERE ref_submission_id = $1 AND is_valid = true`,
+      [mySubmission]);
+
+    const subScores = Object.fromEntries(DIMS.flatMap((d) => [
+      [`${d}_score`, 5], [`${d}_score_summary`, '補分的評語'],
+    ]));
+    await SubmissionFeedbackHelper.saveSubscores(id, 11, 22, subScores);
+
+    const row = await rawDb.one<{
+      sub_scores: Record<string, unknown>;
+      sub_scores_input_tokens: number;
+      sub_scores_output_tokens: number;
+      sub_scores_time: Date | null;
+    }>(`SELECT sub_scores, sub_scores_input_tokens, sub_scores_output_tokens, sub_scores_time
+          FROM submission_feedback WHERE id = $1`, [id]);
+
+    assert.equal(row.sub_scores_input_tokens, 11, `以前這裡會存成 feedback id（${id}）`);
+    assert.equal(row.sub_scores_output_tokens, 22, '以前這裡會存成 inputTokens');
+    assert.equal(row.sub_scores.theme_and_content_score, 5);
+    assert.ok(row.sub_scores_time, '補分也要記產生時間');
   });
 
   test('上一版沒有四向度 → 老師存檔後仍是空的（留給批次補分）', async () => {

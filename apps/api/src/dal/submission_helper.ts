@@ -1,6 +1,7 @@
 import { db } from './database';
 import { CourseScope, courseScopeSubquery } from '../lib/course_scope';
 import AssignmentHelper from './assignment_helper';
+import { clearSubmissionWork } from './submission_cascade';
 
 class SubmissionHelper {
 
@@ -223,22 +224,10 @@ class SubmissionHelper {
      *
      * 所以只要手動清 feedback，標記會自己跟著走。
      *
-     * ⚠️ **代繳交的那一批要一起退役**（is_valid = false）。作文與那疊照片是
-     *    兩列不同的東西：submission 刪掉了，batch_proxy_submission 還掛在那裡，
-     *    上面記著「已經辨識完成」。不退役的話：
-     *      ① 批改清單那一列同時是「未繳交」與「AI 辨識未校對」／「辨識失敗」
-     *         （徽章讀的是批次，繳交狀態讀的是 submission），老師看不懂；
-     *      ② 老師在代繳交視窗按那一位的「重試」，辨識跑完
-     *         （GridOcrHelper.saveDone 的 INSERT ... WHERE NOT EXISTS）
-     *         會把**剛剛清掉的作文整篇寫回來** —— 老師沒做任何還原的動作。
-     *    語意就是校對完成用的那一個：「這一批不是現行的了，不要再被辨識」。
-     *
-     *    照片**不刪**。GCS 上的檔案留著（這個系統目前沒有任何刪檔的路徑，
-     *    清除繳交不該是第一個），只是不會再有人去辨識它。
-     *
-     *    沒有重用 BatchProxySubmissionHelper.retire()：那一支走 db.default，
-     *    會開在這個交易外面 —— 刪到一半失敗就留下「作文還在、批次卻退役了」。
-     *    範圍不必再查一次，上面的 owned 已經擋過了。
+     * ⚠️ 代繳交留下的痕跡（照片那一批、逐格辨識的結果、簡易批改的細節）也要收尾，
+     *    在**同一個交易裡** —— 見 dal/submission_cascade.ts 的 clearSubmissionWork()，
+     *    那裡寫了每一步在防什麼（最嚴重的是：不收尾的話，老師按「重試」會把剛剛
+     *    清掉的作文整篇寫回來）。範圍不必再查一次，上面的 owned 已經擋過了。
      */
     public static async deleteById(submissionId: string, scope: CourseScope) {
         return await db.default.tx(async (t) => {
@@ -251,11 +240,11 @@ class SubmissionHelper {
                 [submissionId]);
             if (!owned) return null;
 
-            await t.none(
-                `UPDATE batch_proxy_submission
-                    SET is_valid = false, last_update = now()
-                  WHERE ref_assignment_id = $1 AND ref_user_id = $2 AND is_valid = true`,
-                [owned.ref_assignment_id, owned.ref_user_id]);
+            await clearSubmissionWork(t, {
+                submissionId,
+                assignmentId: owned.ref_assignment_id,
+                userId: owned.ref_user_id,
+            });
             await t.none(`DELETE FROM submission_feedback WHERE ref_submission_id = $1`, [submissionId]);
             return await t.oneOrNone(`DELETE FROM submission WHERE id = $1 RETURNING *`, [submissionId]);
         });

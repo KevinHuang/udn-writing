@@ -11,7 +11,7 @@ import { test, before, after, beforeEach, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   resetDb, rawDb, seedUser, seedSchool, seedCourse, seedInstructor, seedLearner,
-  seedTask, seedAssignment, seedSubmission, startFakeIdp, startServer, login, req,
+  seedTask, seedAssignment, seedSubmission, seedProxyTrace, startFakeIdp, startServer, login, req,
   type TestServer,
 } from './helpers';
 
@@ -206,6 +206,8 @@ describe('刪除作業的連鎖清理', () => {
     await rawDb.none(
       `INSERT INTO assignment_leave (ref_assignment_id, ref_user_id) VALUES ($1, $2)`,
       [s.myAssignment, student.id]);
+    // 代繳交那一家人（011／012／013）：沒有一條外鍵接到 assignment
+    await seedProxyTrace({ assignmentId: s.myAssignment, userId: student.id, submissionId: sub });
 
     const res = await req(srv, `/service/instructor/assignments/${s.myAssignment}`, s.cookie, { method: 'DELETE' });
     assert.equal(res.status, 200);
@@ -217,6 +219,10 @@ describe('刪除作業的連鎖清理', () => {
       ['submission_feedback', 'ref_submission_id', sub],
       ['submission_mark', 'ref_submission_id', sub],
       ['assignment_leave', 'ref_assignment_id', s.myAssignment],
+      ['batch_proxy_submission', 'ref_assignment_id', s.myAssignment],
+      ['handwriting_grid_result', 'ref_assignment_id', s.myAssignment],
+      ['manuscript_mark_decision', 'ref_submission_id', sub],
+      ['simple_grading_result', 'ref_submission_id', sub],
     ] as const) {
       const { count } = await rawDb.one(`SELECT count(*)::int FROM ${table} WHERE ${where} = $1`, [param]);
       assert.equal(count, 0, `${table} 應該被清乾淨`);
@@ -273,6 +279,12 @@ describe('更換題目', () => {
     await rawDb.none(
       `INSERT INTO submission_mark (ref_submission_id, kind, ref_user_id) VALUES ($1, 'featured', $2)`,
       [sub, s.me.id]);
+    /*
+      代繳交那一家人也要跟著走。這一組**最會出事**：逐格辨識的結果是用
+      (作業, 學生) 找的，不是用 submission id —— 留著的話，學生重新交一篇
+      新題目的作文，批改頁的原稿會撈到舊題目那次拍的稿紙照片與紅筆標記。
+    */
+    await seedProxyTrace({ assignmentId: s.myAssignment, userId: student.id, submissionId: sub });
 
     const newTask = await seedTask(s.me.id, '換過去的新題目');
     const res = await swap(s.cookie, s.myAssignment, newTask);
@@ -285,6 +297,10 @@ describe('更換題目', () => {
       ['submission', 'ref_assignment_id', s.myAssignment],
       ['submission_feedback', 'ref_submission_id', sub],
       ['submission_mark', 'ref_submission_id', sub],
+      ['batch_proxy_submission', 'ref_assignment_id', s.myAssignment],
+      ['handwriting_grid_result', 'ref_assignment_id', s.myAssignment],
+      ['manuscript_mark_decision', 'ref_submission_id', sub],
+      ['simple_grading_result', 'ref_submission_id', sub],
     ] as const) {
       const { count } = await rawDb.one(`SELECT count(*)::int FROM ${table} WHERE ${where} = $1`, [param]);
       assert.equal(count, 0, `${table} 應該跟著舊題目一起清掉`);

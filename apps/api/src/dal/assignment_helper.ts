@@ -1,5 +1,6 @@
 import { db } from './database';
 import { CourseScope, courseScopeSubquery, isEmptyScope } from '../lib/course_scope';
+import { dropAssignmentWork } from './submission_cascade';
 
 class AssignmentHelper {
 
@@ -298,11 +299,12 @@ class AssignmentHelper {
      *   submission_mark     → submission   ✅ ON DELETE CASCADE（migration 001）
      *   assignment_leave    → assignment   ✅ ON DELETE CASCADE（migration 001）
      *   submission          → assignment   ❌ 沒有外鍵，**必須手動刪**
+     *   代繳交那一家人                      ❌ 見 dal/submission_cascade.ts
      *
-     * 所以順序是由下往上：先清 feedback，再刪 submission（順帶帶走 mark），
-     * 最後刪 assignment（順帶帶走 leave）。少刪一層就留下指向不存在作業的
-     * 孤兒資料，而統計與關心名單都會把它們算進去 —— CLAUDE.md 整整一節
-     * 在講這個坑。全部在一個交易裡，中途失敗不會留下半套。
+     * 所以順序是由下往上：先清代繳交的痕跡與 feedback（**都要趁 submission 還在**），
+     * 再刪 submission（順帶帶走 mark），最後刪 assignment（順帶帶走 leave）。
+     * 少刪一層就留下指向不存在作業的孤兒資料，而統計與關心名單都會把它們算進去
+     * —— CLAUDE.md 整整一節在講這個坑。全部在一個交易裡，中途失敗不會留下半套。
      */
     public static async deleteById(assignmentId: string, scope: CourseScope) {
         return await db.default.tx(async (t) => {
@@ -313,6 +315,7 @@ class AssignmentHelper {
                 [assignmentId]);
             if (!owned) return null;
 
+            await dropAssignmentWork(t, assignmentId);
             await t.none(
                 `DELETE FROM submission_feedback
                  WHERE ref_submission_id IN (SELECT id FROM submission WHERE ref_assignment_id = $1)`,
@@ -359,6 +362,14 @@ class AssignmentHelper {
             // ⚠️ 授權進 WHERE —— 先前只比對 id，任何教師都能換掉別人班作業的題目
             if (!owned) return null;
             if (!owned.swappable) return 'not_swappable' as const;
+
+            /*
+              代繳交留下的痕跡也要清（照片那一批、逐格辨識結果、原稿上的紅筆決定、
+              簡易批改的細節）—— 見 dal/submission_cascade.ts。換題之後學生重新交的
+              作文是**新題目**的，撈到舊題目那次拍的稿紙照片就全錯了。
+              一定要趁 submission 還在的時候呼叫。
+            */
+            await dropAssignmentWork(tx, assignmentId);
 
             const subIds = `SELECT id FROM submission WHERE ref_assignment_id = $1`;
             await tx.none(`DELETE FROM submission_mark WHERE ref_submission_id IN (${subIds})`, [assignmentId]);

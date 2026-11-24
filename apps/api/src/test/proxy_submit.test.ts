@@ -16,7 +16,7 @@ import { test, before, after, beforeEach, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   resetDb, rawDb, seedUser, seedSchool, seedCourse, seedInstructor, seedLearner,
-  seedTask, seedAssignment, seedSubmission, seedSystemAdmin, seedSchoolAdmin,
+  seedTask, seedAssignment, seedSubmission, seedProxyTrace, seedSystemAdmin, seedSchoolAdmin,
   startFakeIdp, startServer, login, req,
   type TestServer,
 } from './helpers';
@@ -582,6 +582,32 @@ describe('清除繳交（DELETE /submissions/:id）', () => {
     assert.equal(await countBatches(), 1);
     const batch = await rawDb.one<{ is_valid: boolean }>(`SELECT is_valid FROM batch_proxy_submission`);
     assert.equal(batch.is_valid, false);
+  });
+
+  test('⚠️ 逐格辨識的結果也要標成不再適用，否則學生重新交一篇會撈到這次的照片', async () => {
+    const s = await twoClasses();
+    const cookie = await login(srv);
+    const submissionId = await proxiedAndRecognized(cookie, s.assignA, s.mine.id);
+    const { gridId } = await seedProxyTrace({
+      assignmentId: s.assignA, userId: s.mine.id, submissionId,
+    });
+
+    assert.equal((await del(cookie, submissionId)).status, 200);
+
+    /*
+      gridForSubmission() 是用 (作業, 學生) 找 status = 'done' 的那一列 ——
+      不是用 submission id（辨識完成時 submission 可能還不存在）。
+      留著 done 的話，那位學生之後自己打字交一篇新的，批改頁就會出現這次的原稿。
+    */
+    const grid = await rawDb.one<{ status: string; error_code: string | null }>(
+      `SELECT status, error_code FROM handwriting_grid_result WHERE id = $1`, [gridId]);
+    assert.equal(grid.status, 'failed');
+    assert.equal(grid.error_code, 'CLEARED');
+
+    // 簡易批改的評分依據跟著那一份走
+    const { count } = await rawDb.one<{ count: number }>(
+      `SELECT count(*)::int FROM simple_grading_result WHERE ref_submission_id = $1`, [submissionId]);
+    assert.equal(count, 0);
   });
 
   test('別人班的繳交清不掉，那一班的批次也不會被退役', async () => {

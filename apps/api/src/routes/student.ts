@@ -58,6 +58,29 @@ router.post('/submit', async (ctx: Context) => {
             return;
         }
         /*
+          **只能交自己班的作業。**
+
+          以前這裡只看作業開不開放，沒看這位學生在不在那個班的名冊上 ——
+          只要知道作業編號，任何學生都能對別班的作業寫進一筆 submission。
+          那一列不會出現在任何教師畫面（批改清單是 JOIN uc_learner 排出來的），
+          所以看不出症狀，但它是教師端兩支代繳交補過的同一個洞。
+
+          規則與教師端同一支（assertLearnerInScope：作業屬於某個班、學生在那個班的
+          名冊上），範圍給「全部」—— 學生沒有「看得到哪些班」這一層，只問在不在名冊。
+          學生自己的作業清單（AssignmentHelper.getAssignments）本來就是照名冊列的，
+          所以正常操作不會走到這裡；會走到的是名冊被改掉的學生（轉班、同步出錯），
+          訊息要讓他知道該找老師，而不是一直重試。
+
+          查不到一律 404，不區分「沒這份作業」與「不是你的班」。
+        */
+        const enrolled = await AssignmentHelper.assertLearnerInScope(
+            assignment_id, ctx.session.userInfo.id, { kind: 'all' });
+        if (!enrolled) {
+            Util.returnError(ctx, 404, '找不到這份作業，或你不在這個班的名冊上。請跟老師確認。');
+            return;
+        }
+
+        /*
           **不收件的作業不接受繳交（含存草稿）。**
 
           規則與前端 lib/assignments.ts 的 canStudentSubmit() 相同：

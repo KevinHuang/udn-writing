@@ -29,7 +29,7 @@
 |---|---|
 | `4fd8b6b` 重置批改加確認視窗、份數與動作對齊 | **第 2 項，已修**（新 `lib/resetGrading.ts`） |
 | `2184c01` 清除繳交一併退役代繳交那一批、文案依作業狀態講實話 | **第 4 項，已修**（`SubmissionHelper.deleteById`、新 `lib/clearSubmission.ts`） |
-| `76789cd` `saveSubscores` 改用具名參數 | **第 10 項，已修**；既有資料的清理是 `docs/migrations/014`（人工決定與執行，不急） |
+| `76789cd` `saveSubscores` 改用具名參數 | **第 10 項：已撤回**（2026-11-25）。工程師在 `add-four-scores` 分支的 `bda93e3` 早就修過同一個錯，只是還沒合進 main；以他的版本為準，這邊的修正、測試與 migration 014 都拿掉了 |
 | `c1aae50` 重試一律帶 force、queued 卡住也算失敗 | **第 6、7 項，已修** |
 | `b670d70` 換題／刪作業／清除繳交的連鎖清理 | **第 5 項，已修**（新 `dal/submission_cascade.ts`） |
 | 本次（批次警告分辨逐格辨識、代繳交字數改用 `countWords`） | **第 8、9 項，已修** |
@@ -212,7 +212,9 @@ job 啟動成功但在領取前就掛掉（映像檔、配額、容器崩潰）�
 
 ---
 
-## ✅ 10.（已修）`saveSubscores()` 的參數接錯位，token 欄位存的是別的東西
+## ↩ 10.（已撤回，等工程師的 `add-four-scores` 合併）`saveSubscores()` 的參數接錯位，token 欄位存的是別的東西
+
+> **2026-11-25**：這個錯是真的，但工程師 10/20 就在 `origin/add-four-scores`（`bda93e3`）修過了，只是還沒合進 main —— 掃描時看的是 main，所以又修了一次。兩邊改同一段程式會衝突，而且他的註解記著「舊資料不修，使用者決定」，這邊卻多寫了一份清舊資料的 migration 014。使用者決定以工程師的版本為準：`76789cd` 的程式與測試已還原、migration 014 已刪除。**在他的分支合併之前，main 與這個分支上這個錯都還在**（只影響花費統計，沒有畫面會讀）。
 
 ```sql
 -- apps/api/src/dal/submission_feedback_helper.ts:73-88
@@ -233,7 +235,9 @@ input tokens、`outputTokens` 根本沒被寫入。`WHERE id = $1` 剛好是對�
 
 ---
 
-## ⚪ 11. 兩套「取消繳交」並存，而線上的舊前端用的是破壞性比較大的那一支
+## ⚪ 11. 兩套「取消繳交」並存，舊前端用的是破壞性比較大的那一支
+
+> **更正（2026-11-24）**：原本的標題寫「線上的舊前端」，這不準確。`apps/api/Dockerfile` 建置時會用 `apps/web` 的建置產物**蓋掉** `/app/public`，所以從這個 repo 部署出去的服務（`udn-writing-test`，見 `docs/deploy.md`）送出的是**新前端**；repo 裡 `apps/api/public/` 那份舊前端只有本機 `npm run dev` 時才看得到。正式環境的使用者如果還在用舊前端，那是另一個部署（legacy），它的「重置繳交」怎麼做要看那邊的程式，不是這裡。所以這一項的實際影響比原本寫的小：在這個 repo 的部署裡，`/submissions/:id/reset` 這支端點已經沒有畫面會呼叫，它是等舊前端的檔案退場時一起拿掉的東西（`docs/deploy.md`「可以再收斂的地方」已經列著）。
 
 | | |
 |---|---|

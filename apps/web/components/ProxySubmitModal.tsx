@@ -711,7 +711,11 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                     </div>
                   )}
 
-                  {/* 上傳。相機與選檔分開兩顆，手機上 capture 才會直接開相機 */}
+                  {/*
+                    拍照只留「掃描稿紙」一顆（2026-11-27 使用者決定，和學生端一致）。
+                    以前旁邊還有一顆「直接拍照」當備用；現在掃描開不起來時，掃描視窗自己會退回手機內建的相機
+                    （lib/scan/fallback.ts），平常不必讓老師在兩顆之間選。
+                  */}
                   <div className="flex flex-wrap gap-2">
                     <button
                       id="proxysubmit-btn-scan"
@@ -723,26 +727,8 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                       {hasPhotos ? '重新掃描' : '掃描稿紙'}
                     </button>
                     <label
-                      id="proxysubmit-btn-camera"
-                      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-card border border-border-strong text-text-primary text-body cursor-pointer hover:bg-surface-soft transition-colors whitespace-nowrap"
-                    >
-                      <Camera size={16} className="shrink-0" />
-                      直接拍照
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp"
-                        capture="environment"
-                        multiple
-                        className="hidden"
-                        onChange={(e) => {
-                          handleFiles(e.target.files);
-                          e.target.value = '';
-                        }}
-                      />
-                    </label>
-                    <label
                       id="proxysubmit-btn-upload"
-                      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-card border border-border text-text-primary text-body cursor-pointer hover:bg-surface-soft transition-colors whitespace-nowrap"
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-card border border-border-strong text-text-primary text-body cursor-pointer hover:bg-surface-soft transition-colors whitespace-nowrap"
                     >
                       <Upload size={16} className="shrink-0" />
                       選擇照片

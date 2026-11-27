@@ -22,7 +22,8 @@ import {
   type ScanResult,
   type ScanVariant,
 } from '../../lib/scan/enhance';
-import { blobToCanvas, describeSize, nextFrame } from '../../lib/scan/image';
+import { blobToCanvas, canvasToBlob, describeSize, nextFrame, scaleCanvas } from '../../lib/scan/image';
+import { scanFallbackHint, scanFallbackOf } from '../../lib/scan/fallback';
 import { type Point } from '../../lib/scan/geometry';
 import { canAddMore, limitHint, pagesButtonLabel, trayFull } from '../../lib/scan/pages';
 import { ScannerCamera, type LiveHint } from './ScannerCamera';
@@ -103,6 +104,10 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   const resultRef = useRef<ScanResult | null>(null);
   const previewRef = useRef<HTMLCanvasElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
+  /** 手機內建相機（capture）的那個 input：掃描開不起來時的退路 */
+  const nativeCameraRef = useRef<HTMLInputElement>(null);
+  /** 按了「開啟相機掃描」之後相機回報的錯誤。有值就在首頁給「改用手機相機」 */
+  const [cameraError, setCameraError] = useState<string | null>(null);
 
   /*
     托盤：已經收下、還沒送去辨識的稿紙。
@@ -137,6 +142,12 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   const inAppBrowser =
     typeof navigator !== 'undefined' &&
     /\bLine\/|FBAN|FBAV|FB_IAB|Instagram|MicroMessenger/i.test(navigator.userAgent);
+
+  /*
+    掃描開不起來時的退路（lib/scan/fallback.ts）：平常是 null、首頁不會多一顆按鈕。
+    以前老師端在外面另外放一顆「直接拍照」，學生端沒有 —— 現在兩邊都走這裡。
+  */
+  const fallback = scanFallbackOf({ insecure, cvState, cameraError });
 
   /* OpenCV 只在真的打開掃描器時才載入 —— 這個檔約 10MB */
   useEffect(() => {
@@ -262,12 +273,52 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     [process],
   );
 
+  /**
+   * 影像處理工具壞掉時，照片**照原樣**收進托盤（只照 EXIF 轉正、縮到上限）。
+   *
+   * 沒有這一條的話，那種時候選了照片會被送進「手動拖四角」，拖完按確認才發現
+   * 校正要用的工具根本不在 —— 一條走不完的路。收下來至少交得出去；
+   * 是我們印的稿紙的話，伺服器端的逐格辨識還會自己找定位標記拉正一次。
+   *
+   * 和 acceptCurrent 一樣三份影像要序列產生：全解析度那張很大，同時存在三個 canvas 手機會撐不住。
+   */
+  const addPlainPhoto = async (file: Blob) => {
+    const canvas = await blobToCanvas(file, SCAN_CONFIG.maxSourceLongSide);
+    const long = Math.max(canvas.width, canvas.height);
+    const shrink = async (maxLong: number) => {
+      const small = long > maxLong ? scaleCanvas(canvas, maxLong / long) : canvas;
+      const blob = await canvasToBlob(small, 'image/jpeg', SCAN_CONFIG.ocrJpegQuality);
+      if (small !== canvas) small.width = small.height = 0;
+      return blob;
+    };
+    const fullBlob = await canvasToBlob(canvas, 'image/jpeg', SCAN_CONFIG.ocrJpegQuality);
+    const ocrBlob = await shrink(SCAN_CONFIG.ocrLongSide);
+    const thumbBlob = await shrink(SCAN_CONFIG.thumbLongSide);
+    const { width, height } = canvas;
+    canvas.width = canvas.height = 0;
+    const taken: PendingPage = {
+      id: `p${nextId.current++}`,
+      page: { ocrBlob, fullBlob, variant: 'color', width, height },
+      thumbUrl: URL.createObjectURL(thumbBlob),
+    };
+    const all = [...pendingRef.current, taken];
+    pendingRef.current = all;
+    setPending(all);
+    setMessage('照片已經收下（沒有拉正）。還有下一張就再拍，拍完按下面的按鈕交出去。');
+  };
+
+  /** 相簿選的、或手機內建相機拍的照片：影像處理是好的就照常框稿紙、拉正，壞了就照原樣收 */
   const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
     setBusy('讀取照片…');
     try {
+      if (cvState === 'error') {
+        await addPlainPhoto(file);
+        setBusy('');
+        return;
+      }
       const canvas = await blobToCanvas(file, SCAN_CONFIG.maxSourceLongSide);
       setBusy('');
       await openCaptured(canvas, null);
@@ -486,7 +537,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
             <div className="flex flex-col gap-2.5">
               <button
                 id="scanner-btn-open-camera"
-                onClick={() => setStep('camera')}
+                onClick={() => { setCameraError(null); setStep('camera'); }}
                 disabled={insecure || atLimit}
                 className="inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-brand bg-primary text-on-accent text-ui shadow-sm hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
               >
@@ -510,6 +561,39 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 />
               </label>
             </div>
+
+            {/*
+              退路：掃描開不起來才出現。input 一直掛著（不放在條件裡面），
+              相機失敗的那一刻要能馬上對它 click()，等下一次 render 才掛上去就來不及了。
+            */}
+            <input
+              ref={nativeCameraRef}
+              id="scanner-input-native-camera"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              capture="environment"
+              className="hidden"
+              disabled={atLimit}
+              onChange={onPickFile}
+            />
+            {fallback && (
+              <div id="scanner-fallback" className="rounded-brand border border-warning-200 bg-warning-100 px-3.5 py-3 flex flex-col gap-2.5">
+                <p className="flex items-start gap-2 text-caption text-warning-700">
+                  <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                  <span>{fallback.reason}{scanFallbackHint(fallback)}</span>
+                </p>
+                <button
+                  id="scanner-btn-native-camera"
+                  type="button"
+                  onClick={() => nativeCameraRef.current?.click()}
+                  disabled={atLimit}
+                  className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-brand bg-card border border-border-strong text-text-primary text-body hover:bg-surface-soft disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <Camera size={16} />
+                  改用手機相機
+                </button>
+              </div>
+            )}
 
             {atLimit && (
               <p className="text-caption text-warning-700 bg-warning-100 border border-warning-200 rounded-brand px-3.5 py-2.5">
@@ -581,8 +665,15 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
             onCapture={(canvas, live) => void openCaptured(canvas, live)}
             onClose={() => setStep('home')}
             onError={(m) => {
-              setMessage(m);
+              setCameraError(m);
               setStep('home');
+              /*
+                相機開不起來 → 直接幫他改開手機內建的相機。
+                瀏覽器只讓「使用者剛點過」的時候開選檔／相機視窗：剛按完「開啟相機掃描」馬上失敗的
+                （不支援、沒有鏡頭）開得起來；在權限視窗上想了很久才按拒絕的會被瀏覽器擋掉、什麼都不發生。
+                所以首頁一定同時留著那顆「改用手機相機」，不能只靠這一行。
+              */
+              try { nativeCameraRef.current?.click(); } catch { /* 被擋就算了，畫面上有按鈕 */ }
             }}
           />
         )}

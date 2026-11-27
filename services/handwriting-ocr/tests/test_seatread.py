@@ -136,6 +136,20 @@ def test_ucup_has_no_seat_but_header_crop(paper):
     assert p2["page"] == 2 and "seat" not in p2 and "crops" not in p2
 
 
+@needs_font
+def test_cap_crop_shows_name_and_seat():
+    """會考稿紙的表頭截圖要包住班級、姓名與座號劃記：老師在核對畫面靠它認人。
+    表頭重排（班級姓名移到緊鄰格子那一列）之後截圖範圍沒有跟著改，只截得到劃記、看不到名字。"""
+    cfg, paper, seat = sheet.config({"format": "cap", "paper": "B4", "title": "寫作", "seat_marks": True,
+                                     "fields": {"class_seat_name": True, "date": True, "score": True}})
+    _, lay, _ = sheet._render(cfg, paper, seat, subset=False)
+    need = [e for e in lay["pages"][0]["header_elements"] if e["bbox"] and e["type"] in ("field", "seatmark")]
+    assert {e["text"] for e in need} == {"班級", "姓名", "座號劃記"}
+    for e in need:                                    # B4 是會考樣式的原始紙張：版面座標就是樣式 mm
+        x0, y0, x1, y1 = e["bbox"]
+        assert any(c[0] <= x0 and c[1] <= y0 and c[2] >= x1 and c[3] >= y1 for c in SR.CROPS["cap"][0]), e["text"]
+
+
 def test_blank_and_unknown_pages():
     white = np.full((2000, 2800), 255, np.uint8)
     assert scan_one(scanned(white))["kind"] == "blank"

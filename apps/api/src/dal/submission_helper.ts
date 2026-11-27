@@ -1,6 +1,7 @@
 import { db } from './database';
 import { CourseScope, courseScopeSubquery } from '../lib/course_scope';
 import AssignmentHelper from './assignment_helper';
+import { clearSubmissionWork } from './submission_cascade';
 
 class SubmissionHelper {
 
@@ -222,11 +223,16 @@ class SubmissionHelper {
      *   submission_mark     → submission  ✅ ON DELETE CASCADE（migration 001）
      *
      * 所以只要手動清 feedback，標記會自己跟著走。
+     *
+     * ⚠️ 代繳交留下的痕跡（照片那一批、逐格辨識的結果、簡易批改的細節）也要收尾，
+     *    在**同一個交易裡** —— 見 dal/submission_cascade.ts 的 clearSubmissionWork()，
+     *    那裡寫了每一步在防什麼（最嚴重的是：不收尾的話，老師按「重試」會把剛剛
+     *    清掉的作文整篇寫回來）。範圍不必再查一次，上面的 owned 已經擋過了。
      */
     public static async deleteById(submissionId: string, scope: CourseScope) {
         return await db.default.tx(async (t) => {
-            const owned = await t.oneOrNone(
-                `SELECT s.id
+            const owned = await t.oneOrNone<{ id: string; ref_assignment_id: string; ref_user_id: string }>(
+                `SELECT s.id, s.ref_assignment_id, s.ref_user_id
                  FROM submission s
                      INNER JOIN assignment a ON a.id = s.ref_assignment_id
                  WHERE s.id = $1
@@ -234,6 +240,11 @@ class SubmissionHelper {
                 [submissionId]);
             if (!owned) return null;
 
+            await clearSubmissionWork(t, {
+                submissionId,
+                assignmentId: owned.ref_assignment_id,
+                userId: owned.ref_user_id,
+            });
             await t.none(`DELETE FROM submission_feedback WHERE ref_submission_id = $1`, [submissionId]);
             return await t.oneOrNone(`DELETE FROM submission WHERE id = $1 RETURNING *`, [submissionId]);
         });

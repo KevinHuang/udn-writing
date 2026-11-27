@@ -13,13 +13,17 @@ import { FeaturedByLevelDialog } from "../components/FeaturedByLevelDialog";
 import { AssignmentFeaturedRule } from "../components/AssignmentFeaturedRule";
 import { effectiveRule } from "../lib/featuredRule";
 import { useProxyStatus } from "../lib/proxy/useProxyStatus";
-import { countStatuses, proxyBatchSummary } from "../lib/proxy/status";
+import {
+  countStatuses, proofreadGateMessage, proxyBatchSummary, unproofreadKindOf,
+} from "../lib/proxy/status";
+import { originalsState } from "../lib/proxy/paths";
 import { GradingHub } from "../components/GradingHub";
 import { PageHeader, PAGE_CONTAINER } from "../components/PageHeader";
 import { useAppState } from "../state/appStateContext";
 import { useGoBack } from "../lib/useGoBack";
 import { routes, queryKeys } from "../lib/routes";
 import { canMark, hasMark } from "../lib/submissionMarks";
+import { resetTargets } from "../lib/resetGrading";
 import { rosterOf, seatText } from "../lib/gradingQueue";
 import {
   assignmentsForCourse, firstWorthGrading, isLateSubmission,
@@ -96,7 +100,7 @@ export const GradingListPage: React.FC = () => {
   /** 從 pill 打開代繳交視窗時直接停在進度分頁 */
   const [proxyInitialTab, setProxyInitialTab] = useState<"register" | "progress">("register");
   /** 批次批改前發現有未校對的作品 → 先問一聲 */
-  const [unproofreadGate, setUnproofreadGate] = useState<number | null>(null);
+  const [unproofreadGate, setUnproofreadGate] = useState<string | null>(null);
   /** 「依級分蓋佳作」視窗 */
   const [isFeaturedByLevelOpen, setIsFeaturedByLevelOpen] = useState(false);
   const setSelectedAssignmentId = (id: string) =>
@@ -190,25 +194,38 @@ export const GradingListPage: React.FC = () => {
           文字會先進資料庫 —— 真正會造成傷害的是「拿錯字連篇的文本去打分數」，
           所以擋在這裡。
         */
-        const unproofreadInBatch = filteredSubmissions.filter(
-          (s) =>
-            s.status === "Pending" &&
-            (selectedSubmissionIds.length === 0 || selectedSubmissionIds.includes(s.id)) &&
-            proxy.isUnproofread(s.studentId),
-        ).length;
+        /*
+          未校對分兩種，該不該先校對答案相反（lib/proxy/status.ts 的 unproofreadKindOf）：
+          整張辨識的要擋；稿紙逐格辨識的會用簡易批改，不必校對，所以不擋。
+          以前不分，逐格辨識的也一律勸老師「先校對」，和批改頁上說的相反。
+        */
+        const unproofreadCounts = { legacy: 0, grid: 0 };
+        for (const s of filteredSubmissions) {
+          if (s.status !== "Pending") continue;
+          if (selectedSubmissionIds.length > 0 && !selectedSubmissionIds.includes(s.id)) continue;
+          const kind = unproofreadKindOf(
+            proxy.rows.find((r) => r.userId === s.studentId),
+            proxy.statusOf(s.studentId),
+          );
+          if (kind) unproofreadCounts[kind] += 1;
+        }
+        const proofreadGate = proofreadGateMessage(unproofreadCounts);
         const proxySummary = proxyBatchSummary(
           countStatuses(proxy.rows.map((r) => proxy.statusOf(r.userId))),
         );
         const startBatchGrade = () => {
-          if (unproofreadInBatch > 0) setUnproofreadGate(unproofreadInBatch);
+          if (proofreadGate) setUnproofreadGate(proofreadGate);
           else handleBatchGrade(selectedAssignmentId);
         };
         /*
-          兩顆按鈕的目標都是「已批改、還沒發還」（status === 'Graded'），
-          但啟動條件刻意不同：
+          兩顆按鈕的啟動條件刻意不同：
 
-            發還     自動偵測。沒勾選就是整批全發，勾了就只發勾到的。
-            重置批改 一定要先勾選。沒勾選時是 0、停用 ——
+            發還     目標是「已批改、還沒發還」（status === 'Graded'）。
+                     自動偵測：沒勾選就是整批全發，勾了就只發勾到的。
+            重置批改 目標是「已批改」**與「已發還」**（lib/resetGrading.ts 的
+                     resetTargets —— 和真正執行的 handleBatchReset 問同一支，
+                     以前這裡只數 Graded，勾了已發還的作品會寫 (2) 卻動 5 份）。
+                     一定要先勾選。沒勾選時是 0、停用 ——
                      它會清掉分數與評語，不該有「沒選就全部重置」這種預設。
         */
         const gradedOf = (ids?: string[]) =>
@@ -222,11 +239,16 @@ export const GradingListPage: React.FC = () => {
           ? gradedOf(selectedSubmissionIds)
           : graded;
         const selectedResetCount = hasSelection
-          ? gradedOf(selectedSubmissionIds)
+          ? resetTargets(filteredSubmissions, selectedSubmissionIds).length
           : 0;
 
-        // Helper to simulate has draft check (same logic as Editor)
-        const hasDraft = (id: string) => id.charCodeAt(id.length - 1) % 2 === 0;
+        /*
+          「原稿」欄的燈號：和批改頁看同一組照片（繳交自己的，沒有才退回批次代繳交的）。
+          以前這裡是原型留下來的模擬，用繳交編號的奇偶數決定顏色。
+        */
+        const batchFilesOf = new Map(proxy.rows.map((r) => [r.userId, r.imgFiles]));
+        const originalsOf = (s: (typeof sortedSubmissions)[number]) =>
+          originalsState(s, batchFilesOf.get(s.studentId));
 
         return (
           <div className={`${PAGE_CONTAINER} space-y-6`}>
@@ -457,9 +479,9 @@ export const GradingListPage: React.FC = () => {
                   disabled={isBatchGrading || selectedResetCount === 0}
                   title={
                     !hasSelection
-                      ? "請先勾選已批改、尚未發還的作業"
+                      ? "請先勾選已批改或已發還的作業"
                       : selectedResetCount === 0
-                        ? "勾選的項目裡沒有「已批改」的作業"
+                        ? "勾選的項目裡沒有批改完成的作業"
                         : `清除這 ${selectedResetCount} 份的分數與評語，退回「待批改」`
                   }
                   className="flex-1 lg:flex-none flex items-center justify-center gap-2 bg-card hover:bg-danger-50 text-danger-700 border border-danger-200 hover:border-danger-300 px-3 md:px-4 py-2 md:py-2.5 rounded-xl text-body transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
@@ -514,7 +536,7 @@ export const GradingListPage: React.FC = () => {
             {unproofreadGate !== null && (
               <ConfirmDialog
                 title="有作品還沒校對"
-                message={`這次要批改的作品裡，有 ${unproofreadGate} 篇是 AI 從手寫稿辨識出來的，還沒有人對照原稿校對過。\n辨識一定會有錯字 —— 直接批改的話，分數會建立在錯的文字上。\n建議先點進去對照原稿校對，再批改。`}
+                message={unproofreadGate}
                 confirmLabel="照樣批改"
                 onConfirm={() => {
                   setUnproofreadGate(null);
@@ -562,7 +584,7 @@ export const GradingListPage: React.FC = () => {
               </div>
 
               {sortedSubmissions.map((s) => {
-                const hasDraftFile = hasDraft(s.id);
+                const hasDraftFile = originalsOf(s) === 'has';
                 const score = s.result?.totalScore;
                 const isSelected = selectedSubmissionIds.includes(s.id);
 
@@ -726,7 +748,7 @@ export const GradingListPage: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-ink-100">
                     {sortedSubmissions.map((s) => {
-                      const hasDraftFile = hasDraft(s.id);
+                      const originals = originalsOf(s);
                       const score = s.result?.totalScore;
 
                       return (
@@ -778,7 +800,13 @@ export const GradingListPage: React.FC = () => {
                                   className="w-3 h-3 rounded-full bg-ink-200"
                                   title="未繳交"
                                 ></div>
-                              ) : hasDraftFile ? (
+                              ) : originals === 'unknown' ? (
+                                // 完整內容還沒到：先不表態，不要先亮「沒有原稿」再變「有」
+                                <div
+                                  className="w-3 h-3 rounded-full bg-ink-200"
+                                  title="讀取中"
+                                ></div>
+                              ) : originals === 'has' ? (
                                 <div
                                   className="w-3 h-3 rounded-full bg-success-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
                                   title="有手寫原稿"

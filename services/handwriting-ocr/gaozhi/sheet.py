@@ -2,7 +2,7 @@
 
 和原型的表頭編輯器不同，這裡沒有自由排版：表頭位置固定，老師只決定
 學校名稱、大標題（每次印可改）、要不要印班級座號姓名／日期／得分欄、要不要加印座號劃記；
-學測稿紙另外選要印哪一題（知性題、情意題各 1 頁，或兩題都印）。
+學測稿紙另外選要印哪一題（知性題、情意題各 1 頁，或兩題都印）。會考稿紙加印座號劃記時換另一種表頭排法，不印日期（見 _cap）。
 沒有身分碼（QR）。格子與四角定位標記照原樣，所以印出來的稿紙都能逐格辨識。
 """
 import json
@@ -15,7 +15,8 @@ HEADERS = Path(__file__).resolve().parent.parent / "headers"
 FORMATS = {"cap": {"label": "會考稿紙", "default_paper": "B4"},
            "gsat": {"label": "學測稿紙", "default_paper": "A3"},
            # 聯合報雲寫作教室（2026-11-20）：整頁照聯合報提供的原稿紙印、只加四角定位標記（第 4 版）。
-           # 表頭是原稿紙上的，所以學校名稱、大標題、表頭欄位、座號劃記都不適用（給了也不印）。見 FIXED_SHEETS。
+           # 表頭是原稿紙上的，所以學校名稱、大標題、表頭欄位都不適用（給了也不印）。見 FIXED_SHEETS。
+           # 座號劃記：國中稿紙可以加印（SEATMARKS），聯合盃不印。
            "udn": {"label": "聯合報國中寫作稿紙", "default_paper": "A3", "fixed_header": True},
            "ucup": {"label": "聯合盃作文大賽稿紙", "default_paper": "B4", "fixed_header": True}}
 PAPERS = ("B4", "A3")
@@ -33,6 +34,18 @@ GSAT_QUESTIONS = {
 DEFAULT_GSAT_QUESTION = "both"        # 沒給時照舊印兩頁（還沒更新的呼叫端）
 GSAT_PAGE_LABELS = ("知性題（第一大題）", "情意題（第二大題）")
 PREVIEW_DPI = 90                      # 預覽圖：A3 約 1490×1050 像素，放大看得清楚校名與大標題
+# 座號劃記的位置（樣式原始 mm）：印稿紙與判讀座號（gaozhi/seatread.py）共用。
+# 會考稿紙印在第 1 頁右側；學測稿紙印在每一題那一頁的左上角（兩題都印時只有第一大題那一頁有）。
+# 會考 x：341 → 338.4（2026-11-26）→ 334.4（2026-11-27，照 1Campus c033467）：右緣 352mm，和四角定位標記外緣切齊
+#   （B4 離紙邊 12mm、A3 13.9mm）；原本 5.4mm、8mm 影印時都可能被切掉。表頭跟著重排，見 _cap 的座號劃記版。
+#   同一天稍早聯合報這邊自己試過 334.9＋填寫欄縮成 11pt，使用者後來在 1Campus 定了這個版本，以它為準、兩邊一致。
+# 聯合報國中稿紙（2026-11-27 使用者看過示意圖、選定）：第 1 頁格子上方靠右——學生從右邊開始寫，表頭的姓名、座號欄也在右邊。
+#   原稿紙那一帶是空的（y 10～38），不必動底圖；離「請從本行開始作答」的箭頭 3.5mm、離格子 6.7mm、離紙邊 9mm。
+# 聯合盃稿紙**沒有**座號劃記（同一天決定）：稿紙印著「請勿填寫姓名、學校及足以辨識身份之記號」，
+#   第一頁上方也只剩 25mm、放不下標準大小的圓圈。整疊掃描時照樣分成一人一份，由老師指定是誰的。
+SEATMARKS = {"cap": {"x": 334.4, "y": 133, "size": 4, "orient": "col"},
+             "gsat": {"x": 20, "y": 16, "size": 4, "orient": "row"},
+             "udn": {"x": 250, "y": 9, "size": 4, "orient": "row"}}
 
 
 class SheetError(ValueError):
@@ -75,25 +88,44 @@ def _vtitle(text, x, y, room, size, step):
     return {"type": "text", "text": text, "x": x, "y": y, "size": round(size, 2), "char_step": round(step, 3)}
 
 
+CAP_SCHOOL_TOP = 41          # 座號劃記版：校名在得分框下面，從這裡開始直排
+CAP_SCHOOL_TOP_NO_SCORE = 22
+
+
 def _cap(school, title, fields, seat):
-    """會考稿紙第 1 頁右側直排表頭（由右而左：學校、大標題、填寫欄）。座號劃記占用原本班級、座號兩行的位置。"""
+    """會考稿紙第 1 頁右側直排表頭。
+
+    一般版（由右而左）：學校、大標題、班級座號姓名、日期，得分在班級下面。
+    座號劃記版（2026-11-27 照 1Campus c033467 重排，讓座號劃記離紙邊夠遠、影印不會被切掉）：右上角得分方框、下面直排校名，
+    中間大標題，右下座號劃記（和得分框右緣切齊、在四角定位標記範圍內），班級、姓名排成一列放在
+    「請從本行開始作答」與「第一頁」之間（緊鄰格子那一列）；不印日期（勾了也不印）。"""
     base = json.loads((HEADERS / "cap.json").read_text(encoding="utf-8"))
     keep = [e for e in base["pages"][0]["elements"]
             if e["type"] in ("line", "text") and e.get("text") != "寫作測驗答案卷"]
-    els = keep + [_vtitle(title, 333, 22, 104, 32, 14)]
-    if school:
-        els.append({"type": "text", "text": school, "x": 352, "y": 20, "size": 13})
     if seat:
-        els.append({"type": "seatmark", "x": 341, "y": 133, "size": 4, "orient": "col"})
-        cols = [("班級", 333.5, 135, 30, "class"), ("姓名", 326.5, 135, 60, "name"),
-                ("日期", 333.5, 182, 34, None), ("得分", 326.5, 210, 22, None)]
+        els = keep + [_vtitle(title, 330, 22, 104, 32, 14)]
+        top = CAP_SCHOOL_TOP if fields.get("score") else CAP_SCHOOL_TOP_NO_SCORE
+        if fields.get("score"):
+            els.append({"type": "box", "x": 338.6, "y": 20, "w": 13.4, "h": 17, "label": "得分",
+                        "label_pos": "inside-top", "label_size": 10, "line_width": 0.6})
+        if school:   # 放不下（快滿 20 字）時縮小，下緣離座號劃記 3mm
+            room = SEATMARKS["cap"]["y"] - 3 - top
+            size = min(13, room / len(school) * render.MM)
+            els.append({"type": "text", "text": school, "x": 345.3, "y": top, "size": round(size, 2)})
+        els.append({"type": "seatmark", **SEATMARKS["cap"]})
+        if fields.get("class_seat_name"):
+            els += [{"type": "field", "label": "班級", "x": 319, "y": 95, "size": 12, "length": 40},
+                    {"type": "field", "label": "姓名", "x": 319, "y": 153, "size": 12, "length": 52}]
     else:
+        els = keep + [_vtitle(title, 333, 22, 104, 32, 14)]
+        if school:
+            els.append({"type": "text", "text": school, "x": 352, "y": 20, "size": 13})
         cols = [("班級", 347.5, 135, 30, "class"), ("座號", 340.5, 135, 30, "seat"), ("姓名", 333.5, 135, 60, "name"),
                 ("日期", 326.5, 135, 34, None), ("得分", 347.5, 182, 34, None)]
-    for label, x, y, length, fill in cols:
-        if (fill and fields.get("class_seat_name")) or (label == "日期" and fields.get("date")) \
-                or (label == "得分" and fields.get("score")):
-            els.append({"type": "field", "label": label, "x": x, "y": y, "size": 12, "length": length})
+        for label, x, y, length, fill in cols:
+            if (fill and fields.get("class_seat_name")) or (label == "日期" and fields.get("date")) \
+                    or (label == "得分" and fields.get("score")):
+                els.append({"type": "field", "label": label, "x": x, "y": y, "size": 12, "length": length})
     page2 = [e for e in base["pages"][1]["elements"] if e["type"] != "idcode"]
     return {"template": "cap", "title": title, "style": base["style"], "pages": [{"elements": els}, {"elements": page2}]}
 
@@ -104,7 +136,7 @@ def _gsat_header(school, fields, seat):
     if school:
         els.append({"type": "text", "text": school, "x": 290, "y": 17, "size": 13, "vertical": False})
     if seat:
-        els.append({"type": "seatmark", "x": 20, "y": 16, "size": 4, "orient": "row"})
+        els.append({"type": "seatmark", **SEATMARKS["gsat"]})
     if fields.get("class_seat_name"):
         els += [{"type": "field", "label": "班級", "x": 290, "y": 30, "vertical": False, "size": 12, "length": 18},
                 {"type": "field", "label": "座號", "x": 323, "y": 30, "vertical": False, "size": 12, "length": 14},
@@ -156,15 +188,17 @@ FIXED_SHEETS = {
 }
 
 
-def _fixed(fmt):
-    """原稿紙當底圖的稿紙：兩頁都放原稿紙（Logo、QR Code、批改區、評分欄都是原稿紙的），不另畫格子與表頭。"""
+def _fixed(fmt, seat=False):
+    """原稿紙當底圖的稿紙：兩頁都放原稿紙（Logo、QR Code、批改區、評分欄都是原稿紙的），不另畫格子與表頭。
+    唯一另外畫的是座號劃記（seat=True、而且這種稿紙有位置放時，見 SEATMARKS），在第 1 頁。"""
     background, title, layouts = FIXED_SHEETS[fmt]
     pages = []
     for pno, pieces in enumerate(layouts):
         bg = {"path": background, "page": pno}
         if pieces:
             bg["pieces"] = pieces
-        pages.append({"elements": [], "background": bg})
+        els = [{"type": "seatmark", **SEATMARKS[fmt]}] if seat and pno == 0 else []
+        pages.append({"elements": els, "background": bg})
     return {"template": fmt, "title": title, "style": {"draw_grid": False}, "pages": pages, "print_pages": [0, 1]}
 
 
@@ -181,7 +215,8 @@ def config(req):
     if paper not in PAPERS:
         raise SheetError("紙張大小只能選 B4 或 A3")
     if FORMATS[fmt].get("fixed_header"):
-        return _fixed(fmt), paper, False
+        seat = bool(req.get("seat_marks")) and fmt in SEATMARKS      # 聯合盃沒有位置（也不該有）：給了也不印
+        return _fixed(fmt, seat), paper, seat
     school = _text(req.get("school"), "學校名稱", SCHOOL_MAX)
     title = _text(req.get("title"), "大標題", TITLE_MAX, required=True)
     fields = req.get("fields") or {}

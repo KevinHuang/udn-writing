@@ -159,6 +159,43 @@ export async function seedAssignment(courseId: string, taskId: string, assignerI
   return row.id;
 }
 
+/**
+ * 代繳交留下的**整串痕跡**：照片那一批、完成的逐格辨識、老師在原稿上的一個決定、
+ * 簡易批改的細節。
+ *
+ * 用在「刪作業、換題、清除繳交要不要清乾淨」那幾條測試上 ——
+ * 這四張表（011／012／013）沒有一條外鍵接到 assignment，
+ * 兩張接到 submission 的也只有 CASCADE 到一半（見 dal/submission_cascade.ts）。
+ */
+export async function seedProxyTrace(opts: {
+  assignmentId: string;
+  userId: string;
+  submissionId: string;
+}): Promise<{ batchId: string; gridId: string }> {
+  const batch = await db.default.one(
+    `INSERT INTO batch_proxy_submission
+         (ref_user_id, ref_assignment_id, submitter_id, img_files, batch_uuid, ocr_time)
+     VALUES ($1::bigint, $2::bigint, $1::bigint, '["p1.jpg"]'::json, $3, now())
+     RETURNING id::text`,
+    [opts.userId, opts.assignmentId, `trace-${opts.assignmentId}-${opts.userId}`]);
+  const grid = await db.default.one(
+    `INSERT INTO handwriting_grid_result
+         (ref_batch_id, ref_assignment_id, ref_user_id, status, sheet_template, marked_text, finished_at)
+     VALUES ($1::bigint, $2::bigint, $3::bigint, 'done', 'udn', '辨識出來的全文', now())
+     RETURNING id::text`,
+    [batch.id, opts.assignmentId, opts.userId]);
+  await db.default.none(
+    `INSERT INTO manuscript_mark_decision
+         (ref_grid_result_id, ref_submission_id, target, cell_key, decision)
+     VALUES ($1::bigint, $2::bigint, 'typo', '第1頁:1:1', 'confirm')`,
+    [grid.id, opts.submissionId]);
+  await db.default.none(
+    `INSERT INTO simple_grading_result (ref_submission_id, ref_grid_result_id, detail)
+     VALUES ($1::bigint, $2::bigint, '{"scoreBasis":"示範"}'::jsonb)`,
+    [opts.submissionId, grid.id]);
+  return { batchId: batch.id, gridId: grid.id };
+}
+
 export async function seedSubmission(assignmentId: string, userId: string, content = '這是一篇作文'): Promise<string> {
   const row = await db.default.one(
     `INSERT INTO submission (ref_assignment_id, ref_user_id, content, word_count)

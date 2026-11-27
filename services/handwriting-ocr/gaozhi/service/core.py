@@ -204,6 +204,44 @@ def check(files):
     return {"ours": True, "ok": True, "pages": summary}
 
 
+def seat_scan(files):
+    """整疊掃描：每一頁是哪種稿紙的第幾頁、學生塗的座號，附表頭截圖給老師核對（不用 AI、不切格子）。
+
+    頁的順序照收到的順序（分給哪位學生由呼叫端依順序決定：第 1 頁開新一份、第 2 頁接在緊鄰的前一張後面）。
+    回傳 {"pages": [{"name", "kind", ...}]}，kind：
+      "sheet"  我們的稿紙：template、format、paper、page（1 起算）、corners_missing（沒認到的角落，有就要重掃那一張）；
+               有座號劃記位置的頁另有 seat；有表頭截圖範圍的頁另有 crops（JPEG base64）。
+               聯合盃稿紙沒有座號劃記（gaozhi/sheet.py SEATMARKS）：沒有 seat，由老師看表頭截圖指定。
+      "blank"  找不到定位標記、幾乎是白紙（掃描機多掃的空白頁）
+      "unknown" 找不到定位標記、上面有東西（混進來的題目卷，或標記被切到）
+    """
+    from .. import seatread as SR
+    if not isinstance(files, list) or not files:
+        raise ServiceError("沒有收到照片")
+    out = []
+    for f in files:
+        name = str((f or {}).get("name") or "page")
+        for pname, img in load_pages(name, unb64((f or {}).get("data"))):
+            r = LC.locate(img, PPM, refine=False)
+            if "error" in r:
+                out.append({"name": pname, "kind": "blank" if SR.blank_page(img) else "unknown", "error": r["error"]})
+                continue
+            tpl = r["template"]
+            page_index = r["page_index"]
+            item = {"name": pname, "kind": "sheet", "template": tpl["id"], "format": tpl["name"], "paper": r["paper"],
+                    "page": page_index + 1, "corners_missing": missing_corners(r)}
+            if SR.has_seatmark(tpl["id"], page_index):
+                geo = SR.paper_geometry(tpl, r["paper"])
+                bub = SR.read_bubbles(r["warped"], geo, PPM)
+                item["seat"] = {"state": bub["state"], "seat": bub["seat"],
+                                "tens": bub["tens"].get("value"), "ones": bub["ones"].get("value")}
+            crops = SR.header_crops(r["warped"], tpl, r["paper"], page_index, PPM)
+            if crops:
+                item["crops"] = [b64(c) for c in crops]
+            out.append(item)
+    return {"pages": out}
+
+
 def prepare(files):
     """一位學生的所有頁 → 每頁拉正的稿紙圖與要送「逐格辨識」preset 的小圖。
 

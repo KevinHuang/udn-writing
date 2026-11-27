@@ -57,7 +57,7 @@ def idcode_quiet_rect(e):
 
 # 座號劃記（全班同一張稿紙時，學生自己寫座號並塗卡）：生成與掃描共用同一套幾何
 SEATMARK_SIZE = 4.0     # 圓圈直徑（mm，樣式原始尺寸）
-SEATMARK_MAX_TENS = 5   # 十位最大到 5（最多 59 號）
+SEATMARK_MAX_TENS = 9   # 十位 0～9（最多 99 號）。外框本來就照個位的 10 個圓圈留位置，十位補滿不會變大（2026-11-26 跟進 1Campus，原本到 5）
 
 
 def seatmark_geometry(e):

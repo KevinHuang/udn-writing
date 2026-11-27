@@ -18,7 +18,7 @@ import {
   type ProxyStatusRow,
 } from '../lib/proxy/status';
 import { pollDelayMs, shouldKeepPolling, POLL_MAX_MS } from '../lib/proxy/poll';
-import { proxyImagePath, originalsFor } from '../lib/proxy/paths';
+import { proxyImagePath, originalsFor, originalsState } from '../lib/proxy/paths';
 
 const T0 = Date.parse('2026-09-29T08:00:00.000Z');
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -175,5 +175,34 @@ describe('原稿路徑', () => {
   test('⚠️ submission 沒有原稿（黑箱沒寫回來）→ 退回批次的照片，不可以是空的', () => {
     assert.deepEqual(originalsFor('12', [], ['b.jpg']), ['submit/assign_12/b.jpg']);
     assert.deepEqual(originalsFor('12', undefined, undefined), []);
+  });
+});
+
+describe('批改清單的原稿燈號', () => {
+  test('繳交自己有照片 → 有原稿', () => {
+    assert.equal(originalsState({ assignmentId: '12', picFiles: ['submit/assign_12/s.jpg'], detailed: true }, undefined), 'has');
+  });
+
+  test('繳交沒有照片、批次那邊有 → 有原稿（和批改頁看到的一致）', () => {
+    assert.equal(originalsState({ assignmentId: '12', picFiles: [], detailed: true }, ['b.jpg']), 'has');
+    // 只有摘要，但批次的照片已經在手上：不必等完整內容
+    assert.equal(originalsState({ assignmentId: '12' }, ['b.jpg']), 'has');
+  });
+
+  test('完整內容到了、兩邊都沒有照片 → 沒有原稿', () => {
+    assert.equal(originalsState({ assignmentId: '12', picFiles: [], detailed: true }, []), 'none');
+    assert.equal(originalsState({ assignmentId: '12', detailed: true }, undefined), 'none');
+  });
+
+  test('⚠️ 只有摘要（還不知道有沒有照片）→ 不可以說沒有原稿', () => {
+    assert.equal(originalsState({ assignmentId: '12' }, undefined), 'unknown');
+    assert.equal(originalsState({ assignmentId: '12', detailed: false }, []), 'unknown');
+  });
+
+  test('⚠️ 和繳交編號無關（以前是用編號最後一碼的奇偶數模擬的）', () => {
+    for (const id of ['2666', '2667']) {
+      assert.equal(originalsState({ id, assignmentId: '12', picFiles: ['a.jpg'], detailed: true } as never, undefined), 'has');
+      assert.equal(originalsState({ id, assignmentId: '12', picFiles: [], detailed: true } as never, undefined), 'none');
+    }
   });
 });

@@ -309,6 +309,18 @@ describe('原稿紅筆：路由', () => {
     assert.equal((await post(cookie, `/service/instructor/grading/${submission}/regrade`)).status, 409);
   });
 
+  test('收回發還之後解鎖：可以再改原稿上的決定', async () => {
+    const { submission } = await gridEssay();
+    const cookie = await login(srv);
+    await post(cookie, `/service/instructor/grading/${submission}`);
+    await post(cookie, '/service/instructor/submission_feedback/return', { submissionIds: [submission] });
+    assert.equal((await post(cookie, '/service/instructor/submission_feedback/unreturn', { submissionIds: [submission] })).status, 200);
+    const body = await (await req(srv, `/service/instructor/grading/${submission}/manuscript`, cookie)).json() as { locked: boolean };
+    assert.equal(body.locked, false);
+    const res = await decide(cookie, submission, { target: 'typo', cellKey: keyOf('待'), action: 'veto' });
+    assert.equal(res.status, 200);
+  });
+
   test('重新評分：還沒用簡易批改批過不行；批過之後用目前的錯字再跑一次，存成新的一版', async () => {
     const { submission } = await gridEssay();
     const cookie = await login(srv);

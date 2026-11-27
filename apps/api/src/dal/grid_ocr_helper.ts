@@ -9,8 +9,17 @@ import type { GridOcrOutput } from '../lib/grid_ocr/pipeline';
 export type GridOcrStatus = 'pending' | 'queued' | 'running' | 'done' | 'failed';
 
 /**
- * 辨識中超過這麼久就當作卡住了（背景工作被關掉）：老師可以重新辨識，前端也顯示成失敗。
+ * 卡住超過這麼久就當作失敗了：老師可以重新辨識，前端也顯示成失敗。
  * 一份作文正常 30～90 秒；前端 lib/proxy/status.ts 的 GRID_STALE_MS 要和這裡一致。
+ *
+ * 兩種卡住，時間基準不同（前端兩格都看，見 proxyOcrStatusOf）：
+ *   running 卡住  背景工作領到了卻沒跑完 → 算 started_at
+ *   queued  卡住  **背景工作根本沒領到**（job 啟動了但在 claim 之前就掛掉、
+ *                 映像檔壞了、配額滿了）→ started_at 還是空的，只能算 updated_at
+ *
+ * 下面的 SQL 只需要處理 running：queued 本來就在可以重新排隊的狀態裡，
+ * 所以老師按「重試」一定動得了 —— 以前的問題是**前端永遠顯示「辨識中」、
+ * 不給重試的按鈕**，那一列就永遠卡著。
  */
 export const STALE_RUNNING_MINUTES = 15;
 

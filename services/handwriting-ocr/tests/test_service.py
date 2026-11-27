@@ -211,6 +211,51 @@ def test_sheet_layout(fmt, seat, title):
     assert [c for c in clashes if c[0] in mine and c[1] in mine] == []        # 新加的表頭彼此不重疊
 
 
+def _cap_header(paper, **kw):
+    cfg, p, seat = sheet.config(sheet_req(format="cap", paper=paper, **kw))
+    _, lay, warnings = sheet._render(cfg, p, seat, subset=False)
+    return lay["paper_mm"], [e for e in lay["pages"][0]["header_elements"] if e["bbox"]], warnings
+
+
+@needs_font
+@pytest.mark.parametrize("paper,margin", [("B4", 11.5), ("A3", 12.0)])
+def test_cap_seatmark_inside_markers(paper, margin):
+    """會考稿紙座號劃記版：表頭每樣東西（座號劃記、得分框、校名）都不比四角定位標記更靠紙邊，影印不會被切掉。"""
+    (w, h), els, warnings = _cap_header(paper, seat_marks=True, school="臺北市立第一示範國民中學附設實驗班部")
+    assert warnings == []
+    seat = [e for e in els if e["type"] == "seatmark"]
+    assert len(seat) == 1
+    assert w - seat[0]["bbox"][2] >= margin
+    assert all(w - e["bbox"][2] >= margin for e in els)
+
+
+@needs_font
+def test_cap_seatmark_layout_fields():
+    """會考稿紙座號劃記版：勾了日期也不印；得分是右上角的方框；班級、姓名排在緊鄰格子的同一列。"""
+    _, els, _ = _cap_header("B4", seat_marks=True)
+    labels = {e["text"] for e in els if e["type"] == "field"}
+    assert labels == {"班級", "姓名"}
+    boxes = [e for e in els if e["type"] == "box"]
+    assert len(boxes) == 1 and boxes[0]["bbox"][1] < 40
+    cls, name = sorted((e for e in els if e["type"] == "field"), key=lambda e: e["bbox"][1])
+    assert cls["bbox"][0] == name["bbox"][0] and cls["bbox"][3] < name["bbox"][1]
+    _, els, _ = _cap_header("B4", seat_marks=True, fields={"class_seat_name": False, "date": True, "score": False})
+    assert [e for e in els if e["type"] in ("field", "box")] == []
+    _, els, _ = _cap_header("B4", seat_marks=False)
+    assert {e["text"] for e in els if e["type"] == "field"} == {"班級", "座號", "姓名", "日期", "得分"}   # 一般版照舊
+
+
+@needs_font
+@pytest.mark.parametrize("school", ["展示高中", "一二三四五六七八九十一二三四五六七八九", "一二三四五六七八九十一二三四五六七八九十"])
+@pytest.mark.parametrize("score", [False, True])
+def test_cap_seatmark_long_school(school, score):
+    """座號劃記版校名在得分框下面直排：快滿 20 字時縮小，不碰到座號劃記。"""
+    fields = {**ALL, "score": score}
+    warnings, clashes = sheet.layout_ok(sheet_req(format="cap", seat_marks=True, school=school, fields=fields))
+    assert warnings == []
+    assert [c for c in clashes if "請從本行開始作答。" not in c] == []      # 只剩樣式本來的箭頭貼著這行字
+
+
 @needs_font
 @pytest.mark.parametrize("question", ["analytical", "affective"])
 @pytest.mark.parametrize("seat", [False, True])

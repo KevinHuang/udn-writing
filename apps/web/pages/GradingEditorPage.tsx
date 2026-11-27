@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { GradingEditor } from "../components/GradingEditor";
 import { useAppState } from "../state/appStateContext";
@@ -17,7 +17,7 @@ export const GradingEditorPage: React.FC = () => {
   const {
     assignments, courses, questions, submissions, gradingResetSeq,
     selectedAiModel, setSelectedAiModel, handleSaveGrading, handleResetGrading,
-    handleAutoGrade, handleRegrade, handlePublishOne,
+    handleAutoGrade, handleRegrade, handlePublishOne, handleUnpublishOne,
     submissionMarks, toggleMark, ensureSubmissions,
   } = useAppState();
 
@@ -43,6 +43,15 @@ export const GradingEditorPage: React.FC = () => {
    * 「重置批改」也不會出現。現查之後那個同步問題不存在了。
    */
   const submission = submissions.find((s) => s.id === submissionId);
+  /*
+    完整內容（作文、評語）到了沒有。GradingEditor 把批改結果收在自己的 state 裡、只在掛載時讀一次，
+    所以「掛載時手上只有摘要」的話評語會一直是空的，老師這時改分數存檔，會把 AI 的評語蓋成空白。
+    記住這一份的完整內容到過了，放進下面的 key：第一次到的時候重掛一次，把評語帶進去。
+    只記「到過」、不跟著 detailed 來回變：存檔後摘要重新載入不該讓編輯器再重掛。
+    （render 中設 state 是 React 允許的寫法；放在提早 return 之前，hook 的順序才不會變。）
+  */
+  const [detailedFor, setDetailedFor] = useState<string | null>(null);
+  if (submission?.detailed && detailedFor !== submission.id) setDetailedFor(submission.id);
   if (!submission) return <NotFoundPage message="找不到這份作品，它可能已經被清除了。" />;
 
   const assign = assignments.find((a) => a.id === submission.assignmentId);
@@ -89,12 +98,13 @@ export const GradingEditorPage: React.FC = () => {
     兩種情況需要清乾淨：
       換人      —— id 變了。不重掛的話上一位的分數與評語會留在畫面上
       重置批改  —— 學生沒換但結果被清掉了，靠 gradingResetSeq 觸發
+      完整內容到了 —— 掛載時只有摘要（沒有評語），見上面的 detailedFor
     存檔刻意不重掛：存完老師通常接著按「下一位」，
     版面（例如收起原文的專注模式）不該每存一次就彈回來。
   */
   return (
     <GradingEditor
-      key={`${submission.id}:${gradingResetSeq}`}
+      key={`${submission.id}:${gradingResetSeq}:${detailedFor === submission.id ? 'full' : 'summary'}`}
       submission={shown}
       ocrReview={ocrReview}
       queuePosition={index >= 0 ? { index: index + 1, total } : undefined}
@@ -111,6 +121,7 @@ export const GradingEditorPage: React.FC = () => {
       onSelectAiModel={(model) => setSelectedAiModel(model)}
       onResetGrading={handleResetGrading}
       onPublish={handlePublishOne}
+      onUnpublish={handleUnpublishOne}
       onAutoGrade={handleAutoGrade}
       onRegrade={handleRegrade}
       marks={submissionMarks}

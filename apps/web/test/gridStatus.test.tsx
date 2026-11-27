@@ -7,7 +7,10 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { failureReasonOf, GRID_STALE_MS, proxyOcrStatusOf, type ProxyStatusRow } from '../lib/proxy/status';
+import {
+  failureReasonOf, GRID_STALE_MS, proofreadGateMessage, proxyOcrStatusOf, unproofreadKindOf,
+  type ProxyStatusRow,
+} from '../lib/proxy/status';
 import { enqueue, markFailed } from '../lib/proxy/queue';
 
 const T0 = Date.parse('2026-11-20T08:00:00Z');
@@ -40,6 +43,34 @@ describe('逐格辨識的狀態對應', () => {
     assert.match(failureReasonOf(r, T0) ?? '', /太久/);
   });
 
+  /*
+    queued 卡住：job 啟動了卻在領取（claim）之前就掛掉 —— started_at 永遠是空的。
+    以前這一格只對應成「辨識中」，而逾時只看 running，於是那一列永遠轉圈，
+    而「重試」只出現在失敗的人身上，老師沒有任何辦法讓它動。
+  */
+  test('送出去卻一直沒被領取（queued 卡住超過 15 分鐘）→ 失敗', () => {
+    const r = row({ gridStatus: 'queued', gridUpdatedAt: new Date(T0 - GRID_STALE_MS - 1000).toISOString() });
+    assert.equal(proxyOcrStatusOf(r, { nowMs: T0 }), 'failed');
+    assert.match(failureReasonOf(r, T0) ?? '', /一直沒有開始/);
+  });
+
+  test('queued 還沒超過 15 分鐘 → 還是「辨識中」，不要嚇老師', () => {
+    const r = row({ gridStatus: 'queued', gridUpdatedAt: new Date(T0 - 60_000).toISOString() });
+    assert.equal(proxyOcrStatusOf(r, { nowMs: T0 }), 'running');
+    assert.equal(failureReasonOf(r, T0), null);
+  });
+
+  test('舊資料沒有 gridUpdatedAt → 不當成卡住（維持現況）', () => {
+    assert.equal(proxyOcrStatusOf(row({ gridStatus: 'queued' }), { nowMs: T0 }), 'running');
+  });
+
+  test('卡住的兩種原因分得開：領到了沒跑完 vs 根本沒領到', () => {
+    const stuckRunning = row({ gridStatus: 'running', gridStartedAt: new Date(T0 - GRID_STALE_MS - 1).toISOString() });
+    const stuckQueued = row({ gridStatus: 'queued', gridUpdatedAt: new Date(T0 - GRID_STALE_MS - 1).toISOString() });
+    assert.match(failureReasonOf(stuckRunning, T0) ?? '', /太久沒有完成/);
+    assert.match(failureReasonOf(stuckQueued, T0) ?? '', /一直沒有開始/);
+  });
+
   test('失敗原因：逐格辨識有，ocr-job 沒有', () => {
     assert.equal(failureReasonOf(row({ gridStatus: 'failed', gridError: '右上角定位標記看不清楚，請重拍' }), T0),
       '右上角定位標記看不清楚，請重拍');
@@ -65,5 +96,44 @@ describe('上傳佇列：要重拍 vs 沒傳上去', () => {
     let q = markFailed(enqueue([], { id: 'j1', studentId: '1', pageCount: 2 }), 'j1', '請重拍', true);
     q = enqueue(q, { id: 'j2', studentId: '1', pageCount: 2 });
     assert.deepEqual(q.map((j) => [j.id, j.state]), [['j2', 'pending']]);
+  });
+});
+
+/*
+  批次批改前那一關。未校對分兩種，該不該先校對答案相反：
+  整張辨識的要先校對；稿紙逐格辨識的會用簡易批改，校對不是必要的（改過文字反而改用一般批改）。
+  批改頁早就分開講了，這一關以前不分 —— 老師在清單上被勸去做批改頁說不必做的事。
+*/
+describe('批次批改前：要不要先勸老師校對', () => {
+  const done = { ocrTime: '2026-11-20T07:59:00Z', hasContent: true };
+
+  test('整張辨識完成 → legacy；逐格辨識完成 → grid', () => {
+    assert.equal(unproofreadKindOf(row(done), 'done'), 'legacy');
+    assert.equal(unproofreadKindOf(row({ ...done, gridStatus: 'done' }), 'done'), 'grid');
+  });
+
+  test('還沒辨識完、失敗、沒登錄的都不算未校對', () => {
+    assert.equal(unproofreadKindOf(row({}), 'queued'), null);
+    assert.equal(unproofreadKindOf(row({ gridStatus: 'failed' }), 'failed'), null);
+    assert.equal(unproofreadKindOf(undefined, 'idle'), null);
+  });
+
+  test('全部都是逐格辨識 → 不擋，直接批改', () => {
+    assert.equal(proofreadGateMessage({ legacy: 0, grid: 5 }), null);
+    assert.equal(proofreadGateMessage({ legacy: 0, grid: 0 }), null);
+  });
+
+  test('有整張辨識的 → 擋，而且只數那幾篇', () => {
+    const msg = proofreadGateMessage({ legacy: 2, grid: 0 }) ?? '';
+    assert.match(msg, /有 2 篇/);
+    assert.match(msg, /先點進去對照原稿校對/);
+    assert.equal(/簡易批改/.test(msg), false);
+  });
+
+  test('兩種混在一起 → 說清楚另外那幾篇不必先校對', () => {
+    const msg = proofreadGateMessage({ legacy: 1, grid: 3 }) ?? '';
+    assert.match(msg, /有 1 篇/);
+    assert.match(msg, /另外 3 篇是稿紙逐格辨識的/);
+    assert.match(msg, /不必先校對/);
   });
 });

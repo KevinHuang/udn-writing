@@ -555,6 +555,29 @@ describe('學生繳交與草稿', () => {
     assert.equal(row.t, 'array', '以前路由先 stringify 一次、helper 又一次，存成的是字串');
     assert.deepEqual(row.pic_files, files);
   });
+
+  /*
+    只能交自己班的作業。以前只看作業開不開放 —— 知道作業編號就能對別班的作業
+    寫進一筆 submission（那一列不會出現在任何教師畫面，所以沒有症狀）。
+  */
+  test('⚠️ 別班的作業 → 404，而且一列都沒寫進去（草稿也一樣）', async () => {
+    const s = await asStudent();
+    const otherCourse = await seedCourse(await seedSchool('別的學校', 'other.edu.tw'), '別人的班');
+    const theirAssignment = await seedAssignment(otherCourse, await seedTask(s.me.id), s.me.id);
+
+    for (const isSubmitted of [true, false]) {
+      const res = await submit(s.cookie, theirAssignment, '不該寫得進去', isSubmitted);
+      assert.equal(res.status, 404, '以前這裡是 200');
+    }
+    const { count } = await rawDb.one(
+      `SELECT count(*)::int FROM submission WHERE ref_assignment_id = $1`, [theirAssignment]);
+    assert.equal(count, 0);
+  });
+
+  test('不存在的作業 → 404（和「不是你的班」不區分）', async () => {
+    const s = await asStudent();
+    assert.equal((await submit(s.cookie, '999999999', '作文', true)).status, 404);
+  });
 });
 
 /**

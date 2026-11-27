@@ -14,11 +14,17 @@ export type LoadStatus = 'loading' | 'ready' | 'error';
  * `reloadKey` 變了就重新載入。給「enabled 沒變、但資料範圍變了」的情形用 ——
  * 授課教師切到聯合報管理人員時兩邊都是教師端，enabled 一直是 true，
  * 不靠這個的話畫面會停在切換前那個身分看得到的資料。
+ *
+ * `merge`：載入回來的資料要怎麼和手上的合起來。沒給就整份換掉。
+ * 給「這支 API 只回一部分欄位、別的地方已經補過其他欄位」的清單用 —— 繳交摘要沒有作文與評語，
+ * 整份換掉會把批改頁剛補好的內容抹掉（lib/submissionMerge.ts）。**要傳固定的函式**（寫在模組最外層），
+ * 每次 render 都是新函式的話會一直重新載入。
  */
 export function useApiList<T>(
   load: () => Promise<T[]>,
   enabled: boolean,
   reloadKey?: unknown,
+  merge?: (prev: T[], next: T[]) => T[],
 ): {
   items: T[];
   setItems: React.Dispatch<React.SetStateAction<T[]>>;
@@ -34,7 +40,8 @@ export function useApiList<T>(
   const reload = useCallback(async () => {
     setStatus('loading');
     try {
-      setItems(await load());
+      const rows = await load();
+      setItems((prev) => (merge ? merge(prev, rows) : rows));
       setStatus('ready');
     } catch (e) {
       console.error('載入失敗:', e);
@@ -43,13 +50,13 @@ export function useApiList<T>(
       // 後者才是實際發生的事。
       setStatus('error');
     }
-  }, [load]);
+  }, [load, merge]);
 
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
     load()
-      .then((rows) => { if (!cancelled) { setItems(rows); setStatus('ready'); } })
+      .then((rows) => { if (!cancelled) { setItems((prev) => (merge ? merge(prev, rows) : rows)); setStatus('ready'); } })
       .catch((e) => {
         if (cancelled) return;
         console.error('載入失敗:', e);
@@ -57,7 +64,7 @@ export function useApiList<T>(
         setStatus('error');
       });
     return () => { cancelled = true; };
-  }, [enabled, load, reloadKey]);
+  }, [enabled, load, reloadKey, merge]);
 
   return { items, setItems, status, reload };
 }

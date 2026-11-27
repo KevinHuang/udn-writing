@@ -85,7 +85,7 @@ function resultOf(r: RawSubmissionBase, feedbackText: string): GradingResult | u
 function toSubmission(
   r: RawSubmissionBase,
   assignmentId: string,
-  opts: { content?: string; feedbackText?: string; picFiles?: string[] } = {},
+  opts: { content?: string; feedbackText?: string; picFiles?: string[]; detailed?: boolean } = {},
 ): Submission {
   return {
     /**
@@ -108,6 +108,8 @@ function toSubmission(
       isReturned: r.is_returned,
     }),
     result: resultOf(r, opts.feedbackText ?? ''),
+    feedbackId: r.feedback_id != null ? String(r.feedback_id) : undefined,
+    detailed: opts.detailed,
   };
 }
 
@@ -127,6 +129,7 @@ export async function fetchSubmissionsByAssignment(assignmentId: string): Promis
       content: r.content ?? '',
       feedbackText: feedbackTextOf(r.ai_analysis),
       picFiles: picFilesOf(r.pic_files),
+      detailed: true,
     }),
   );
 }
@@ -159,6 +162,14 @@ export async function returnFeedback(submissionIds: string[]): Promise<void> {
   await api.post('/service/instructor/submission_feedback/return', { submissionIds });
 }
 
+/**
+ * 收回發還：退回「已批改、還沒發還」。分數與評語留著（和重置不一樣），
+ * 學生端在再次發還之前看不到這一篇的成績；原稿上的紅筆解鎖。
+ */
+export async function unreturnFeedback(submissionIds: string[]): Promise<void> {
+  await api.post('/service/instructor/submission_feedback/unreturn', { submissionIds });
+}
+
 /** 用 AI 批改某一份作品。後端會寫入一筆 `is_ai = true` 的版本。 */
 export async function gradeWithAi(submissionId: string): Promise<void> {
   await api.post(`/service/instructor/grading/${submissionId}`);
@@ -187,7 +198,13 @@ export async function proxySubmit(
     assignment_id: assignmentId,
     user_id: studentId,
     content,
-    word_count: content.length,
+    /*
+      和學生自己繳交同一支 countWords()（不算空白與換行）。這裡以前是 content.length ——
+      學生端早就改掉了（見 lib/wordCount.ts 的說明），老師端的代繳交與「校對文字」存檔
+      卻還留著：校對完一存檔，那篇的字數就因為分段的換行而跳高，而成績管理與
+      「不足 100 字」讀的都是資料庫這一欄。逐格辨識寫回時用的也是不含空白的字數。
+    */
+    word_count: countWords(content),
     files,
     ...(opts.confirmOcr ? { confirm_ocr: true } : {}),
   });

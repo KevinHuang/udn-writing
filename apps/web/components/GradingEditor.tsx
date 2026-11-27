@@ -1,6 +1,6 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Save, CheckCircle2, PenTool, Highlighter, FileText, Layout, PanelLeftClose, PanelLeftOpen, BookOpen, Image as ImageIcon, X, Sparkles, Bot, ChevronDown, RotateCcw, Send, ChevronLeft, ChevronRight, AlertTriangle, Loader2 } from 'lucide-react';
+import { ArrowLeft, Save, CheckCircle2, PenTool, Highlighter, FileText, Layout, PanelLeftClose, PanelLeftOpen, BookOpen, Image as ImageIcon, X, Sparkles, Bot, ChevronDown, RotateCcw, Send, ChevronLeft, ChevronRight, AlertTriangle, Loader2, Undo2 } from 'lucide-react';
 import { Submission, GradingResult } from '../types';
 /*
   評語編輯器延後載入。它背後是 TipTap／ProseMirror（兩百多 KB），
@@ -26,6 +26,8 @@ import {
   type MarkKind,
   type SubmissionMarks,
 } from '../lib/submissionMarks';
+import { canResetGrading } from '../lib/resetGrading';
+import { countWords } from '../lib/wordCount';
 import { SubmissionStampRow } from './SubmissionStamp';
 import { SHOW_AI_MODEL_PICKER } from '../lib/features';
 import { SimpleGradingPanel } from './SimpleGradingPanel';
@@ -72,6 +74,8 @@ interface GradingEditorProps {
   onResetGrading?: (submissionId: string) => void;
   /** 單筆發還。改完一位就先讓他看到，不必等整班改完 */
   onPublish?: (submissionId: string) => void;
+  /** 單筆收回發還：退回已批改，分數與評語留著。失敗時要 reject，這裡才跳得出錯誤訊息 */
+  onUnpublish?: (submissionId: string) => Promise<void>;
   /**
    * 用 AI 批改這一篇。**會直接存進資料庫**（後端寫一筆 is_ai = true 的版本），
    * 所以按完不需要再按儲存。失敗時要 reject，這裡才跳得出錯誤訊息。
@@ -116,6 +120,7 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
   onSelectAiModel,
   onResetGrading,
   onPublish,
+  onUnpublish,
   onAutoGrade,
   onRegrade,
   marks,
@@ -260,7 +265,9 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
       .then((data) => { if (alive) setManuscript(data); })
       .catch(() => { if (alive) setManuscript(null); });
     return () => { alive = false; };
-  }, [submission.id, hasDraft]);
+    // isPublished：原稿鎖不鎖（locked）是後端照「有沒有發還」算的，發還、收回發還之後要重抓，
+    // 不然剛發還的原稿還能點、剛收回的原稿還是鎖著（以前只在換人時抓一次，發還後不會顯示鎖住的提示）
+  }, [submission.id, hasDraft, isPublished]);
 
   /*
     顯示用的卡片＝簡易批改存下的卡片＋目前老師加的錯字：老師加的錯字落在引用上，那段引用先拿掉
@@ -324,6 +331,26 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
       return false;
     } finally {
       setDecisionBusy(false);
+    }
+  };
+
+  /**
+   * 收回發還：學生會暫時看不到成績，按之前先確認。
+   * 分數與評語留著（和旁邊的「重置」不一樣），所以確認文字要講清楚這一點。
+   */
+  const [unpublishing, setUnpublishing] = useState(false);
+  const handleUnpublish = async () => {
+    if (!onUnpublish || unpublishing) return;
+    const ok = window.confirm(
+      '收回發還之後，學生會暫時看不到這一篇的分數和評語，要再按一次「發還」才看得到。\n分數和評語都會留著，不用重新批改。要收回嗎？');
+    if (!ok) return;
+    setUnpublishing(true);
+    try {
+      await onUnpublish(submission.id);
+    } catch (e) {
+      window.alert(`收回發還沒有成功，這一篇還是已發還的狀態。\n${e instanceof Error ? e.message : '請再試一次。'}`);
+    } finally {
+      setUnpublishing(false);
     }
   };
 
@@ -485,7 +512,7 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                                 </p>
                             )}
                             <div className="flex items-center justify-end gap-2">
-                                <span className="mr-auto text-caption text-text-muted">{proofText.trim().length} 字</span>
+                                <span className="mr-auto text-caption text-text-muted">{countWords(proofText)} 字</span>
                                 <button
                                     onClick={() => setProofreading(false)}
                                     disabled={proofSaving}
@@ -646,14 +673,19 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
               </button>
             )}
 
-            {/* 已批改或已發還都能重置 —— 發還出去才發現評語寫錯是常有的事 */}
-            {(isGraded || isPublished) && (
+            {/*
+              已批改或已發還都能重置 —— 發還出去才發現評語寫錯是常有的事。
+              範圍問 canResetGrading()，和清單那顆批次按鈕同一支（lib/resetGrading.ts）。
+              按下去會先跳確認視窗（handleResetGrading）：已發還的那一份會把學生
+              看到的成績收回，只想改紅筆的話旁邊的「收回發還」才是要按的。
+            */}
+            {canResetGrading(submission.status) && (
               <button
                   id="gradingeditor-btn-reset"
                   onClick={() => onResetGrading?.(submission.id)}
                   className="shrink-0 whitespace-nowrap flex items-center gap-1 md:gap-2 px-2 md:px-4 py-2 md:py-2.5 rounded-xl text-body font-bold bg-danger-600 text-on-accent hover:opacity-90 shadow-lg shadow-danger-600/20 transition-all active:scale-95"
                   /* danger-600 是量出來的：500 在碑拓模式只有 3.88，過不了 4.5 */
-                  title="清除分數與評語，退回「待批改」"
+                  title="清除分數與評語，退回「待批改」（會先確認）"
               >
                   <RotateCcw size={14} className="md:w-[18px] md:h-[18px]" />
                   {/* 只寫「重置」，完整說明交給滑鼠停留的 title */}
@@ -694,6 +726,26 @@ export const GradingEditor: React.FC<GradingEditorProps> = ({
                   <CheckCircle2 size={14} className="md:w-[18px] md:h-[18px]" />
                   <span>已發還</span>
               </span>
+            )}
+
+            {/*
+              收回發還：發還之後才發現要改 —— 原稿上的紅筆發還後會鎖住，提示文字叫老師「先收回發還」。
+              以前沒有這顆，唯一能解鎖的是「重置」，會把分數與評語一起清掉。
+              樣式刻意比「重置」輕：它不會弄丟任何東西，再發還一次就回來。
+            */}
+            {isPublished && onUnpublish && (
+              <button
+                  id="gradingeditor-btn-unpublish"
+                  onClick={handleUnpublish}
+                  disabled={unpublishing}
+                  className="shrink-0 whitespace-nowrap flex items-center gap-1 md:gap-2 px-2 md:px-4 py-2 md:py-2.5 rounded-xl text-body font-bold bg-surface-soft text-text-primary border border-border-strong hover:bg-ink-100 transition-all active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed"
+                  title="退回「已批改」，分數與評語留著。學生要等再次發還才看得到"
+              >
+                  {unpublishing
+                    ? <Loader2 size={14} className="md:w-[18px] md:h-[18px] animate-spin" />
+                    : <Undo2 size={14} className="md:w-[18px] md:h-[18px]" />}
+                  <span>收回發還</span>
+              </button>
             )}
 
             {/*

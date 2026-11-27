@@ -256,6 +256,16 @@ export interface Submission {
   status: SubmissionStatus;
   result?: GradingResult;
   /**
+   * 目前有效那一版批改的編號（`submission_feedback.id`）。摘要與完整內容兩支 API 都有。
+   * 用來判斷「手上的評語還是不是這一版的」—— 見 apps/web/lib/submissionMerge.ts。
+   */
+  feedbackId?: string;
+  /**
+   * 這一筆帶了作文、原稿照片與評語（教師端「某一份作業的完整繳交」那支 API 來的）。
+   * 摘要沒有這些，`content` 是空字串、評語是空字串 —— **空的不代表學生沒寫**，要看這個旗標。
+   */
+  detailed?: boolean;
+  /**
    * 老師蓋了佳作章。**只有學生端的資料會填**，而且後端只在發還之後給 true。
    * 教師端的標記走 submissionMarks（lib/submissionMarks.ts），不要讀這一欄。
    */

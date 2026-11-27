@@ -42,11 +42,13 @@ import { countWords } from '../lib/wordCount';
 /**
  * 送出／存草稿失敗時給學生看的話。
  *
- * 後端有講原因的（截止了、已經批改過）照實說 —— 那是學生能理解、也能據以行動的；
- * 其餘才當作網路問題。一律寫「請檢查網路連線」會讓截止後才交的學生一直重試。
+ * 後端有講原因的（截止了、已經批改過、不在這個班的名冊上）照實說 —— 那是學生能理解、
+ * 也能據以行動的；其餘才當作網路問題。一律寫「請檢查網路連線」會讓截止後才交的學生一直重試。
+ *
+ * 404＝後端查不到這份作業或學生不在名冊上（轉班、名冊同步出錯）：要他去找老師，重試沒有用。
  */
 function failureMessage(err: unknown, fallback: string): string {
-  return err instanceof ApiError && err.status === 409 ? err.message : fallback;
+  return err instanceof ApiError && (err.status === 409 || err.status === 404) ? err.message : fallback;
 }
 
 interface StudentEssayEditorProps {

@@ -167,11 +167,45 @@ def test_fixed_sheet_is_recognised(fmt, paper):
 
 @pytest.mark.parametrize("fmt", FIXED)
 def test_fixed_sheets_ignore_header_options(fmt):
-    """表頭是原稿紙上的：沒有大標題也能印，給了學校名稱、座號劃記也不會多印東西。"""
+    """表頭是原稿紙上的：沒有大標題也能印，給了學校名稱、填寫欄也不會多印東西。"""
     plain, _, _ = sheet.config({"format": fmt})
-    extra, _, seat = sheet.config({"format": fmt, "school": "某某國中", "title": "期中", "seat_marks": True,
-                                   "fields": {"date": True}})
+    extra, _, seat = sheet.config({"format": fmt, "school": "某某國中", "title": "期中", "fields": {"date": True}})
     assert plain == extra and seat is False
+
+
+def test_seatmark_only_on_udn_page1():
+    """座號劃記：國中稿紙可以加印，只在第 1 頁；聯合盃給了也不印（稿紙寫著不能留下辨識身份的記號）。"""
+    cfg, _, seat = sheet.config({"format": "udn", "seat_marks": True})
+    assert seat is True
+    assert [[e["type"] for e in pg["elements"]] for pg in cfg["pages"]] == [["seatmark"], []]
+    plain, _, _ = sheet.config({"format": "ucup"})
+    cfg, _, seat = sheet.config({"format": "ucup", "seat_marks": True})
+    assert seat is False and cfg == plain
+
+
+@needs_font
+@pytest.mark.parametrize("paper", PAPERS_OF["udn"])
+def test_udn_seatmark_is_clear_of_everything(paper):
+    """國中稿紙的座號劃記：離原稿紙上的任何印刷、定位標記至少 3mm，離紙邊至少 7mm，圓圈印出來至少 3mm；
+    加印之後照樣認得出稿紙、格子裡沒有被當成字的東西。"""
+    tpl = L.load_template("udn")
+    t = L.paper_transform(tpl, paper)
+    k, ox, oy = t["scale"], t["ox"], t["oy"]
+    x0, y0, x1, y1 = L.seatmark_geometry(sheet.SEATMARKS["udn"])["bbox"]
+    x0, y0, x1, y1 = ox + k * x0, oy + k * y0, ox + k * x1, oy + k * y1
+    ink = _printed("udn", paper, 0)                       # 沒加印劃記的那一頁（含定位標記）
+    dist = cv2.distanceTransform((~ink).astype(np.uint8), cv2.DIST_L2, 5) / PPM
+    clear = dist[int(y0 * PPM):int(y1 * PPM), int(x0 * PPM):int(x1 * PPM)].min()
+    assert clear >= MIN_CLEAR, f"udn {paper} 座號劃記離印刷只有 {clear:.1f}mm"
+    W, H = t["paper_mm"]
+    assert min(x0, y0, W - x1, H - y1) >= 7.0
+    assert sheet.SEATMARKS["udn"]["size"] * k >= 3.0
+    warnings, clashes = sheet.layout_ok({"format": "udn", "paper": paper, "seat_marks": True})
+    assert warnings == [] and clashes == []
+    doc = pymupdf.open(stream=sheet.pdf({"format": "udn", "paper": paper, "seat_marks": True})["pdf"], filetype="pdf")
+    f = {"name": "p0.png", "data": core.b64(doc[0].get_pixmap(dpi=100).tobytes("png"))}
+    [p] = core.prepare([f])["pages"]
+    assert (p["template"], p["page"], p["paper"], p["ink_cells"]) == ("udn", 1, paper, 0)
 
 
 # ---- 只嵌開放授權的字型 ----

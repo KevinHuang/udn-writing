@@ -5,6 +5,7 @@ import {
   Camera,
   Check,
   FileText,
+  Files,
   Keyboard,
   ListChecks,
   Loader2,
@@ -23,6 +24,7 @@ import { Assignment, Submission } from '../types';
      那其實是使用者編號，而這個班的 seat_no 全是 null）。
 */
 import { seatText } from '../lib/gradingQueue';
+import { countWords } from '../lib/wordCount';
 import { checkImageFile } from '../lib/questionMeta';
 import { imageUrlOf } from '../api/ai';
 import {
@@ -58,6 +60,8 @@ import {
 } from '../lib/proxy/queue';
 import { PROXY_OCR_STYLE } from '../lib/statusStyles';
 import { DocumentScannerModal, type ScannedPage } from './scan/DocumentScannerModal';
+import { BatchScanModal, type BatchScanSend } from './BatchScanModal';
+import type { RosterStudent } from '../lib/batchScan';
 import { ConfirmDialog } from './ConfirmDialog';
 
 type Tab = 'register' | 'progress';
@@ -146,6 +150,8 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
 
   // ── 其他 ──────────────────────────────────────────────────────
   const [scannerOpen, setScannerOpen] = useState(false);
+  /** 整疊掃描（全班掃成一份 PDF，照塗的座號分人）：開在這個視窗上面 */
+  const [batchScanOpen, setBatchScanOpen] = useState(false);
   const [issues, setIssues] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -315,6 +321,44 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
     setTyped('');
   };
 
+  // ── 整疊掃描 ──────────────────────────────────────────────────
+  const toRosterStudent = (s: Submission): RosterStudent =>
+    ({ studentId: s.studentId, name: s.studentName, seatNo: s.seatNo ?? null });
+  /** 塗的座號要對**全班**的名單，不是只對還沒交的人 —— 不然已經交了的人塗的座號會變成「不在名單上」 */
+  const batchRoster = useMemo(() => rosterSubmissions.map(toRosterStudent), [rosterSubmissions]);
+  /**
+   * 整疊掃描可以自動配給誰：還沒交（或只有草稿），而且這條流程裡還沒有他的照片。
+   *
+   * ⚠️ 已經登錄過照片的（待辨識、辨識中、已辨識）不算 —— 一位一位拍的時候換照片會先問一聲
+   *    （confirmReplace），整疊一次送三十份沒辦法一份一份問，所以乾脆不讓它蓋。
+   *    辨識失敗、照片沒傳上去的可以：那本來就是要重來的。
+   */
+  const batchCandidates = useMemo(
+    () =>
+      rosterSubmissions
+        .filter((s) => s.status === 'Unsubmitted' || s.status === 'Draft')
+        .filter((s) => ['idle', 'failed', 'upload_failed'].includes(statusOf(s.studentId)))
+        .map(toRosterStudent),
+    [rosterSubmissions, statusOf],
+  );
+
+  /** 老師核對完送出：每一份排進上傳佇列（和一位一位拍的走同一條路），然後去看進度 */
+  const sendBatchScan = (sends: BatchScanSend[]) => {
+    let q = queueRef.current;
+    sends.forEach(({ studentId, blobs }, i) => {
+      const id = `${studentId}-${Date.now()}-b${i}`;
+      blobsRef.current.set(id, blobs);
+      q = enqueue(q, { id, studentId, pageCount: blobs.length });
+    });
+    commitQueue(q);
+    pump();
+    setBatchScanOpen(false);
+    setActiveStudentId(null);
+    setIssues([]);
+    setNotice(`整疊掃描收了 ${sends.length} 位的稿紙，正在上傳。傳完之後按「開始辨識」。`);
+    setTab('progress');
+  };
+
   /** 已經有照片（待辨識／辨識中／已完成）的，換掉之前先問 */
   const receivePhotos = (blobs: Blob[]) => {
     if (!active || !blobs.length) return;
@@ -352,6 +396,18 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
   };
 
   // ── 開始辨識／重試 ────────────────────────────────────────────
+  /**
+   * 重試一定要帶 `force`。
+   *
+   * ⚠️ 失敗最常見的一種是「辨識跑完了，但結果是空的」——那一列的 ocr_time 有值，
+   *    而 /ocr_proxy/start 會把「已經有 ocr_time」的跳過（reason: already_done），
+   *    除非帶 force。先前單人的「重試」帶了，「全部重試失敗的 N 位」沒帶，
+   *    於是整批按下去一個都不會動，畫面只回一句「沒有需要辨識的學生」。
+   *
+   * 對象只有失敗的那幾位（retryTargets），所以 force 不會去重跑辨識成功的人。
+   */
+  const retry = (studentIds: string[]) => start(studentIds, true);
+
   const start = async (studentIds?: string[], force = false) => {
     setStarting(true);
     setNotice(null);
@@ -495,7 +551,7 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
         </div>
 
         {/* 分頁 */}
-        <div className="px-5 pt-3 shrink-0">
+        <div className="px-5 pt-3 shrink-0 flex flex-wrap items-center justify-between gap-2">
           <div className="inline-flex p-1 rounded-xl bg-surface-soft border border-border" role="tablist">
             {([
               ['register', '登錄照片', Camera],
@@ -523,6 +579,16 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
               </button>
             ))}
           </div>
+          <button
+            id="proxysubmit-btn-batchscan"
+            type="button"
+            onClick={() => setBatchScanOpen(true)}
+            title="全班的稿紙用掃描機掃成一份 PDF，照塗的座號自動分給學生"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-card border border-border-strong text-body text-text-primary hover:bg-surface-soft transition-colors whitespace-nowrap"
+          >
+            <Files size={15} className="shrink-0" />
+            整疊掃描
+          </button>
         </div>
 
         {(notice || loadError) && (
@@ -590,6 +656,9 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                   <p className="text-caption text-text-muted max-w-sm">
                     拍完會自動上傳並跳到下一位，不必等辨識。全部收完再按下方的「開始辨識」。
                   </p>
+                  <p className="text-caption text-text-muted max-w-sm">
+                    有掃描機的話，可以用右上角的「整疊掃描」一次收全班。
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -642,7 +711,11 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                     </div>
                   )}
 
-                  {/* 上傳。相機與選檔分開兩顆，手機上 capture 才會直接開相機 */}
+                  {/*
+                    拍照只留「掃描稿紙」一顆（2026-11-27 使用者決定，和學生端一致）。
+                    以前旁邊還有一顆「直接拍照」當備用；現在掃描開不起來時，掃描視窗自己會退回手機內建的相機
+                    （lib/scan/fallback.ts），平常不必讓老師在兩顆之間選。
+                  */}
                   <div className="flex flex-wrap gap-2">
                     <button
                       id="proxysubmit-btn-scan"
@@ -654,26 +727,8 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                       {hasPhotos ? '重新掃描' : '掃描稿紙'}
                     </button>
                     <label
-                      id="proxysubmit-btn-camera"
-                      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-card border border-border-strong text-text-primary text-body cursor-pointer hover:bg-surface-soft transition-colors whitespace-nowrap"
-                    >
-                      <Camera size={16} className="shrink-0" />
-                      直接拍照
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp"
-                        capture="environment"
-                        multiple
-                        className="hidden"
-                        onChange={(e) => {
-                          handleFiles(e.target.files);
-                          e.target.value = '';
-                        }}
-                      />
-                    </label>
-                    <label
                       id="proxysubmit-btn-upload"
-                      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-card border border-border text-text-primary text-body cursor-pointer hover:bg-surface-soft transition-colors whitespace-nowrap"
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-card border border-border-strong text-text-primary text-body cursor-pointer hover:bg-surface-soft transition-colors whitespace-nowrap"
                     >
                       <Upload size={16} className="shrink-0" />
                       選擇照片
@@ -735,7 +790,7 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                         className="w-full px-4 py-3 rounded-xl bg-card border border-border text-essay font-essay text-text-primary outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-colors resize-y"
                       />
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-caption text-text-muted">{typed.trim().length} 字</span>
+                        <span className="text-caption text-text-muted">{countWords(typed)} 字</span>
                         <button
                           id="proxysubmit-btn-save"
                           onClick={saveTyped}
@@ -763,7 +818,7 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                 {toRetry.length > 1 && (
                   <button
                     id="proxysubmit-btn-retry-all"
-                    onClick={() => start(toRetry)}
+                    onClick={() => retry(toRetry)}
                     disabled={starting}
                     className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-card border border-border-strong text-body text-text-primary hover:bg-surface-soft disabled:opacity-50"
                   >
@@ -803,7 +858,7 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
                             <>
                               <button
                                 id={`proxysubmit-btn-retry-${s.studentId}`}
-                                onClick={() => start([s.studentId], true)}
+                                onClick={() => retry([s.studentId])}
                                 disabled={starting}
                                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-card border border-border text-caption text-text-primary hover:bg-surface-soft disabled:opacity-50 whitespace-nowrap"
                               >
@@ -874,6 +929,17 @@ export const ProxySubmitModal: React.FC<ProxySubmitModalProps> = ({
           subtitle={active ? `${seatText(active.seatNo)} ${active.studentName}` : undefined}
           onClose={() => setScannerOpen(false)}
           onPages={handleScannedPages}
+        />
+      )}
+
+      {batchScanOpen && (
+        <BatchScanModal
+          assignmentId={assignment.id}
+          assignmentTitle={assignment.title}
+          roster={batchRoster}
+          candidates={batchCandidates}
+          onSend={sendBatchScan}
+          onClose={() => setBatchScanOpen(false)}
         />
       )}
 

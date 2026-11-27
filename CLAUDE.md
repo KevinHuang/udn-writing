@@ -11,7 +11,7 @@ Claude Code 做不到、要人去操作的事，看 [`artifacts/action-items.md`
 | `apps/web` | 前端。React ＋ Vite ＋ Tailwind v4。**改前端先讀 [`apps/web/CLAUDE.md`](apps/web/CLAUDE.md)**（顏色 token、深色模式、對比度等規則） |
 | `packages/shared` | 前後端共用的型別（`types.ts`） |
 | `artifacts/` | 規格（`spec.md`）、發現（`findings.md`）、API 缺口（`api-gap.md`）、交接與待辦 |
-| `docs/` | 部署（`deploy.md`）、批次代繳交的背景辨識（`ocr-job.md`）、schema、migrations |
+| `docs/` | 部署（`deploy.md`）、批次代繳交的背景辨識（`ocr-job.md`）、整疊掃描（`batch-scan.md`）、schema、migrations |
 
 ⚠️ `docs/schema.sql` 是舊的 dump（例如沒有 `submission.is_submitted`），欄位以實際資料庫為準。
 

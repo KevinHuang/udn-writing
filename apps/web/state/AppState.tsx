@@ -24,15 +24,18 @@ import {
   type MarkKind,
   type SubmissionMarks,
 } from "../lib/submissionMarks";
+import { canResetGrading, resetConfirmText, resetTargets } from "../lib/resetGrading";
+import { clearSubmissionText } from "../lib/clearSubmission";
 import { useResetDemo } from "../lib/usePersistentState";
 import { orderedAssignments } from "../lib/assignmentOrder";
 import { routes, type SemesterFilter } from "../lib/routes";
 import {
   fetchSubmissionSummary, fetchSubmissionsByAssignment, fetchMarks, fetchLeaves,
-  saveGrading, resetGrading, returnFeedback, gradeWithAi,
+  saveGrading, resetGrading, returnFeedback, unreturnFeedback, gradeWithAi,
   clearSubmission, proxySubmit, submitEssay, setMark as setMarkApi, setLeave as setLeaveApi,
 } from "../api/submissions";
 import { regradeWithAi } from '../api/manuscript';
+import { mergeSubmissionSummary } from '../lib/submissionMerge';
 import { ApiError } from "../api/client";
 import { fetchSemesters } from "../api/semesters";
 import { fetchCourses, fetchRoster, deleteCourse, setCourseArchived, setCourseShowcase } from "../api/courses";
@@ -433,11 +436,15 @@ function useAppStateValue() {
    * 繳交分兩層：這裡載的是**摘要**（不含作文全文）—— 實測最忙的教師有
    * 2,091 筆、內容合計 2.8 MB，全部拉下來不可行。批改頁需要全文時再
    * 用 ensureSubmissions() 補那一份作業（見 api/submissions.ts）。
+   *
+   * 摘要回來時用**合併**的（lib/submissionMerge.ts），不整份換掉：開頁時摘要要撈全部班級，
+   * 常常比單一作業的完整內容晚到，整份換掉會把剛補好的作文與評語抹掉 ——
+   * 批改頁因此出現過「辨識文字空白」「評語空白」（2026-11-23）。
    */
   const loadSubmissions = useCallback(() => fetchSubmissionSummary(), []);
   const {
     items: submissions, setItems: setSubmissions, reload: reloadSubmissions,
-  } = useApiList<Submission>(loadSubmissions, teacherDataReady, activeIdentity);
+  } = useApiList<Submission>(loadSubmissions, teacherDataReady, activeIdentity, mergeSubmissionSummary);
 
   /**
    * 學生端的全部資料。
@@ -859,6 +866,21 @@ function useAppStateValue() {
   };
 
   /**
+   * 單筆收回發還 —— 發還之後才發現要改（原稿上的紅筆發還後會鎖住）。
+   *
+   * 退回「已批改」，分數與評語留著；改完再按發還，學生看到的就是新的那一版。
+   * 只做單筆：收回會讓學生看不到成績，整班一起收回太容易誤按。
+   * 失敗要丟出去 —— 畫面要告訴老師沒有收回成功，不然他會以為已經解鎖、改了卻存不進去。
+   */
+  const handleUnpublishOne = async (submissionId: string) => {
+    const target = submissions.find((s) => s.id === submissionId);
+    if (!target || target.status !== 'Published') return;
+    await unreturnFeedback([submissionId]);
+    await reloadSubmissions();
+    await ensureSubmissions(target.assignmentId);
+  };
+
+  /**
    * 代繳交：老師替學生登錄紙本作文。
    *
    * 不能沿用 handleSubmitEssay —— 那一支寫死示範學生的 STUDENT_ID，
@@ -901,26 +923,40 @@ function useAppStateValue() {
    *
    * **一定要先勾選** —— 與按鈕的啟動條件一致。這一步會清掉分數與評語，
    * 不該有「沒選就整批重置」的預設行為。
+   *
+   * 會動到哪幾份一律問 `resetTargets()`，清單上那顆按鈕的數字也問同一支 ——
+   * 以前按鈕只數 Graded、這裡卻連 Published 一起重置，勾了已發還的作品時
+   * 按鈕寫 (2)、實際動 5 份。
+   *
+   * 按下去**先確認**：已發還的那幾份會把學生已經看到的成績收回，
+   * 而且簡易批改的評分依據會一併刪掉（文案在 lib/resetGrading.ts）。
    */
-  const handleBatchReset = async (selectedAssignmentId: string) => {
-    if (selectedSubmissionIds.length === 0) return;
-    const targets = submissions.filter(
-      (s) => s.assignmentId === selectedAssignmentId
-        && selectedSubmissionIds.includes(s.id)
-        && (s.status === 'Graded' || s.status === 'Published'),
+  const handleBatchReset = (selectedAssignmentId: string) => {
+    const targets = resetTargets(
+      submissions.filter((s) => s.assignmentId === selectedAssignmentId),
+      selectedSubmissionIds,
     );
     if (targets.length === 0) return;
 
-    try {
-      for (const s of targets) await resetGrading(s.id);
-      await reloadSubmissions();
-      await ensureSubmissions(selectedAssignmentId);
-      setGradingResetSeq((n) => n + 1);
-    } catch (e) {
-      console.error('批次重置失敗:', e);
-    } finally {
-      setSelectedSubmissionIds([]);
-    }
+    const { title, message } = resetConfirmText(targets);
+    setConfirmDialog({
+      isOpen: true,
+      title,
+      message,
+      onConfirm: async () => {
+        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        try {
+          for (const s of targets) await resetGrading(s.id);
+          await reloadSubmissions();
+          await ensureSubmissions(selectedAssignmentId);
+          setGradingResetSeq((n) => n + 1);
+        } catch (e) {
+          console.error('批次重置失敗:', e);
+        } finally {
+          setSelectedSubmissionIds([]);
+        }
+      },
+    });
   };
 
   /**
@@ -948,18 +984,33 @@ function useAppStateValue() {
   /**
    * 重置批改：把有效的那一筆設為失效，狀態退回待批改。**作文還在。**
    * 歷史紀錄留著（is_valid = false），老師會重批。
+   *
+   * 與批次重置走同一套判斷與文案（lib/resetGrading.ts）：清除繳交、刪作業、
+   * 換題、重新評分都有確認視窗，只有這一顆沒有 —— 而它對**已發還**的作品
+   * 一樣生效（學生看到的成績無聲消失），還會刪掉簡易批改的評分依據。
    */
-  const handleResetGrading = async (id: string) => {
-    try {
-      await resetGrading(id);
-      await reloadSubmissions();
-      const assignmentId = submissions.find((s) => s.id === id)?.assignmentId;
-      if (assignmentId) await ensureSubmissions(assignmentId);
-      // 只有重置需要把 GradingEditor 重掛 —— 它把結果收在自己的 state 裡
-      setGradingResetSeq((n) => n + 1);
-    } catch (e) {
-      console.error('重置批改失敗:', e);
-    }
+  const handleResetGrading = (id: string) => {
+    const target = submissions.find((s) => s.id === id);
+    if (!target || !canResetGrading(target.status)) return;
+
+    const { title, message } = resetConfirmText([target]);
+    setConfirmDialog({
+      isOpen: true,
+      title,
+      message,
+      onConfirm: async () => {
+        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        try {
+          await resetGrading(id);
+          await reloadSubmissions();
+          await ensureSubmissions(target.assignmentId);
+          // 只有重置需要把 GradingEditor 重掛 —— 它把結果收在自己的 state 裡
+          setGradingResetSeq((n) => n + 1);
+        } catch (e) {
+          console.error('重置批改失敗:', e);
+        }
+      },
+    });
   };
 
   /**
@@ -968,19 +1019,28 @@ function useAppStateValue() {
    * 不是清空內容、也不是改狀態，而是**移除整筆** —— 批改清單與學生端
    * 都是「找不到紀錄就當作未繳交」（見 lib/gradingQueue.ts 的
    * assignmentRoster 與 StudentAssignments 的 `submission?.status || 'Unsubmitted'`），
-   * 所以刪掉之後兩邊自動回到一份全新作業的樣子，學生可以重新繳交。
+   * 所以刪掉之後兩邊自動回到一份全新作業的樣子。**但學生自己能不能再交，
+   * 要看那份作業還收不收件**（文案由 lib/clearSubmission.ts 決定）。
+   *
+   * 後端同一個交易裡還會把代繳交的那一批退役（is_valid = false，見
+   * SubmissionHelper.deleteById）—— 不然清單上那一列會同時是「未繳交」與
+   * 「AI 辨識未校對」，而且老師按「重試」會把剛清掉的作文寫回來。
    *
    * 不可復原，一定要先確認。
    */
   const handleClearSubmission = (submission: Submission) => {
+    /*
+      「學生可以重新繳交」要看作業收不收件 —— 已截止又不收遲交時他交不了
+      （後端 /student/submit 會 409），文案不能一律那樣寫。見 lib/clearSubmission.ts。
+    */
+    const { title, message } = clearSubmissionText(
+      submission.studentName,
+      assignments.find((a) => a.id === submission.assignmentId),
+    );
     setConfirmDialog({
       isOpen: true,
-      title: "清除繳交內容",
-      message:
-        `確定要清除 ${submission.studentName} 這一份的繳交內容嗎？\n\n` +
-        "作文內容、分數與評語都會被刪除，學生端也會一併清空，" +
-        "這份作業會回到「未繳交」，學生可以重新繳交。\n\n" +
-        "此操作無法復原。",
+      title,
+      message,
       onConfirm: async () => {
         setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
         try {
@@ -1135,6 +1195,7 @@ function useAppStateValue() {
     handleBatchGrade,
     handleBatchPublish,
     handlePublishOne,
+    handleUnpublishOne,
     handleProxySubmit,
     handleBatchReset,
     handleResetGrading,

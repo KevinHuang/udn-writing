@@ -64,6 +64,8 @@ Cloud Build 紀錄確認是 `node:26.12.1-slim`，冒煙測試 4/4 通過，啟�
 
 ### 0.18 整疊掃描上線前（分支 `feat/manuscript-redpen`）
 
+**給工程師的完整說明在 [`batch-scan-for-engineer.md`](batch-scan-for-engineer.md)**，下面是摘要。
+
 1. **重新部署辨識服務 `handwriting-ocr`**（多了 `/seat-scan`；指令同 `docs/grid-ocr.md` 第 2 步）。不用新的環境變數、不用 migration。
 2. **用真的掃描機測一次**：下載新的稿紙（有座號劃記）印幾張，請人塗座號、寫幾行字，雙面掃成一份 PDF，
    從批次代繳交的「整疊掃描」走到送出。特別看：座號讀得對不對、掃描機裁邊之後四角的定位標記還在不在。

@@ -273,7 +273,8 @@ export const BatchScanModal: React.FC<BatchScanModalProps> = ({
             id={`batchscan-select-${group.id}`}
             value={value}
             onChange={(e) => pick(group, e.target.value)}
-            className="w-full sm:w-48 px-3 py-2 rounded-lg bg-card border border-border-strong text-body text-text-primary outline-none focus:ring-2 focus:ring-primary/30"
+            // 寬度要放得下「01 王小明（塗的座號）」：48 的時候後面幾個字會被箭頭切掉，老師看不出哪一位是系統建議的
+            className="w-full sm:w-60 px-3 py-2 rounded-lg bg-card border border-border-strong text-body text-text-primary outline-none focus:ring-2 focus:ring-primary/30"
           >
             <option value="">{canAssign(group) ? '請選擇是誰的' : '要重掃這一張'}</option>
             {canAssign(group) &&

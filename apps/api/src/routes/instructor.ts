@@ -27,6 +27,8 @@ import GridOcrHelper from '../dal/grid_ocr_helper';
 import { precheckSheets } from '../lib/grid_ocr/pipeline';
 import { createGridServiceClient } from '../lib/grid_ocr/service_client';
 import { dispatchGridOcr } from '../lib/grid_ocr/dispatch';
+import { GridOcrError } from '../lib/grid_ocr/errors';
+import { toSeatScanPages } from '../lib/seat_scan';
 import SimpleGradingHelper from '../dal/simple_grading_helper';
 import { createSimulatedSimpleGradingAi, gradeSimple, geminiSimpleGradingAi } from '../lib/simple_grading/grade';
 import { summarizeGrid } from '../lib/simple_grading/summary';
@@ -977,6 +979,69 @@ router.get('/assignments/:assignmentId/proxy_status', async (ctx) => {
         ctx.body = { now: new Date().toISOString(), rows };
     } catch (error) {
         console.error('Error reading proxy status:', error);
+        ctx.status = 500;
+        ctx.body = { error: 'Internal Server Error' };
+    }
+});
+
+/**
+ * @route POST /service/instructor/assignments/:assignmentId/seat_scan
+ * @description 整疊掃描（docs/batch-scan.md）：一批稿紙照片 → 每一頁是哪種稿紙的第幾頁、學生塗的座號、表頭截圖。
+ *
+ * **只讀不寫**：不存照片、不寫資料表。老師在前端核對「哪一份是誰的」之後，
+ * 每位學生照舊走 `/submissions/ocr_proxy` —— 名冊與範圍由那一支再檢查，逐格辨識的缺角檢查也在那裡。
+ * 所以這裡只問「這份作業是不是他看得到的」，不問學生。
+ *
+ * @body images - `[{ base64Image, mimeType }]`，1～8 張，順序就是掃描的順序
+ * @returns `{ pages }`，和 images 一樣多、同順序（lib/seat_scan.ts 的 SeatScanPage）
+ *   503 SEAT_SCAN_UNAVAILABLE  辨識服務沒設定或連不上：請老師改用一位一位的代繳交
+ *   502 SEAT_SCAN_BAD_RESPONSE 服務回傳的頁數對不上：不能讓座號配到別張照片
+ */
+router.post('/assignments/:assignmentId/seat_scan', async (ctx) => {
+    try {
+        const scope = await courseScopeOf(ctx);
+        if (!await AssignmentHelper.isInScope(ctx.params.assignmentId, scope)) {
+            ctx.status = 404;
+            ctx.body = { error: '找不到這份作業。' };
+            return;
+        }
+        const checked = checkImageList((ctx.request.body as { images?: unknown })?.images);
+        if (!checked.ok) {
+            ctx.status = checked.status;
+            ctx.body = { error: checked.message };
+            return;
+        }
+        const service = createGridServiceClient();
+        if (!service.configured) {
+            ctx.status = 503;
+            ctx.body = { error: '稿紙辨識服務還沒設定，暫時不能整疊掃描。', code: 'SEAT_SCAN_UNAVAILABLE' };
+            return;
+        }
+        let payload: unknown;
+        try {
+            payload = await service.seatScan(
+                checked.images.map((img, i) => ({ name: `第${i + 1}張`, data: img.base64Image })));
+        } catch (e) {
+            // 服務說照片有問題（讀不出來的檔案…）：訊息是給老師看的中文，照回；其他一律當作暫時連不上
+            if (e instanceof GridOcrError && e.code === 'REJECTED') {
+                ctx.status = 422;
+                ctx.body = { error: e.message, code: 'SEAT_SCAN_REJECTED' };
+                return;
+            }
+            ctx.status = 503;
+            ctx.body = { error: '稿紙辨識服務暫時無法使用，請稍後再試。', code: 'SEAT_SCAN_UNAVAILABLE' };
+            return;
+        }
+        const pages = toSeatScanPages(payload, checked.images.length);
+        if (!pages) {
+            console.error('[seat_scan] 服務回傳的頁數對不上', { sent: checked.images.length });
+            ctx.status = 502;
+            ctx.body = { error: '稿紙辨識服務回傳的頁數不對，請再試一次。', code: 'SEAT_SCAN_BAD_RESPONSE' };
+            return;
+        }
+        ctx.body = { pages };
+    } catch (error) {
+        console.error('Error in seat scan:', error);
         ctx.status = 500;
         ctx.body = { error: 'Internal Server Error' };
     }

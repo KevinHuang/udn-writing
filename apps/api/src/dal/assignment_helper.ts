@@ -419,6 +419,25 @@ class AssignmentHelper {
         );
         return !!row;
     }
+
+    /**
+     * 「這份作業在他看得到的班裡嗎？」——不針對哪一位學生的動作用（整疊掃描讀座號：這時還不知道每一張是誰的）。
+     * 範圍一樣寫在 SQL 裡。之後真的寫入某位學生時，仍然要過 assertLearnerInScope。
+     */
+    public static async isInScope(assignmentId: string, scope: CourseScope): Promise<boolean> {
+        if (isEmptyScope(scope)) return false;
+        // 不是數字的 id 直接當作找不到：::bigint 轉型失敗會變成 500
+        if (!/^\d+$/.test(String(assignmentId))) return false;
+        const row = await db.default.oneOrNone(
+            `SELECT 1 AS ok
+               FROM assignment a
+              WHERE a.id = $1::bigint
+                AND a.ref_course_id IN ${courseScopeSubquery(scope)}
+              LIMIT 1`,
+            [assignmentId],
+        );
+        return !!row;
+    }
 }
 
 export default AssignmentHelper;

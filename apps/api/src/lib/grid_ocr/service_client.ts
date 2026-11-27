@@ -104,6 +104,8 @@ export interface GridServiceClient {
     assemble(pages: unknown[]): Promise<AssembleResult>;
     typos(body: { pages: unknown; rule_marks: unknown; ai_reply: string; zhuyin_reply?: string }): Promise<TyposResult>;
     prompts(): Promise<PromptsResult>;
+    /** 整疊掃描：每一頁的稿紙頁碼與塗的座號（不用 AI）。回傳內容由 lib/seat_scan.ts 檢查後才給前端 */
+    seatScan(files: ServiceFile[]): Promise<unknown>;
 }
 
 export const gridOcrServiceUrl = (): string =>
@@ -193,5 +195,6 @@ export function createGridServiceClient(opts: {
         assemble: (pages) => call<AssembleResult>('POST', '/assemble', { pages }),
         typos: (body) => call<TyposResult>('POST', '/typos', body),
         prompts: () => call<PromptsResult>('GET', '/prompts'),
+        seatScan: (files) => call<unknown>('POST', '/seat-scan', { files }),
     };
 }

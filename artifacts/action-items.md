@@ -62,6 +62,13 @@ Cloud Build 紀錄確認是 `node:26.12.1-slim`，冒煙測試 4/4 通過，啟�
 正式庫在 011、012 之後再套 `docs/migrations/013-manuscript-mark-decision.sql`（**先於程式**）。不用新的環境變數。
 上線前用實際印出來、手寫、拍照的稿紙走一次：紅筆位置對不對、楷書字有沒有載入（`/fonts/tw-kai/`）。
 
+### 0.18 整疊掃描上線前（分支 `feat/manuscript-redpen`）
+
+1. **重新部署辨識服務 `handwriting-ocr`**（多了 `/seat-scan`；指令同 `docs/grid-ocr.md` 第 2 步）。不用新的環境變數、不用 migration。
+2. **用真的掃描機測一次**：下載新的稿紙（有座號劃記）印幾張，請人塗座號、寫幾行字，雙面掃成一份 PDF，
+   從批次代繳交的「整疊掃描」走到送出。特別看：座號讀得對不對、掃描機裁邊之後四角的定位標記還在不在。
+3. 決定要不要限定試用的老師（目前所有老師都看得到）。見 `docs/batch-scan.md`。
+
 ### 0.2 上線前移除開發用登入
 
 `apps/api/src/auth/dev_login.ts` 在 `2a5efc5` 被一起 commit 進去了。

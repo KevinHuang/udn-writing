@@ -27,6 +27,7 @@
     "docx": "^9.6.1",
     "lucide-react": "^0.577.0",
     "marked": "^18.0.14",
+    "pdfjs-dist": "^6.5.438",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-markdown": "^10.1.0",

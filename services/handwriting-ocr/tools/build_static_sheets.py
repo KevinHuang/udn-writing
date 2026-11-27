@@ -24,12 +24,14 @@ from gaozhi import sheet  # noqa: E402
 
 # 會考、學測：照 1Campus 的預設表頭（大標題「寫作測驗答案卷」、班級座號姓名、日期、得分）；
 # 學校名稱留白，老師或學生手寫。學測兩題都印（考場版，正反面）。
+# 座號劃記（2026-11-27）：會考、學測、國中稿紙都加印，整疊掃描時照塗的座號自動認人（docs/batch-scan.md）。
+# 不想塗的班照樣能用：沒塗的由老師指定。聯合盃不印（sheet.SEATMARKS 的說明）。
 STANDARD_HEADER = {"title": sheet.DEFAULT_TITLE, "school": "",
-                   "fields": {"class_seat_name": True, "date": True, "score": True}, "seat_marks": False}
+                   "fields": {"class_seat_name": True, "date": True, "score": True}, "seat_marks": True}
 
 SHEETS = [
-    {"format": "udn", "paper": "A3"},
-    {"format": "udn", "paper": "B4"},
+    {"format": "udn", "paper": "A3", "seat_marks": True},
+    {"format": "udn", "paper": "B4", "seat_marks": True},
     {"format": "ucup", "paper": "B4"},
     {"format": "ucup", "paper": "A3"},
     {"format": "cap", "paper": "B4", **STANDARD_HEADER},

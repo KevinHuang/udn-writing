@@ -24,6 +24,16 @@
   `tests/test_service.py` 的格式清單多了 `udn`、`ucup`。
 - `tools/build_static_sheets.py`：產生網站上的靜態稿紙（`apps/web/public/sheets/`）。
 
+- 2026-11-27 **整疊掃描的讀座號**，從 1Campus 的 `feat/batch-scan`（`22d5671`，那邊還沒合併進 main）搬來：
+  `gaozhi/seatread.py`（新）、`gaozhi/service/core.py`（`seat_scan`）、`gaozhi/service/server.py`（`POST /seat-scan`）、
+  `gaozhi/layout.py`（`SEATMARK_MAX_TENS` 5→9）、`gaozhi/render.py`（`el_seatmark` 全黑、線寬 0.7）、`tests/test_seatread.py`（新）。
+  **和 1Campus 不一樣的地方**（跟進時不要被蓋掉）：
+  - `sheet.SEATMARKS` 多了 `udn`（國中稿紙第 1 頁格子上方靠右；`_fixed` 可以加印劃記）；聯合盃沒有劃記。
+  - 會考的劃記 x 是 334.9（1Campus 是 338.4），填寫欄縮成 11pt、往格子靠（`_cap`）。
+  - `seatread.CROPS` 改成分頁（格式 → 第幾頁 → 範圍），多了 `udn`、`ucup`；`header_crops` 多一個 `page_index`。
+  - `seat_scan` 沒有英文稿紙那一段（這邊沒有英文稿紙）；沒有座號劃記的稿紙照樣回表頭截圖。
+  流程見 `docs/batch-scan.md`。
+
 本機跑測試：
 
 ```bash

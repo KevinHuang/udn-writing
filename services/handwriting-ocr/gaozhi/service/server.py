@@ -5,6 +5,7 @@
   GET  /prompts    三個 preset 的系統指令與回傳格式（給工程師設定 gpt.1campus.net 後台）
   POST /check      {"files": [{"name", "data"(base64)}]}  只檢查要不要重拍（老師一上傳就先問）
   POST /prepare    {"files": [{"name", "data"(base64)}]}
+  POST /seat-scan  {"files": [...]}  整疊掃描：每頁是哪種稿紙第幾頁、塗的座號、表頭截圖（不用 AI）
   POST /assemble   {"pages": [{"meta", "warped_jpeg", "replies": [{"index", "text"}]}]}
   POST /typos      {"pages", "rule_marks", "ai_reply", "zhuyin_reply"?}
   GET  /sheet-options  稿紙格式、紙張、字數上限（「印稿紙」視窗用）
@@ -78,6 +79,8 @@ class Handler(BaseHTTPRequestHandler):
                 out = core.prompts()
             elif method == "POST" and path == "/check":
                 out = core.check(self._body().get("files"))
+            elif method == "POST" and path == "/seat-scan":
+                out = core.seat_scan(self._body().get("files"))
             elif method == "POST" and path == "/prepare":
                 out = core.prepare(self._body().get("files"))
             elif method == "POST" and path == "/assemble":

@@ -575,7 +575,11 @@ def el_idcode(cv, e):
     return tuple(bbox)
 
 
-SEATMARK_COLOR = "#aab3be"     # 圓圈與裡面的數字：淺灰，塗黑的才會被掃描判讀當成有塗
+SEATMARK_COLOR = "#aab3be"     # 考試版稿紙（身分劃記）的圓圈與數字：淺灰
+# 座號劃記：圓圈、數字、框線、標籤全黑。淺灰細線用黑白印表機印出來幾乎看不見，學生看不清楚要塗哪裡；
+# 判讀（gaozhi/seatread.py）用同一排的中位數當基準，印的黑框與數字會被扣掉（2026-11-26 跟進 1Campus）。
+SEATMARK_INK = "#000000"
+SEATMARK_LINE = 0.7
 
 
 def el_seatmark(cv, e):
@@ -589,21 +593,21 @@ def el_seatmark(cv, e):
     if ctx is not None and ctx.get("mode") != "class":
         return None
     g = L.seatmark_geometry(e)
-    col = e.get("color", SEATMARK_COLOR)
+    col = e.get("color", SEATMARK_INK)
     sh = cv.shape()
     for b in g["bubbles"]:
         sh.draw_circle(pymupdf.Point(b["cx"] * MM, b["cy"] * MM), b["r"] * MM)
-    cv.finish(sh, col, 0.45)
+    cv.finish(sh, col, SEATMARK_LINE)
     sh = cv.shape()
     for r in g["boxes"].values():
         sh.draw_rect(mm_rect(*r))
-    cv.finish(sh, "#4a4f57", 0.5)
+    cv.finish(sh, col, SEATMARK_LINE)
     for b in g["bubbles"]:
         ds = b["r"] * 2 * 1.3                       # 數字字級（pt）：約圓圈的一半高
         cv.htext(str(b["value"]), b["cx"] - b["r"], b["cy"] - ds / MM * 0.5, size=ds, font="hei", color=col,
                  align="center", w=2 * b["r"])
     for t in g["texts"]:
-        cv.htext(t["text"], t["x"], t["y"], size=t["size"], font="hei", color="#3d434b", align=t.get("align", "center"),
+        cv.htext(t["text"], t["x"], t["y"], size=t["size"], font="hei", color=col, align=t.get("align", "center"),
                  w=t["w"])
     x0, y0, x1, y1 = g["bbox"]
     if ctx is None:                                 # 編輯器預覽

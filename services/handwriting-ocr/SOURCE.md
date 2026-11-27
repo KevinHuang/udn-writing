@@ -29,7 +29,8 @@
   `gaozhi/layout.py`（`SEATMARK_MAX_TENS` 5→9）、`gaozhi/render.py`（`el_seatmark` 全黑、線寬 0.7）、`tests/test_seatread.py`（新）。
   **和 1Campus 不一樣的地方**（跟進時不要被蓋掉）：
   - `sheet.SEATMARKS` 多了 `udn`（國中稿紙第 1 頁格子上方靠右；`_fixed` 可以加印劃記）；聯合盃沒有劃記。
-  - 會考的劃記 x 是 334.9（1Campus 是 338.4），填寫欄縮成 11pt、往格子靠（`_cap`）。
+  - （會考的座號劃記版表頭曾經和 1Campus 不同，同一天已改成照 1Campus `c033467`：x 334.4、得分改右上角方框、
+    校名在得分框下、班級姓名移到緊鄰格子那一列、不印日期。現在兩邊一樣。）
   - `seatread.CROPS` 改成分頁（格式 → 第幾頁 → 範圍），多了 `udn`、`ucup`；`header_crops` 多一個 `page_index`。
   - `seat_scan` 沒有英文稿紙那一段（這邊沒有英文稿紙）；沒有座號劃記的稿紙照樣回表頭截圖。
   流程見 `docs/batch-scan.md`。

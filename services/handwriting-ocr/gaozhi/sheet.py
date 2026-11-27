@@ -2,7 +2,7 @@
 
 和原型的表頭編輯器不同，這裡沒有自由排版：表頭位置固定，老師只決定
 學校名稱、大標題（每次印可改）、要不要印班級座號姓名／日期／得分欄、要不要加印座號劃記；
-學測稿紙另外選要印哪一題（知性題、情意題各 1 頁，或兩題都印）。
+學測稿紙另外選要印哪一題（知性題、情意題各 1 頁，或兩題都印）。會考稿紙加印座號劃記時換另一種表頭排法，不印日期（見 _cap）。
 沒有身分碼（QR）。格子與四角定位標記照原樣，所以印出來的稿紙都能逐格辨識。
 """
 import json
@@ -36,14 +36,14 @@ GSAT_PAGE_LABELS = ("知性題（第一大題）", "情意題（第二大題）"
 PREVIEW_DPI = 90                      # 預覽圖：A3 約 1490×1050 像素，放大看得清楚校名與大標題
 # 座號劃記的位置（樣式原始 mm）：印稿紙與判讀座號（gaozhi/seatread.py）共用。
 # 會考稿紙印在第 1 頁右側；學測稿紙印在每一題那一頁的左上角（兩題都印時只有第一大題那一頁有）。
-# 會考 x：341 → 338.4（2026-11-26 跟進 1Campus，右緣離紙邊 8mm）→ 334.9（2026-11-27 使用者看過印出來的樣子，
-#   覺得還是太靠外）：右緣 352.5，和右上、右下定位標記的外緣切齊（B4 離紙邊 11.5mm、A3 13.2mm）。
-#   位置是把左邊的填寫欄縮小一號、往格子靠才挪出來的（見 _cap），作答格沒有動。**和 1Campus 不一樣，跟進時不要被蓋掉。**
+# 會考 x：341 → 338.4（2026-11-26）→ 334.4（2026-11-27，照 1Campus c033467）：右緣 352mm，和四角定位標記外緣切齊
+#   （B4 離紙邊 12mm、A3 13.9mm）；原本 5.4mm、8mm 影印時都可能被切掉。表頭跟著重排，見 _cap 的座號劃記版。
+#   同一天稍早聯合報這邊自己試過 334.9＋填寫欄縮成 11pt，使用者後來在 1Campus 定了這個版本，以它為準、兩邊一致。
 # 聯合報國中稿紙（2026-11-27 使用者看過示意圖、選定）：第 1 頁格子上方靠右——學生從右邊開始寫，表頭的姓名、座號欄也在右邊。
 #   原稿紙那一帶是空的（y 10～38），不必動底圖；離「請從本行開始作答」的箭頭 3.5mm、離格子 6.7mm、離紙邊 9mm。
 # 聯合盃稿紙**沒有**座號劃記（同一天決定）：稿紙印著「請勿填寫姓名、學校及足以辨識身份之記號」，
 #   第一頁上方也只剩 25mm、放不下標準大小的圓圈。整疊掃描時照樣分成一人一份，由老師指定是誰的。
-SEATMARKS = {"cap": {"x": 334.9, "y": 133, "size": 4, "orient": "col"},
+SEATMARKS = {"cap": {"x": 334.4, "y": 133, "size": 4, "orient": "col"},
              "gsat": {"x": 20, "y": 16, "size": 4, "orient": "row"},
              "udn": {"x": 250, "y": 9, "size": 4, "orient": "row"}}
 
@@ -88,29 +88,44 @@ def _vtitle(text, x, y, room, size, step):
     return {"type": "text", "text": text, "x": x, "y": y, "size": round(size, 2), "char_step": round(step, 3)}
 
 
+CAP_SCHOOL_TOP = 41          # 座號劃記版：校名在得分框下面，從這裡開始直排
+CAP_SCHOOL_TOP_NO_SCORE = 22
+
+
 def _cap(school, title, fields, seat):
-    """會考稿紙第 1 頁右側直排表頭（由右而左：學校、大標題、填寫欄）。座號劃記占用原本班級、座號兩行的位置。"""
+    """會考稿紙第 1 頁右側直排表頭。
+
+    一般版（由右而左）：學校、大標題、班級座號姓名、日期，得分在班級下面。
+    座號劃記版（2026-11-27 照 1Campus c033467 重排，讓座號劃記離紙邊夠遠、影印不會被切掉）：右上角得分方框、下面直排校名，
+    中間大標題，右下座號劃記（和得分框右緣切齊、在四角定位標記範圍內），班級、姓名排成一列放在
+    「請從本行開始作答」與「第一頁」之間（緊鄰格子那一列）；不印日期（勾了也不印）。"""
     base = json.loads((HEADERS / "cap.json").read_text(encoding="utf-8"))
     keep = [e for e in base["pages"][0]["elements"]
             if e["type"] in ("line", "text") and e.get("text") != "寫作測驗答案卷"]
-    els = keep + [_vtitle(title, 333, 22, 104, 32, 14)]
-    if school:
-        els.append({"type": "text", "text": school, "x": 352, "y": 20, "size": 13})
     if seat:
+        els = keep + [_vtitle(title, 330, 22, 104, 32, 14)]
+        top = CAP_SCHOOL_TOP if fields.get("score") else CAP_SCHOOL_TOP_NO_SCORE
+        if fields.get("score"):
+            els.append({"type": "box", "x": 338.6, "y": 20, "w": 13.4, "h": 17, "label": "得分",
+                        "label_pos": "inside-top", "label_size": 10, "line_width": 0.6})
+        if school:   # 放不下（快滿 20 字）時縮小，下緣離座號劃記 3mm
+            room = SEATMARKS["cap"]["y"] - 3 - top
+            size = min(13, room / len(school) * render.MM)
+            els.append({"type": "text", "text": school, "x": 345.3, "y": top, "size": round(size, 2)})
         els.append({"type": "seatmark", **SEATMARKS["cap"]})
-        # 有座號劃記時右邊很擠（「請從本行開始作答」右緣 320.3 到定位標記外緣 352.5 之間只有 32mm，劃記就占 17.6）：
-        # 填寫欄縮成 11pt、兩行各往格子靠，讓劃記整個收進定位標記以內。
-        size = 11
-        cols = [("班級", 331.9, 135, 30, "class"), ("姓名", 325.7, 135, 60, "name"),
-                ("日期", 331.9, 182, 34, None), ("得分", 325.7, 210, 22, None)]
+        if fields.get("class_seat_name"):
+            els += [{"type": "field", "label": "班級", "x": 319, "y": 95, "size": 12, "length": 40},
+                    {"type": "field", "label": "姓名", "x": 319, "y": 153, "size": 12, "length": 52}]
     else:
-        size = 12
+        els = keep + [_vtitle(title, 333, 22, 104, 32, 14)]
+        if school:
+            els.append({"type": "text", "text": school, "x": 352, "y": 20, "size": 13})
         cols = [("班級", 347.5, 135, 30, "class"), ("座號", 340.5, 135, 30, "seat"), ("姓名", 333.5, 135, 60, "name"),
                 ("日期", 326.5, 135, 34, None), ("得分", 347.5, 182, 34, None)]
-    for label, x, y, length, fill in cols:
-        if (fill and fields.get("class_seat_name")) or (label == "日期" and fields.get("date")) \
-                or (label == "得分" and fields.get("score")):
-            els.append({"type": "field", "label": label, "x": x, "y": y, "size": size, "length": length})
+        for label, x, y, length, fill in cols:
+            if (fill and fields.get("class_seat_name")) or (label == "日期" and fields.get("date")) \
+                    or (label == "得分" and fields.get("score")):
+                els.append({"type": "field", "label": label, "x": x, "y": y, "size": 12, "length": length})
     page2 = [e for e in base["pages"][1]["elements"] if e["type"] != "idcode"]
     return {"template": "cap", "title": title, "style": base["style"], "pages": [{"elements": els}, {"elements": page2}]}
 

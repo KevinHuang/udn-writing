@@ -5,6 +5,23 @@
 這一份說明 `feat/manuscript-redpen` 分支上 2026-11-27 這一批修改在做什麼、哪些已經做完，
 以及**只有你能做**的三件事。細節都有連到對應的文件，這裡只講你需要知道的。
 
+## 修改在哪個分支
+
+| | |
+|---|---|
+| 分支 | **`feat/manuscript-redpen`**（只有這一個，沒有另外開分支） |
+| PR | **#10**，`feat/manuscript-redpen` → `main`，還開著 |
+| 和 main 的關係 | 已經包含 main 最新的 `8851bb4`（PR #9 的合併），**沒有落後**，合併不會有衝突要處理 |
+| 這次的 commit | `846bc0c`、`c1cfcd5`、`f7934c2`、`8dcb72e`、`004adcf`（11/27 的 5 個，PR #10 最後面那 5 個） |
+| PR #10 裡更早的 | 11/23～11/25 的 14 個（矛盾掃描與修正、收回發還、學生只能交自己班的作業…），見 [`handoff.md`](handoff.md)「最近完成」。和這次的修改無關，但合併 PR #10 會一起進 main |
+
+- 部署請用 `feat/manuscript-redpen` 的最新一版（目前是 `004adcf`），或等 PR #10 合進 `main` 之後從 `main` 部署。
+  **只部署其中幾個 commit 不行**：前端、後端、辨識服務的修改彼此相依。
+- 遠端其他還沒合併的分支（`feat/scan-improvements`、`fix/grading-direct-url-essay`、你的 `add-four-scores`）
+  **這次都沒有動**。
+- 整疊掃描是從 1Campus Write（另一個 repo）的 `feat/batch-scan` 分支搬來的，那邊只是來源參考，
+  **這個 repo 不需要合併任何東西過來**。
+
 ---
 
 ## 一、想請你做的事（依順序）
